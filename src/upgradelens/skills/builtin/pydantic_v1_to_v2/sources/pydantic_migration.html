@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pydantic V1 → V2 Migration Guide (offline snapshot)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="sidebar"><ul><li>Navigation</li><li>Search</li></ul></nav>
+  <header class="topbar"><span>Pydantic docs</span></header>
+  <script>console.log("tracking");</script>
+  <aside class="ad">Sponsor</aside>
+  <main>
+    <article>
+      <h1>Pydantic V1 → V2 Migration Guide</h1>
+      <p>This is an offline snapshot of the Pydantic migration notes used by
+      UpgradeLens for fixture-based retrieval. It covers the most common
+      breaking changes when moving from Pydantic v1 to v2.</p>
+
+      <h2>Validators</h2>
+      <p>Validator decorators were renamed and their behaviour changed in v2.</p>
+
+      <h3>@validator → @field_validator</h3>
+      <p>The <code>@validator</code> decorator is removed in v2. Use
+      <code>@field_validator</code> instead. Validators are now keyword-only and
+      no longer support the <code>pre</code>/<code>each_item</code> positional
+      style in the same way.</p>
+      <pre><code>from pydantic import BaseModel, field_validator
+
+class User(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        return value.strip()
+</code></pre>
+
+      <h3>@root_validator → @model_validator</h3>
+      <p><code>@root_validator</code> is replaced by <code>@model_validator</code>.
+      Use <code>mode="before"</code> for the old pre-validation behaviour or
+      <code>mode="after"</code> to validate the whole model.</p>
+      <pre><code>from pydantic import BaseModel, model_validator
+
+class Account(BaseModel):
+    user: str
+    password: str
+
+    @model_validator(mode="after")
+    def check_passwords(self) -> "Account":
+        if self.user == self.password:
+            raise ValueError("password equals username")
+        return self
+</code></pre>
+
+      <h2>Config</h2>
+      <p>Model configuration moved from a nested <code>Config</code> class to the
+      <code>model_config</code> attribute.</p>
+
+      <h3>Config.orm_mode → from_attributes</h3>
+      <p>The <code>orm_mode = True</code> setting is renamed to
+      <code>from_attributes = True</code>. It still controls whether ORM objects
+      can be read via attribute access.</p>
+      <pre><code>from pydantic import BaseModel
+
+class UserORM(BaseModel):
+    model_config = {"from_attributes": True}
+    id: int
+    name: str
+</code></pre>
+
+      <h2>Serialization</h2>
+      <p>Instance serialization methods were renamed.</p>
+
+      <h3>.dict() → model_dump()</h3>
+      <p><code>model.dict()</code> becomes <code>model.model_dump()</code>. The
+      arguments are largely the same.</p>
+      <pre><code>user = User(name="alice")
+data = user.model_dump()
+</code></pre>
+
+      <h3>.json() → model_dump_json()</h3>
+      <p><code>model.json()</code> becomes <code>model.model_dump_json()</code>.</p>
+      <pre><code>user = User(name="alice")
+text = user.model_dump_json()
+</code></pre>
+
+      <h2>Parsing</h2>
+      <p>Classmethod parsing helpers were renamed.</p>
+
+      <h3>.parse_obj() → .model_validate()</h3>
+      <p><code>Model.parse_obj(obj)</code> becomes
+      <code>Model.model_validate(obj)</code>. Use
+      <code>model_validate_json</code> for JSON strings.</p>
+      <pre><code>user = User.model_validate({"name": "alice"})
+</code></pre>
+    </article>
+  </main>
+</body>
+</html>

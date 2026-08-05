@@ -21,6 +21,12 @@ from upgradelens.domain.dependency import (
     VersionTransition,
     VersionTransitionKind,
 )
+from upgradelens.domain.doc_evidence import (
+    DocChunk,
+    DocEvidence,
+    DocSourceRecord,
+    RetrievalRun,
+)
 from upgradelens.domain.skill import (
     DocSource,
     PatchRule,
@@ -56,4 +62,8 @@ __all__ = [
     "SkillPackage",
     "SkillSelection",
     "UsagePattern",
+    "DocChunk",
+    "DocEvidence",
+    "DocSourceRecord",
+    "RetrievalRun",
 ]

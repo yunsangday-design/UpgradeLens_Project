@@ -28,6 +28,11 @@ jobs:
       - name: Tests
         run: uv run pytest
 
+      - name: Alembic migration
+        env:
+          UPGRADELENS_DB_URL: "sqlite:///./ci_migrated.db"
+        run: uv run alembic upgrade head
+
       - name: Ruff format check
         run: uv run ruff format --check .
 

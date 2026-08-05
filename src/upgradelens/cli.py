@@ -12,7 +12,11 @@ Subcommands:
   code evidence;
 - ``list-skills`` (stage 3) — list the built-in Skill Packs;
 - ``resolve-skill`` (stage 3) — pick the best Skill Pack for a dependency +
-  target version (generic fallback when nothing matches).
+  target version (generic fallback when nothing matches);
+- ``ingest-docs`` (stage 4) — load built-in documentation snapshots into the
+  SQLite + FTS5 index;
+- ``retrieve-docs`` (stage 4) — run keyword RAG over an ingested documentation
+  source and return citable evidence.
 
 Exit codes:
 
@@ -39,6 +43,9 @@ from packaging.utils import canonicalize_name
 from pydantic import BaseModel, ValidationError
 
 from upgradelens.analyzers import scan_code_evidence, scan_dependency
+from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
+from upgradelens.db.repository import persist_code_report
+from upgradelens.docs import ingest_skill, retrieve
 from upgradelens.domain import (
     DependencyAnalysisRequest,
     DependencyScanResult,
@@ -58,6 +65,8 @@ _SCAN_COMMAND = "scan-dependency"
 _SCAN_CODE_COMMAND = "scan-code"
 _LIST_SKILLS_COMMAND = "list-skills"
 _RESOLVE_SKILL_COMMAND = "resolve-skill"
+_INGEST_DOCS_COMMAND = "ingest-docs"
+_RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,6 +103,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     code.add_argument("--repo", required=True, type=Path, help="Repository root to scan.")
     code.add_argument("--dependency", required=True, help="Dependency name (any casing).")
+    code.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Optional SQLite database to persist the code evidence into (stage 4).",
+    )
+
+    ingest_docs = subparsers.add_parser(
+        _INGEST_DOCS_COMMAND,
+        help="Ingest built-in documentation snapshots into the SQLite index (stage 4).",
+    )
+    ingest_docs.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help=f"SQLite database path (default: {DEFAULT_DB_PATH}).",
+    )
+    ingest_docs.add_argument(
+        "--skill",
+        default="pydantic_v1_to_v2",
+        help="Skill Pack id whose documentation snapshots should be ingested.",
+    )
+
+    retrieve_docs = subparsers.add_parser(
+        _RETRIEVE_DOCS_COMMAND,
+        help="Run keyword RAG over an ingested documentation source (stage 4).",
+    )
+    retrieve_docs.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help=f"SQLite database path (default: {DEFAULT_DB_PATH}).",
+    )
+    retrieve_docs.add_argument("--source", required=True, help="Documentation source id to query.")
+    retrieve_docs.add_argument("--query", required=True, help="Keyword query (e.g. 'validator').")
+    retrieve_docs.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Maximum number of evidence chunks to return (default: 5).",
+    )
 
     list_skills = subparsers.add_parser(
         _LIST_SKILLS_COMMAND,
@@ -144,11 +194,14 @@ def _invalid_request_result(
     )
 
 
-def _emit(result: BaseModel) -> None:
+def _emit(result: object) -> None:
     """Write the result as UTF-8 JSON, independent of console encoding."""
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")
-    payload = json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False)
+    if isinstance(result, BaseModel):
+        payload = json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False)
+    else:
+        payload = json.dumps(result, indent=2, ensure_ascii=False)
     sys.stdout.write(payload + "\n")
 
 
@@ -187,7 +240,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
 
     if args.command == _SCAN_CODE_COMMAND:
-        _emit(scan_code_evidence(args.repo, args.dependency))
+        report = scan_code_evidence(args.repo, args.dependency)
+        if args.db is not None:
+            engine = engine_for(args.db)
+            init_db(engine)
+            session = session_for(engine)()
+            try:
+                persisted = persist_code_report(session, report)
+                sys.stderr.write(f"upgradelens: persisted {persisted} code usages to {args.db}\n")
+            finally:
+                session.close()
+        _emit(report)
+        return EXIT_OK
+
+    if args.command == _INGEST_DOCS_COMMAND:
+        skill = builtin_registry().get(args.skill)
+        if skill is None:
+            sys.stderr.write(f"upgradelens: unknown skill '{args.skill}'\n")
+            return EXIT_INVALID_REQUEST
+        engine = engine_for(args.db)
+        init_db(engine)
+        session = session_for(engine)()
+        try:
+            records = ingest_skill(session, skill)
+            _emit([rec.model_dump(mode="json") for rec in records])
+        finally:
+            session.close()
+        return EXIT_OK
+
+    if args.command == _RETRIEVE_DOCS_COMMAND:
+        engine = engine_for(args.db)
+        init_db(engine)
+        session = session_for(engine)()
+        try:
+            run = retrieve(session, args.source, args.query, top_k=args.top_k)
+            _emit(run)
+        finally:
+            session.close()
         return EXIT_OK
 
     try:

@@ -1,0 +1,70 @@
+- id: pydantic_validator
+  kind: decorator
+  match: validator
+  usage_type: deprecated_decorator
+  risk_hint: "pydantic v1 @validator 在 v2 中弃用，应迁移到 @field_validator。"
+  retrieval_queries:
+    - "pydantic v1 validator migration to field_validator"
+    - "pydantic migration guide validator root_validator"
+  severity: high
+  confidence: high
+
+- id: pydantic_root_validator
+  kind: decorator
+  match: root_validator
+  usage_type: deprecated_decorator
+  risk_hint: "pydantic v1 @root_validator 在 v2 中弃用，应迁移到 @model_validator。"
+  retrieval_queries:
+    - "pydantic v1 root_validator migration to model_validator"
+  severity: high
+  confidence: high
+
+- id: pydantic_config_class
+  kind: class_config
+  match: Config
+  usage_type: model_config
+  risk_hint: "v1 内部 Config 类在 v2 中应改为 model_config = ConfigDict(...)。"
+  retrieval_queries:
+    - "pydantic v1 Config class to model_config"
+  severity: medium
+  confidence: high
+
+- id: pydantic_orm_mode
+  kind: attribute_access
+  match: orm_mode
+  usage_type: config_attribute
+  risk_hint: "Config.orm_mode 在 v2 中改名为 from_attributes。"
+  retrieval_queries:
+    - "pydantic orm_mode from_attributes migration"
+  severity: medium
+  confidence: high
+
+- id: pydantic_dict_method
+  kind: method_call
+  match: dict
+  usage_type: serialization_method
+  risk_hint: "model.dict() 在 v2 中建议改为 model_dump()。"
+  retrieval_queries:
+    - "pydantic dict method model_dump migration"
+  severity: medium
+  confidence: high
+
+- id: pydantic_json_method
+  kind: method_call
+  match: json
+  usage_type: serialization_method
+  risk_hint: "model.json() 在 v2 中建议改为 model_dump_json()。"
+  retrieval_queries:
+    - "pydantic json method model_dump_json migration"
+  severity: medium
+  confidence: high
+
+- id: pydantic_parse_obj
+  kind: method_call
+  match: parse_obj
+  usage_type: parsing_method
+  risk_hint: "Model.parse_obj(...) 在 v2 中建议改为 Model.model_validate(...)。"
+  retrieval_queries:
+    - "pydantic parse_obj model_validate migration"
+  severity: medium
+  confidence: high

@@ -9,7 +9,10 @@ Subcommands:
 - ``scan-dependency`` (stage 1) — how a dependency is declared and how it
   compares to a target version;
 - ``scan-code`` (stage 2) — where a dependency is used in Python source, as AST
-  code evidence.
+  code evidence;
+- ``list-skills`` (stage 3) — list the built-in Skill Packs;
+- ``resolve-skill`` (stage 3) — pick the best Skill Pack for a dependency +
+  target version (generic fallback when nothing matches).
 
 Exit codes:
 
@@ -43,6 +46,7 @@ from upgradelens.domain import (
     ParseIssue,
     ResolutionStatus,
 )
+from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 
 __all__ = ["build_parser", "main"]
 
@@ -52,6 +56,8 @@ EXIT_USAGE = 2
 
 _SCAN_COMMAND = "scan-dependency"
 _SCAN_CODE_COMMAND = "scan-code"
+_LIST_SKILLS_COMMAND = "list-skills"
+_RESOLVE_SKILL_COMMAND = "resolve-skill"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,8 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="upgradelens",
         description=(
-            "Static upgrade analysis: dependency manifests (stage 1) and "
-            "Python AST code evidence (stage 2)."
+            "Static upgrade analysis: dependency manifests (stage 1), "
+            "Python AST code evidence (stage 2) and Skill Pack resolution (stage 3)."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -88,6 +94,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     code.add_argument("--repo", required=True, type=Path, help="Repository root to scan.")
     code.add_argument("--dependency", required=True, help="Dependency name (any casing).")
+
+    list_skills = subparsers.add_parser(
+        _LIST_SKILLS_COMMAND,
+        help="List the built-in Skill Packs and their version ranges.",
+    )
+    list_skills.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help="Optional directory of Skill Packs to list (defaults to built-in).",
+    )
+
+    resolve = subparsers.add_parser(
+        _RESOLVE_SKILL_COMMAND,
+        help="Resolve the best Skill Pack for a dependency + target version.",
+    )
+    resolve.add_argument("--dependency", required=True, help="Dependency name (any casing).")
+    resolve.add_argument("--target-version", required=True, help="Target PEP 440 version.")
+    resolve.add_argument(
+        "--source-version",
+        default=None,
+        help="Optional source PEP 440 version to narrow the match.",
+    )
     return parser
 
 
@@ -127,6 +156,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``upgradelens`` script."""
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == _LIST_SKILLS_COMMAND:
+        if args.base_dir is not None:
+            registry: SkillRegistry = SkillRegistry.from_directory(args.base_dir)
+        else:
+            registry = builtin_registry()
+        _emit(registry.catalog())
+        return EXIT_OK
+
+    if args.command == _RESOLVE_SKILL_COMMAND:
+        try:
+            selection = builtin_registry().select_skill(
+                args.dependency, args.target_version, args.source_version
+            )
+        except SkillParseError as exc:
+            errors = [ParseIssue(code=IssueCode.INVALID_REQUEST, message=str(exc))]
+            _emit(
+                DependencyScanResult(
+                    requested_name=args.dependency,
+                    dependency_name=canonicalize_name(args.dependency.strip()),
+                    status=ResolutionStatus.INVALID,
+                    target_version=args.target_version,
+                    errors=errors,
+                )
+            )
+            sys.stderr.write("upgradelens: invalid request\n")
+            return EXIT_INVALID_REQUEST
+        _emit(selection)
+        return EXIT_OK
 
     if args.command == _SCAN_CODE_COMMAND:
         _emit(scan_code_evidence(args.repo, args.dependency))

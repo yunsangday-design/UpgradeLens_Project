@@ -21,6 +21,15 @@ from upgradelens.domain.dependency import (
     VersionTransition,
     VersionTransitionKind,
 )
+from upgradelens.domain.skill import (
+    DocSource,
+    PatchRule,
+    SkillCatalog,
+    SkillCatalogEntry,
+    SkillPackage,
+    SkillSelection,
+    UsagePattern,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -40,4 +49,11 @@ __all__ = [
     "CodeEvidenceSummary",
     "TestProductionLink",
     "CodeEvidenceReport",
+    "DocSource",
+    "PatchRule",
+    "SkillCatalog",
+    "SkillCatalogEntry",
+    "SkillPackage",
+    "SkillSelection",
+    "UsagePattern",
 ]

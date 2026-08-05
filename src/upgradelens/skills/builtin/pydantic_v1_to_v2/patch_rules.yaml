@@ -1,0 +1,19 @@
+- id: pydantic_validator_to_field_validator
+  precondition: "用法为模型上的 @validator 装饰器"
+  forbid_condition: "validator 使用 pre=True 且依赖类方法语义"
+  target_pattern: "@validator('field')"
+  replacement_template: "@field_validator('field')"
+  required_evidence:
+    - pydantic_validator
+  requires_quality_model: true
+  patch_risk_level: medium
+
+- id: pydantic_dict_to_model_dump
+  precondition: "model.dict() 调用且不带自定义 encoder"
+  forbid_condition: "dict() 调用对象不是 pydantic 模型"
+  target_pattern: "obj.dict("
+  replacement_template: "obj.model_dump("
+  required_evidence:
+    - pydantic_dict_method
+  requires_quality_model: false
+  patch_risk_level: low

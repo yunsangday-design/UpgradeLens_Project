@@ -1,0 +1,16 @@
+- id: pydantic_migration_guide
+  url: https://docs.pydantic.dev/latest/migration/
+  source_type: migration_guide
+  trust_level: official
+  target_version_spec: ">=2,<3"
+  fixture_snapshot: sources/pydantic_migration.html
+  fetch_strategy: html
+  parse_strategy: extract_sections
+
+- id: pydantic_changelog
+  url: https://docs.pydantic.dev/latest/changelog/
+  source_type: changelog
+  trust_level: official
+  target_version_spec: ">=2,<3"
+  fetch_strategy: html
+  parse_strategy: extract_breaking

@@ -1,0 +1,17 @@
+- id: generic_import
+  kind: import
+  match: "*"
+  usage_type: import
+  risk_hint: "通用依赖导入；无专门知识包，无法评估破坏性变更。"
+  retrieval_queries: []
+  severity: info
+  confidence: low
+
+- id: generic_call
+  kind: method_call
+  match: "*"
+  usage_type: call
+  risk_hint: "通用调用；无专门知识包，无法评估破坏性变更。"
+  retrieval_queries: []
+  severity: info
+  confidence: low

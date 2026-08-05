@@ -43,6 +43,7 @@ from packaging.utils import canonicalize_name
 from pydantic import BaseModel, ValidationError
 
 from upgradelens.analyzers import scan_code_evidence, scan_dependency
+from upgradelens.config import Settings
 from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
 from upgradelens.db.repository import persist_code_report
 from upgradelens.docs import ingest_skill, retrieve
@@ -53,6 +54,9 @@ from upgradelens.domain import (
     ParseIssue,
     ResolutionStatus,
 )
+from upgradelens.graph import AssessmentSpec, retrieve_skill_evidence, run_assessment
+from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
+from upgradelens.models.impact import build_bundle
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 
 __all__ = ["build_parser", "main"]
@@ -67,6 +71,7 @@ _LIST_SKILLS_COMMAND = "list-skills"
 _RESOLVE_SKILL_COMMAND = "resolve-skill"
 _INGEST_DOCS_COMMAND = "ingest-docs"
 _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
+_ASSESS_COMMAND = "assess"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -167,6 +172,44 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional source PEP 440 version to narrow the match.",
     )
+
+    assess = subparsers.add_parser(
+        _ASSESS_COMMAND,
+        help="Run the model-backed upgrade impact assessment (stage 5).",
+    )
+    assess.add_argument("--repo", required=True, type=Path, help="Repository root to scan.")
+    assess.add_argument("--dependency", required=True, help="Dependency name (any casing).")
+    assess.add_argument(
+        "--target-version",
+        default=None,
+        help="Target version spec (defaults to the resolved skill's target).",
+    )
+    assess.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Optional SQLite database with ingested docs for documentation evidence.",
+    )
+    assess.add_argument(
+        "--source-id",
+        default=None,
+        help="Optional documentation source id to scope retrieval (defaults to the skill id).",
+    )
+    assess.add_argument(
+        "--mode",
+        default=None,
+        choices=["fake", "replay", "live"],
+        help="Model gateway mode (defaults to UPGRADELENS_MODEL_MODE, then 'fake').",
+    )
+    assess.add_argument("--model", default=None, help="Model name (live mode).")
+    assess.add_argument("--api-key", default=None, help="API key (live mode, overrides env).")
+    assess.add_argument("--base-url", default=None, help="OpenAI-compatible base url (live mode).")
+    assess.add_argument(
+        "--budget-tokens",
+        type=int,
+        default=None,
+        help="Maximum total tokens for the assessment (model calls rejected beyond it).",
+    )
     return parser
 
 
@@ -203,6 +246,66 @@ def _emit(result: object) -> None:
     else:
         payload = json.dumps(result, indent=2, ensure_ascii=False)
     sys.stdout.write(payload + "\n")
+
+
+def _build_model_config(args: argparse.Namespace, settings: Settings) -> ModelConfig:
+    """Resolve the model gateway configuration from CLI flags and settings."""
+    mode = (
+        ModelMode(args.mode)
+        if getattr(args, "mode", None)
+        else (ModelMode(settings.model_mode) if settings.model_mode else ModelMode.FAKE)
+    )
+    api_key = ""
+    if getattr(args, "api_key", None):
+        api_key = args.api_key
+    elif settings.model_api_key is not None:
+        api_key = settings.model_api_key.get_secret_value()
+    return ModelConfig(
+        mode=mode,
+        base_url=getattr(args, "base_url", None) or settings.model_base_url,
+        model=getattr(args, "model", None) or settings.model_name,
+        api_key=api_key,
+        max_total_tokens=getattr(args, "budget_tokens", None) or settings.model_max_total_tokens,
+    )
+
+
+def _assess_command(args: argparse.Namespace) -> int:
+    """Run the stage 5 closed loop and print a structured impact report."""
+    settings = Settings()
+    registry = builtin_registry()
+    skill = registry.get(args.dependency)
+    code_report = scan_code_evidence(args.repo, args.dependency)
+
+    session = None
+    if args.db is not None:
+        engine = engine_for(args.db)
+        init_db(engine)
+        session = session_for(engine)()
+
+    try:
+        doc_evidences = (
+            retrieve_skill_evidence(session, skill, source_id=args.source_id)
+            if (session is not None and skill is not None)
+            else []
+        )
+        bundle = build_bundle(code_report, doc_evidences, dependency=args.dependency)
+        target_version = args.target_version or (skill.target_version_spec if skill else "") or ""
+        source_version = getattr(code_report, "version", "") or ""
+        spec = AssessmentSpec(
+            repo=str(args.repo),
+            dependency=args.dependency,
+            target_version_spec=target_version,
+            source_version_spec=source_version,
+        )
+        config = _build_model_config(args, settings)
+        gateway = ModelGateway(config)
+        report = run_assessment(spec, bundle, gateway, skill=skill)
+    finally:
+        if session is not None:
+            session.close()
+
+    _emit(report)
+    return EXIT_OK
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -278,6 +381,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         finally:
             session.close()
         return EXIT_OK
+
+    if args.command == _ASSESS_COMMAND:
+        return _assess_command(args)
 
     try:
         request = DependencyAnalysisRequest(

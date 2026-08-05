@@ -23,6 +23,7 @@ FIXTURE_DIRS = sorted(path for path in FIXTURES_ROOT.iterdir() if path.is_dir())
 # file (no expected_dependency_scan.json); keep them out of the stage 1 checks.
 STAGE2_CODE_FIXTURES = {"pydantic_usage"}
 STAGE1_FIXTURE_DIRS = [p for p in FIXTURE_DIRS if p.name not in STAGE2_CODE_FIXTURES]
+STAGE1_FIXTURE_IDS = [p.name for p in STAGE1_FIXTURE_DIRS]
 
 
 def _fixture_ids() -> list[str]:
@@ -39,7 +40,7 @@ def test_fixture_set_is_complete() -> None:
     ]
 
 
-@pytest.mark.parametrize("fixture_dir", STAGE1_FIXTURE_DIRS, ids=[p.name for p in STAGE1_FIXTURE_DIRS])
+@pytest.mark.parametrize("fixture_dir", STAGE1_FIXTURE_DIRS, ids=STAGE1_FIXTURE_IDS)
 def test_fixture_matches_expected_contract(fixture_dir: Path) -> None:
     request_data = json.loads((fixture_dir / "request.json").read_text(encoding="utf-8"))
     expected = json.loads(
@@ -57,7 +58,7 @@ def test_fixture_matches_expected_contract(fixture_dir: Path) -> None:
     assert result.model_dump(mode="json") == expected
 
 
-@pytest.mark.parametrize("fixture_dir", STAGE1_FIXTURE_DIRS, ids=[p.name for p in STAGE1_FIXTURE_DIRS])
+@pytest.mark.parametrize("fixture_dir", STAGE1_FIXTURE_DIRS, ids=STAGE1_FIXTURE_IDS)
 def test_fixture_paths_are_posix_relative(fixture_dir: Path) -> None:
     expected = json.loads(
         (fixture_dir / "expected_dependency_scan.json").read_text(encoding="utf-8")

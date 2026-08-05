@@ -205,3 +205,43 @@ def test_output_is_pretty_printed_json(capsys: pytest.CaptureFixture[str], tmp_p
     assert out.startswith("{\n")
     assert out.endswith("}\n")
     assert '\n  "schema_version": "1.0",' in out
+
+
+def test_scan_code_reports_usages(capsys: pytest.CaptureFixture[str]) -> None:
+    fixture = FIXTURES_ROOT / "pydantic_usage"
+    code, payload, err = _run(
+        capsys,
+        "scan-code",
+        "--repo",
+        str(fixture / "repo"),
+        "--dependency",
+        "pydantic",
+    )
+
+    assert code == EXIT_OK
+    assert payload["dependency_name"] == "pydantic"
+    assert payload["schema_version"] == "1.0"
+    assert payload["summary"]["usage_count"] > 0
+    assert any(u["kind"] == "class_base" for u in payload["usages"])
+    assert any(u["kind"] == "decorator" for u in payload["usages"])
+    assert any(u["is_test_code"] for u in payload["usages"])
+    assert err == ""
+
+
+def test_scan_code_output_never_leaks_absolute_paths(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = FIXTURES_ROOT / "pydantic_usage"
+    _, payload, _ = _run(
+        capsys,
+        "scan-code",
+        "--repo",
+        str(fixture / "repo"),
+        "--dependency",
+        "pydantic",
+    )
+    serialized = json.dumps(payload)
+    assert str(fixture) not in serialized
+    for usage in payload["usages"]:
+        assert not usage["path"].startswith("/")
+        assert "\\" not in usage["path"]

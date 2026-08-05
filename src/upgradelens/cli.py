@@ -1,8 +1,15 @@
-"""Command line interface for UpgradeLens stage 1 (plan section 8.10).
+"""Command line interface for UpgradeLens (plan sections 8.10 and 1652).
 
 The CLI is deliberately thin: validate arguments, call the analyzer, print the
 JSON contract, return an exit code. It contains no parsing rules of its own, so
 the CLI and any future API return byte-identical documents.
+
+Subcommands:
+
+- ``scan-dependency`` (stage 1) — how a dependency is declared and how it
+  compares to a target version;
+- ``scan-code`` (stage 2) — where a dependency is used in Python source, as AST
+  code evidence.
 
 Exit codes:
 
@@ -26,9 +33,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from upgradelens.analyzers import scan_dependency
+from upgradelens.analyzers import scan_code_evidence, scan_dependency
 from upgradelens.domain import (
     DependencyAnalysisRequest,
     DependencyScanResult,
@@ -44,13 +51,17 @@ EXIT_INVALID_REQUEST = 1
 EXIT_USAGE = 2
 
 _SCAN_COMMAND = "scan-dependency"
+_SCAN_CODE_COMMAND = "scan-code"
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the ``upgradelens`` executable."""
     parser = argparse.ArgumentParser(
         prog="upgradelens",
-        description="Static upgrade analysis. Stage 1 scans dependency manifests only.",
+        description=(
+            "Static upgrade analysis: dependency manifests (stage 1) and "
+            "Python AST code evidence (stage 2)."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -70,6 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to pyproject.toml then requirements.txt."
         ),
     )
+
+    code = subparsers.add_parser(
+        _SCAN_CODE_COMMAND,
+        help="Report where a dependency is used in Python source (AST code evidence).",
+    )
+    code.add_argument("--repo", required=True, type=Path, help="Repository root to scan.")
+    code.add_argument("--dependency", required=True, help="Dependency name (any casing).")
     return parser
 
 
@@ -97,7 +115,7 @@ def _invalid_request_result(
     )
 
 
-def _emit(result: DependencyScanResult) -> None:
+def _emit(result: BaseModel) -> None:
     """Write the result as UTF-8 JSON, independent of console encoding."""
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -109,6 +127,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``upgradelens`` script."""
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == _SCAN_CODE_COMMAND:
+        _emit(scan_code_evidence(args.repo, args.dependency))
+        return EXIT_OK
 
     try:
         request = DependencyAnalysisRequest(

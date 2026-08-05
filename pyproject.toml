@@ -37,6 +37,10 @@ addopts = "-q"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# Fixture repositories are test data, not project code; some contain
+# intentionally broken or shadowed source, so they must not be linted or
+# formatted.
+exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]

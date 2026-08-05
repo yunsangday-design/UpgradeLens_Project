@@ -19,6 +19,11 @@ from upgradelens.analyzers import scan_repository
 FIXTURES_ROOT = Path(__file__).resolve().parents[1] / "fixtures"
 FIXTURE_DIRS = sorted(path for path in FIXTURES_ROOT.iterdir() if path.is_dir())
 
+# Stage 2 code-evidence fixtures (e.g. pydantic_usage) use a different contract
+# file (no expected_dependency_scan.json); keep them out of the stage 1 checks.
+STAGE2_CODE_FIXTURES = {"pydantic_usage"}
+STAGE1_FIXTURE_DIRS = [p for p in FIXTURE_DIRS if p.name not in STAGE2_CODE_FIXTURES]
+
 
 def _fixture_ids() -> list[str]:
     return [path.name for path in FIXTURE_DIRS]
@@ -29,11 +34,12 @@ def test_fixture_set_is_complete() -> None:
         "pydantic_config",
         "pydantic_root_validator",
         "pydantic_serialization",
+        "pydantic_usage",
         "pydantic_validator",
     ]
 
 
-@pytest.mark.parametrize("fixture_dir", FIXTURE_DIRS, ids=_fixture_ids())
+@pytest.mark.parametrize("fixture_dir", STAGE1_FIXTURE_DIRS, ids=[p.name for p in STAGE1_FIXTURE_DIRS])
 def test_fixture_matches_expected_contract(fixture_dir: Path) -> None:
     request_data = json.loads((fixture_dir / "request.json").read_text(encoding="utf-8"))
     expected = json.loads(
@@ -51,7 +57,7 @@ def test_fixture_matches_expected_contract(fixture_dir: Path) -> None:
     assert result.model_dump(mode="json") == expected
 
 
-@pytest.mark.parametrize("fixture_dir", FIXTURE_DIRS, ids=_fixture_ids())
+@pytest.mark.parametrize("fixture_dir", STAGE1_FIXTURE_DIRS, ids=[p.name for p in STAGE1_FIXTURE_DIRS])
 def test_fixture_paths_are_posix_relative(fixture_dir: Path) -> None:
     expected = json.loads(
         (fixture_dir / "expected_dependency_scan.json").read_text(encoding="utf-8")

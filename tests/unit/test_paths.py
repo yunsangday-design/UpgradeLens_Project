@@ -30,8 +30,10 @@ def test_read_text_accepts_lf(tmp_path: Path) -> None:
 
 
 def test_read_text_accepts_crlf(tmp_path: Path) -> None:
+    # Write raw bytes so the on-disk content is exactly CRLF regardless of the
+    # platform's text-mode newline translation.
     path = tmp_path / "b.txt"
-    path.write_text("line1\r\nline2\r\n", encoding="utf-8")
+    path.write_bytes(b"line1\r\nline2\r\n")
     assert read_text_utf8(path).splitlines() == ["line1", "line2"]
 
 

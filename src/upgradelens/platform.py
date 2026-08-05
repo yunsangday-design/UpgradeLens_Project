@@ -30,10 +30,14 @@ def to_posix_rel_path(repo_root: Path, target: Path) -> str:
 
 
 def read_text_utf8(path: Path) -> str:
-    """Read a text file as UTF-8 using universal newlines.
+    """Read a text file as UTF-8 with explicit newline normalisation.
 
-    ``CRLF`` and ``LF`` inputs both yield ``\\n`` line endings, so parsers and
-    line numbers behave identically regardless of the platform that produced
-    the file.
+    ``newline=""`` disables Python's automatic universal-newline translation on
+    read so the bytes are identical on every platform; we then collapse
+    ``CRLF`` to ``LF`` first and any stray ``CR`` afterwards. This guarantees
+    parsers and line numbers behave the same regardless of the OS that produced
+    the file (and is what makes the Windows CI matrix behave like macOS).
     """
-    return Path(path).read_text(encoding="utf-8")
+    with Path(path).open("r", encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    return text.replace("\r\n", "\n").replace("\r", "\n")

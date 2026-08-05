@@ -1,0 +1,5 @@
+# 依赖清单：配置层使用 pydantic 的 email 校验能力
+# 本文件用于验证 UTF-8 注释、行尾注释、extras 与 marker
+
+Pydantic[email]==1.10.13 ; python_version >= "3.8"  # 配置模型使用
+python-dotenv==1.0.0

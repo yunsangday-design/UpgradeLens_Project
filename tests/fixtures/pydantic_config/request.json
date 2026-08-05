@@ -1,0 +1,6 @@
+{
+  "repository_root": "repo",
+  "dependency_name": "PyDantic",
+  "target_version": "2.0.0",
+  "manifest_path": null
+}

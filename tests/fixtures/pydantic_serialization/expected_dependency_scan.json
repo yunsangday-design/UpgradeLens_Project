@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "requested_name": "pydantic",
+  "dependency_name": "pydantic",
+  "status": "ambiguous",
+  "current_version": null,
+  "current_specifier": "<2,>=1.10",
+  "target_version": "2.0.0",
+  "transition": "unknown",
+  "cross_major": null,
+  "declarations": [
+    {
+      "manifest_type": "pyproject_toml",
+      "path": "pyproject.toml",
+      "location": "[project].dependencies[0]",
+      "raw": "pydantic>=1.10,<2",
+      "raw_name": "pydantic",
+      "specifier": "<2,>=1.10",
+      "extras": [],
+      "marker": null
+    },
+    {
+      "manifest_type": "requirements_txt",
+      "path": "requirements.txt",
+      "location": "line:1",
+      "raw": "pydantic>=1.10,<2",
+      "raw_name": "pydantic",
+      "specifier": "<2,>=1.10",
+      "extras": [],
+      "marker": null
+    }
+  ],
+  "warnings": [
+    {
+      "code": "duplicate_declaration",
+      "message": "Dependency is declared more than once with the same specifier '<2,>=1.10'.",
+      "manifest_type": "requirements_txt",
+      "path": "requirements.txt",
+      "location": "line:1"
+    },
+    {
+      "code": "ambiguous_specifier",
+      "message": "Specifier '<2,>=1.10' is a range, so the installed version cannot be inferred from the manifest.",
+      "manifest_type": null,
+      "path": null,
+      "location": null
+    }
+  ],
+  "errors": []
+}

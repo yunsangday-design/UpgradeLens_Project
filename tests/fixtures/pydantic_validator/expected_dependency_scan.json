@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "requested_name": "pydantic",
+  "dependency_name": "pydantic",
+  "status": "resolved",
+  "current_version": "1.10.13",
+  "current_specifier": "==1.10.13",
+  "target_version": "2.0.0",
+  "transition": "upgrade",
+  "cross_major": true,
+  "declarations": [
+    {
+      "manifest_type": "requirements_txt",
+      "path": "requirements.txt",
+      "location": "line:2",
+      "raw": "pydantic==1.10.13",
+      "raw_name": "pydantic",
+      "specifier": "==1.10.13",
+      "extras": [],
+      "marker": null
+    }
+  ],
+  "warnings": [],
+  "errors": []
+}

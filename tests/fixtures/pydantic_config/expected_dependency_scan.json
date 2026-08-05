@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "requested_name": "PyDantic",
+  "dependency_name": "pydantic",
+  "status": "resolved",
+  "current_version": "1.10.13",
+  "current_specifier": "==1.10.13",
+  "target_version": "2.0.0",
+  "transition": "upgrade",
+  "cross_major": true,
+  "declarations": [
+    {
+      "manifest_type": "requirements_txt",
+      "path": "requirements.txt",
+      "location": "line:4",
+      "raw": "Pydantic[email]==1.10.13 ; python_version >= \"3.8\"",
+      "raw_name": "Pydantic",
+      "specifier": "==1.10.13",
+      "extras": ["email"],
+      "marker": "python_version >= \"3.8\""
+    }
+  ],
+  "warnings": [
+    {
+      "code": "marker_conditional_declaration",
+      "message": "Declaration is guarded by an environment marker; it may not apply to every environment.",
+      "manifest_type": "requirements_txt",
+      "path": "requirements.txt",
+      "location": "line:4"
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local config
+.env
+*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build / coverage outputs
+dist/
+build/
+*.egg-info/
+htmlcov/
+coverage.xml

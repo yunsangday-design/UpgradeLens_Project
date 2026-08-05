@@ -1,0 +1,9 @@
+[project]
+name = "legacy-root-validator-service"
+version = "0.3.1"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi==0.95.2",
+  "pydantic==1.10.13",
+  "uvicorn>=0.20",
+]

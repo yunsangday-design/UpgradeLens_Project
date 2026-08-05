@@ -1,0 +1,7 @@
+[project]
+name = "serialization-service"
+version = "1.2.0"
+requires-python = ">=3.9"
+dependencies = [
+  "pydantic>=1.10,<2",
+]

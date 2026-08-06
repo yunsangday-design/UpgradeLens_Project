@@ -92,6 +92,7 @@ _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 _ASSESS_COMMAND = "assess"
 _EVAL_COMMAND = "eval"
 _FETCH_DOCS_COMMAND = "fetch-docs"
+_MCP_COMMAND = "mcp"
 
 #: Shipped Core fixtures, resolved relative to the installed package so the
 #: command works from any working directory.
@@ -304,6 +305,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="md",
         choices=["json", "md"],
         help="Output format: Markdown summary (default) or JSON Tool Trace.",
+    )
+
+    mcp_server = subparsers.add_parser(
+        _MCP_COMMAND,
+        help="Start the UpgradeLens MCP server (requires the 'mcp' extra).",
+    )
+    mcp_server.add_argument(
+        "--transport",
+        default="stdio",
+        choices=["stdio", "sse", "streamable-http"],
+        help="MCP transport to serve (default: stdio).",
     )
 
     evaluate = subparsers.add_parser(
@@ -735,6 +747,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _FETCH_DOCS_COMMAND:
         return _fetch_docs_command(args)
+
+    if args.command == _MCP_COMMAND:
+        from upgradelens.mcp.server import mcp as _mcp_server
+
+        _mcp_server.run(transport=args.transport)
+        return EXIT_OK
 
     if args.command == _EVAL_COMMAND:
         return _eval_command(args)

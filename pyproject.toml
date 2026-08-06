@@ -17,10 +17,14 @@ dependencies = [
 
 [project.scripts]
 upgradelens = "upgradelens.cli:main"
+upgradelens-mcp = "upgradelens.mcp.server:serve"
 
 [project.optional-dependencies]
 demo = [
   "streamlit>=1.30",
+]
+mcp = [
+  "mcp>=1.2,<2",
 ]
 
 [dependency-groups]

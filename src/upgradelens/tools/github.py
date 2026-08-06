@@ -1,6 +1,6 @@
-"""GitHub client: release/changelog retrieval and restricted shallow clone.
+"""GitHub client: release/changelog retrieval, clone, and comment posting.
 
-Two very different capabilities live here:
+Three capabilities live here:
 
 * ``release_changelog`` talks to the public GitHub REST API (no auth needed for
   public repos). When the API is rate-limited or forbidden we *degrade* -- the
@@ -9,6 +9,10 @@ Two very different capabilities live here:
   **not** use :class:`RestrictedFetcher` (git does its own network), but the
   URL and branch/tag are validated beforehand so no shell metacharacter can
   reach the subprocess.
+* ``post_issue_comment`` / ``comment_pr`` -- the "close the loop" step: post an
+  assessment report back to a PR or issue as a comment. It is the only write
+  here and it reuses the read path's SSRF guard and trace, so posting stays
+  inside the same security model (no ad-hoc HTTP, token never logged).
 """
 
 from __future__ import annotations
@@ -16,7 +20,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
+from typing import Any
 
 from upgradelens.tools.errors import ApiDegradedError, ToolError
 from upgradelens.tools.fetcher import RestrictedFetcher
@@ -25,6 +33,9 @@ _GITHUB_API = "https://api.github.com"
 
 #: Refs we will accept for a shallow clone. Anything shell-shaped is rejected.
 _SAFE_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+#: ``owner/repo`` -- the slug shape GitHub uses for its API paths.
+_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 @dataclass
@@ -79,6 +90,101 @@ class GitHubClient:
                 )
             )
         return out
+
+    def post_issue_comment(
+        self,
+        repo_slug: str,
+        issue_number: int,
+        body: str,
+        *,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Post ``body`` as a comment on issue/PR ``issue_number`` of ``repo_slug``.
+
+        Returns the GitHub API payload (with ``html_url``/``id``). Raises
+        :class:`ToolError` on any failure -- callers should degrade gracefully
+        rather than abort the whole assessment.
+
+        Security: the target host is checked by the same SSRF guard the read
+        path uses, and the token is sent only as an ``Authorization`` header and
+        is never recorded in the trace.
+        """
+        if not _SLUG_RE.match(repo_slug):
+            raise ToolError(f"Invalid GitHub repo slug: {repo_slug!r}")
+        if not body.strip():
+            raise ToolError("Refusing to post an empty comment")
+        url = f"{_GITHUB_API}/repos/{repo_slug}/issues/{int(issue_number)}/comments"
+        if not self._fetcher.is_url_allowed(url):
+            raise ToolError("Refused: GitHub API host is not allowed by the HTTP policy")
+        payload = json.dumps({"body": body}).encode("utf-8")
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "User-Agent": "upgradelens",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        trace = self._fetcher.trace
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=30) as resp:
+                status = resp.getcode()
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            elapsed = (time.monotonic() - started) * 1000
+            snippet = exc.read().decode("utf-8", "replace")[:400]
+            trace.record(
+                tool="github.comment",
+                target=url,
+                status="error",
+                http_status=exc.code,
+                bytes_=len(payload),
+                latency_ms=elapsed,
+                error=f"HTTP {exc.code}: {snippet}",
+            )
+            raise ToolError(f"GitHub API returned {exc.code}: {snippet}") from exc
+        except OSError as exc:
+            elapsed = (time.monotonic() - started) * 1000
+            trace.record(
+                tool="github.comment",
+                target=url,
+                status="error",
+                bytes_=len(payload),
+                latency_ms=elapsed,
+                error=str(exc),
+            )
+            raise ToolError(f"GitHub API request failed: {exc}") from exc
+        elapsed = (time.monotonic() - started) * 1000
+        trace.record(
+            tool="github.comment",
+            target=url,
+            status="ok",
+            http_status=status,
+            bytes_=len(payload),
+            latency_ms=elapsed,
+        )
+        try:
+            data: dict[str, Any] = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            return {"html_url": None, "id": None}
+        return data
+
+    def comment_pr(
+        self,
+        repo_slug: str,
+        pr_number: int,
+        body: str,
+        *,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Post ``body`` as a comment on pull request ``pr_number``.
+
+        Pull requests are issues in GitHub's API, so this delegates to
+        :meth:`post_issue_comment`.
+        """
+        return self.post_issue_comment(repo_slug, pr_number, body, token=token)
 
 
 def validate_ref(ref: str) -> bool:

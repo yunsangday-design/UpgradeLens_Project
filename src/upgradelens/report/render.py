@@ -95,8 +95,13 @@ def _risk_block(risk: VerifiedRisk, *, index: int) -> list[str]:
     return lines
 
 
-def render_markdown(report: VerifiedReport) -> str:
-    """Render ``report`` as a Markdown document."""
+def render_markdown(report: VerifiedReport, max_chars: int | None = None) -> str:
+    """Render ``report`` as a Markdown document.
+
+    If ``max_chars`` is provided and the document is longer, the body is cut at
+    the nearest line boundary and a short note is appended. This keeps the
+    output within platform comment length caps (e.g. GitHub PR comments).
+    """
     dependency = report.target_dependency or "(unknown dependency)"
     lines: list[str] = [
         f"# Upgrade impact report — {dependency}",
@@ -165,4 +170,19 @@ def render_markdown(report: VerifiedReport) -> str:
     if report.notes:
         lines += ["## Notes", "", report.notes, ""]
 
-    return "\n".join(lines).rstrip() + "\n"
+    text = "\n".join(lines).rstrip() + "\n"
+    if max_chars is None or len(text) <= max_chars:
+        return text
+
+    # Truncate at the last line boundary that keeps us under the cap, then add
+    # a short notice. If even one line is too long, hard-cut to stay safe.
+    truncated: list[str] = []
+    used = 0
+    notice = "\n\n<!-- UpgradeLens: report truncated to fit the platform limit. -->\n"
+    for line in lines:
+        addition = len(line) + 1
+        if used + addition + len(notice) > max_chars and truncated:
+            break
+        truncated.append(line)
+        used += addition
+    return "\n".join(truncated).rstrip() + notice

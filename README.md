@@ -1,12 +1,14 @@
 # UpgradeLens
 
-Evidence-driven dependency upgrade pre-audit agent. This repository currently
-implements **stage 0-1**: a cross-platform engineering baseline and a
-deterministic manifest parser that locates a target dependency, identifies its
-current version constraint, compares it with a target version, and emits a
-stable JSON report.
+Evidence-driven dependency upgrade pre-audit agent. This repository implements
+the full **stage 1-8** pipeline (declaration scan → AST code evidence → Skill
+Packs → RAG document retrieval → model-backed assessment → verification & eval
+→ live doc fetch → patch draft), an **MCP server**, a **Streamlit demo**, and a
+**PR-comment** command that posts the assessment back to GitHub.
 
-> Status: stage 0-1 only. No LLM, RAG, database, or web UI yet.
+> Status: stages 1-8, MCP server, Streamlit demo, and `comment-pr` are
+> implemented. The model gateway defaults to `fake` (offline, deterministic);
+> switch to `live`/`replay` for real or recorded LLM runs.
 
 ## Requirements
 
@@ -56,6 +58,29 @@ uv run upgradelens scan-dependency \
   --repo tests/fixtures/pydantic_validator/repo \
   --dependency pydantic \
   --target-version 2.0.0
+```
+
+### Posting the assessment to a GitHub PR
+
+`comment-pr` runs the same assessment as `assess` and posts the rendered report
+as a comment on a pull request or issue. It reuses the project's SSRF-guarded,
+traced HTTP path, so posting stays inside the same security model (no ad-hoc
+HTTP, token never logged).
+
+```zsh
+# Offline-safe preview (renders and prints, does not post):
+uv run upgradelens comment-pr \
+  --repo . \
+  --dependency pydantic --target-version 2.0 \
+  --slug owner/repo --pr 123 \
+  --mode fake --dry-run
+
+# Real post (token from --token or the GITHUB_TOKEN env var):
+uv run upgradelens comment-pr \
+  --repo . \
+  --dependency pydantic --target-version 2.0 \
+  --slug owner/repo --pr 123 \
+  --mode live --token "$GITHUB_TOKEN"
 ```
 
 Options:

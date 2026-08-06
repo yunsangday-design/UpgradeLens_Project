@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import time
 import urllib.error
@@ -16,6 +17,7 @@ from upgradelens.tools.errors import (
     FetchTimeoutError,
     OutOfNetworkError,
     TooLargeError,
+    ToolError,
     TooManyRedirectsError,
 )
 from upgradelens.tools.fetcher import FetchConfig, RestrictedFetcher
@@ -306,6 +308,89 @@ def test_github_release_changelog_degrades_on_403() -> None:
         fetcher = RestrictedFetcher(opener=opener)
         # The client degrades gracefully (returns []), not crashes.
         assert GitHubClient(fetcher).release_changelog("o/r") == []
+
+
+class _CMResponse:
+    """Wrap a :class:`FakeResponse` so it satisfies the ``with`` protocol used
+    by :meth:`GitHubClient.post_issue_comment`."""
+
+    def __init__(self, inner: FakeResponse) -> None:
+        self._inner = inner
+
+    def __enter__(self) -> FakeResponse:
+        return self._inner
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+def test_is_url_allowed_permits_github_api_and_rejects_internal() -> None:
+    with patch.object(RestrictedFetcher, "_resolve_ips", return_value=["93.184.216.34"]):
+        fetcher = RestrictedFetcher()
+    assert fetcher.is_url_allowed("https://api.github.com/repos/o/r/issues/1/comments") is True
+    assert fetcher.is_url_allowed("https://localhost/x") is False
+    assert fetcher.is_url_allowed("file:///etc/passwd") is False
+
+
+def test_is_url_allowed_blocks_disallowed_host() -> None:
+    config = FetchConfig(allow_hosts=frozenset({"api.github.com"}))
+    with patch.object(RestrictedFetcher, "_resolve_ips", return_value=["93.184.216.34"]):
+        fetcher = RestrictedFetcher(config)
+    assert fetcher.is_url_allowed("https://api.github.com/repos/o/r/issues/1/comments") is True
+    assert fetcher.is_url_allowed("https://evil.example.com/x") is False
+
+
+def test_post_issue_comment_success_records_trace() -> None:
+    payload = {"html_url": "https://github.com/o/r/issues/1#issuecomment-9", "id": 9}
+    cm = _CMResponse(
+        FakeResponse(
+            201,
+            json.dumps(payload).encode(),
+            {"Content-Type": "application/json"},
+        )
+    )
+    with patch.object(RestrictedFetcher, "_resolve_ips", return_value=["93.184.216.34"]):
+        fetcher = RestrictedFetcher(trace=ToolTrace())
+        client = GitHubClient(fetcher)
+        with patch("urllib.request.urlopen", return_value=cm):
+            result = client.post_issue_comment("o/r", 1, "hello", token="secret")
+    assert result["id"] == 9
+    assert result["html_url"].endswith("9")
+    last = fetcher.trace.events[-1]
+    assert last.tool == "github.comment"
+    assert last.status == "ok"
+    assert last.http_status == 201
+
+
+def test_post_issue_comment_rejects_bad_slug() -> None:
+    client = GitHubClient(RestrictedFetcher(trace=ToolTrace()))
+    with pytest.raises(ToolError):
+        client.post_issue_comment("not-a-slug", 1, "body", token="t")
+
+
+def test_post_issue_comment_rejects_empty_body() -> None:
+    client = GitHubClient(RestrictedFetcher(trace=ToolTrace()))
+    with pytest.raises(ToolError):
+        client.post_issue_comment("o/r", 1, "   ", token="t")
+
+
+def test_post_issue_comment_http_error_raises_tool_error() -> None:
+    err = urllib.error.HTTPError(
+        "https://api.github.com/repos/o/r/issues/1/comments",
+        403,
+        "Forbidden",
+        {},
+        io.BytesIO(b"rate limited"),
+    )
+    with patch.object(RestrictedFetcher, "_resolve_ips", return_value=["93.184.216.34"]):
+        fetcher = RestrictedFetcher(trace=ToolTrace())
+        client = GitHubClient(fetcher)
+        with patch("urllib.request.urlopen", side_effect=err):
+            with pytest.raises(ToolError):
+                client.post_issue_comment("o/r", 1, "body", token="t")
+    last = fetcher.trace.events[-1]
+    assert last.status == "error"
+    assert last.http_status == 403
 
 
 def test_validate_ref_rejects_shell_metachars() -> None:

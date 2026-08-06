@@ -177,6 +177,24 @@ class RestrictedFetcher:
         if self._host_is_internal(host):
             raise OutOfNetworkError(f"host resolves to an internal address: {host}")
 
+    @property
+    def trace(self) -> ToolTrace:
+        """The trace this fetcher records into (handy for mutation callers)."""
+        return self._trace
+
+    def is_url_allowed(self, url: str) -> bool:
+        """Return ``True`` if ``url`` passes the SSRF/host guard.
+
+        Unlike :meth:`_check_url`, this never raises -- it is used by mutation
+        helpers (e.g. posting a GitHub comment) that must decide up front
+        whether a target host is permitted before opening a connection.
+        """
+        try:
+            self._check_url(url)
+        except ToolError:
+            return False
+        return True
+
     def _throttle(self, host: str) -> None:
         interval = self._config.min_interval_per_host
         if interval <= 0:

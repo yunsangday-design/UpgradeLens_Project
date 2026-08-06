@@ -40,8 +40,10 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
@@ -63,18 +65,20 @@ from upgradelens.domain.skill import SkillPackage
 from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
 from upgradelens.graph import AssessmentSpec, retrieve_skill_evidence, run_assessment
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
-from upgradelens.models.impact import build_bundle
+from upgradelens.models.impact import ImpactReport, build_bundle
 from upgradelens.patch import generate_patch_draft
 from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 from upgradelens.tools.cache import DocCache
 from upgradelens.tools.errors import ToolError
 from upgradelens.tools.fetcher import RestrictedFetcher
+from upgradelens.tools.github import GitHubClient
 from upgradelens.tools.ingest_live import ingest_live_source, ingest_pypi_changelog
 from upgradelens.tools.live_repo import clone_live_repo, is_repo_url
 from upgradelens.tools.pypi import PyPIClient
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify import verify_report
+from upgradelens.verify.models import VerifiedReport
 from upgradelens.verify.version_match import extract_version
 
 __all__ = ["build_parser", "main"]
@@ -82,6 +86,7 @@ __all__ = ["build_parser", "main"]
 EXIT_OK = 0
 EXIT_INVALID_REQUEST = 1
 EXIT_USAGE = 2
+EXIT_RUNTIME = 3
 
 _SCAN_COMMAND = "scan-dependency"
 _SCAN_CODE_COMMAND = "scan-code"
@@ -93,6 +98,7 @@ _ASSESS_COMMAND = "assess"
 _EVAL_COMMAND = "eval"
 _FETCH_DOCS_COMMAND = "fetch-docs"
 _MCP_COMMAND = "mcp"
+_COMMENT_PR_COMMAND = "comment-pr"
 
 #: Shipped Core fixtures, resolved relative to the installed package so the
 #: command works from any working directory.
@@ -100,6 +106,55 @@ DEFAULT_CASES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" /
 
 #: Default on-disk cache for fetched documents (stage 7 cache-first strategy).
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "upgradelens"
+
+
+def _add_assess_pipeline_args(p: argparse.ArgumentParser) -> None:
+    """Arguments shared by ``assess`` and ``comment-pr`` (the analysis pipeline)."""
+    p.add_argument("--repo", required=True, type=Path, help="Repository root (path or URL).")
+    p.add_argument("--dependency", required=True, metavar="NAME", help="Dependency to assess.")
+    p.add_argument(
+        "--target-version",
+        default=None,
+        help="Target version spec (defaults to the resolved skill's target).",
+    )
+    p.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Optional SQLite database with ingested docs for documentation evidence.",
+    )
+    p.add_argument(
+        "--source-id",
+        default=None,
+        help="Optional documentation source id to scope retrieval (defaults to the skill id).",
+    )
+    p.add_argument(
+        "--mode",
+        default=None,
+        choices=["fake", "replay", "live"],
+        help="Model gateway mode (defaults to UPGRADELENS_MODEL_MODE, then 'fake').",
+    )
+    p.add_argument("--model", default=None, help="Model name (live mode).")
+    p.add_argument("--api-key", default=None, help="API key (live mode, overrides env).")
+    p.add_argument("--base-url", default=None, help="OpenAI-compatible base url (live mode).")
+    p.add_argument(
+        "--record-replay",
+        metavar="DIR",
+        default=None,
+        help="Record every node response to DIR (use with --mode live). Replay mode "
+        "later reads from the same DIR to reproduce the run fully offline.",
+    )
+    p.add_argument(
+        "--budget-tokens",
+        type=int,
+        default=None,
+        help="Maximum total tokens for the assessment (model calls rejected beyond it).",
+    )
+    p.add_argument(
+        "--ref",
+        default=None,
+        help="Git branch/tag to clone when --repo is a GitHub URL (stage 7 live repo).",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -205,46 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
         _ASSESS_COMMAND,
         help="Run the model-backed upgrade impact assessment (stage 5).",
     )
-    assess.add_argument("--repo", required=True, type=Path, help="Repository root to scan.")
-    assess.add_argument("--dependency", required=True, help="Dependency name (any casing).")
-    assess.add_argument(
-        "--target-version",
-        default=None,
-        help="Target version spec (defaults to the resolved skill's target).",
-    )
-    assess.add_argument(
-        "--db",
-        type=Path,
-        default=None,
-        help="Optional SQLite database with ingested docs for documentation evidence.",
-    )
-    assess.add_argument(
-        "--source-id",
-        default=None,
-        help="Optional documentation source id to scope retrieval (defaults to the skill id).",
-    )
-    assess.add_argument(
-        "--mode",
-        default=None,
-        choices=["fake", "replay", "live"],
-        help="Model gateway mode (defaults to UPGRADELENS_MODEL_MODE, then 'fake').",
-    )
-    assess.add_argument("--model", default=None, help="Model name (live mode).")
-    assess.add_argument("--api-key", default=None, help="API key (live mode, overrides env).")
-    assess.add_argument("--base-url", default=None, help="OpenAI-compatible base url (live mode).")
-    assess.add_argument(
-        "--record-replay",
-        metavar="DIR",
-        default=None,
-        help="Record every node response to DIR (use with --mode live). Replay mode "
-        "later reads from the same DIR to reproduce the run fully offline.",
-    )
-    assess.add_argument(
-        "--budget-tokens",
-        type=int,
-        default=None,
-        help="Maximum total tokens for the assessment (model calls rejected beyond it).",
-    )
+    _add_assess_pipeline_args(assess)
     assess.add_argument(
         "--format",
         default="json",
@@ -257,11 +273,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit the unverified model report instead of the verified one (debugging).",
     )
     assess.add_argument(
-        "--ref",
-        default=None,
-        help="Git branch/tag to clone when --repo is a GitHub URL (stage 7 live repo).",
-    )
-    assess.add_argument(
         "--emit-patch",
         type=Path,
         default=None,
@@ -271,6 +282,42 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-quality-patch",
         action="store_true",
         help="Also draft patches whose rules require a quality model (use with care).",
+    )
+
+    comment_pr = subparsers.add_parser(
+        _COMMENT_PR_COMMAND,
+        help="Assess a repo and post the report as a comment on a GitHub PR/issue.",
+    )
+    _add_assess_pipeline_args(comment_pr)
+    comment_pr.add_argument(
+        "--slug",
+        required=True,
+        metavar="OWNER/REPO",
+        help="GitHub repo slug where the target PR/issue lives.",
+    )
+    comment_pr.add_argument(
+        "--pr",
+        required=True,
+        type=int,
+        metavar="N",
+        help="Pull request or issue number to comment on.",
+    )
+    comment_pr.add_argument(
+        "--token",
+        default=None,
+        help="GitHub token (defaults to the GITHUB_TOKEN environment variable).",
+    )
+    comment_pr.add_argument(
+        "--max-chars",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Truncate the comment to N characters (GitHub caps comments).",
+    )
+    comment_pr.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Render and print the comment without posting (offline-safe).",
     )
 
     fetch_docs = subparsers.add_parser(
@@ -441,11 +488,23 @@ def _resolve_skill(
     return None
 
 
-def _assess_command(args: argparse.Namespace) -> int:
-    """Run the stage 5 closed loop, verify it, and print the report.
+@dataclass
+class _AssessmentResult:
+    """The product of a full assessment run, shared by ``assess``/``comment-pr``."""
 
-    When ``--repo`` is a GitHub URL, the repository is shallow-cloned to a temp
-    dir first (stage 7); the checkout is always removed afterwards.
+    report: ImpactReport
+    verified: VerifiedReport
+    repo_path: Path
+    skill: SkillPackage | None
+    bundle: object
+
+
+def _assess_repo(args: argparse.Namespace) -> _AssessmentResult:
+    """Run the stage 5 closed loop and verify it.
+
+    Shared by ``assess`` and ``comment-pr`` so both expose identical analysis.
+    A failed live-repo clone raises :class:`SystemExit` (the caller translates
+    it to ``EXIT_INVALID_REQUEST``), preserving the old ``assess`` behaviour.
     """
     settings = Settings()
     registry = builtin_registry()
@@ -457,7 +516,7 @@ def _assess_command(args: argparse.Namespace) -> int:
             live_handle = clone_live_repo(repo_arg, getattr(args, "ref", None))
         except ToolError as exc:
             sys.stderr.write(f"upgradelens: cannot clone live repo: {exc}\n")
-            return EXIT_INVALID_REQUEST
+            raise SystemExit(EXIT_INVALID_REQUEST) from None
     repo_path = live_handle.path if live_handle is not None else Path(repo_arg)
 
     code_report = scan_code_evidence(repo_path, args.dependency)
@@ -504,10 +563,6 @@ def _assess_command(args: argparse.Namespace) -> int:
         if live_handle is not None:
             live_handle.cleanup()
 
-    if args.raw:
-        _emit(report)
-        return EXIT_OK
-
     verified = verify_report(
         report,
         repo_root=repo_path,
@@ -516,13 +571,74 @@ def _assess_command(args: argparse.Namespace) -> int:
         skill=skill,
         degradations=degradations,
     )
+    return _AssessmentResult(
+        report=report,
+        verified=verified,
+        repo_path=repo_path,
+        skill=skill,
+        bundle=bundle,
+    )
+
+
+def _assess_command(args: argparse.Namespace) -> int:
+    """Run the stage 5 closed loop, verify it, and print the report.
+
+    When ``--repo`` is a GitHub URL, the repository is shallow-cloned to a temp
+    dir first (stage 7); the checkout is always removed afterwards.
+    """
+    try:
+        result = _assess_repo(args)
+    except SystemExit as exc:
+        return int(exc.code) if exc.code else EXIT_INVALID_REQUEST
+
+    if args.raw:
+        _emit(result.report)
+        return EXIT_OK
+
     if args.format == "md":
-        _emit_text(render_markdown(verified))
+        _emit_text(render_markdown(result.verified))
     else:
-        _emit(verified)
+        _emit(result.verified)
 
     if args.emit_patch is not None:
-        _emit_patch_draft(args, verified, repo_path, skill, bundle)
+        _emit_patch_draft(args, result.verified, result.repo_path, result.skill, result.bundle)
+    return EXIT_OK
+
+
+def _comment_pr_command(args: argparse.Namespace) -> int:
+    """Assess a repository and post the report as a comment on a GitHub PR/issue.
+
+    The assessment pipeline is identical to ``assess`` (shared via
+    :func:`_assess_repo`). When ``--dry-run`` is set the rendered comment is
+    printed to stdout and nothing is posted -- useful for local/offline checks.
+    """
+    try:
+        result = _assess_repo(args)
+    except SystemExit as exc:
+        return int(exc.code) if exc.code else EXIT_INVALID_REQUEST
+
+    body = render_markdown(result.verified, max_chars=args.max_chars)
+    token = args.token or os.environ.get("GITHUB_TOKEN")
+    trace = ToolTrace()
+    fetcher = RestrictedFetcher(trace=trace, cache=None)
+    client = GitHubClient(fetcher)
+
+    if args.dry_run:
+        sys.stdout.write(body)
+        sys.stderr.write("upgradelens: --dry-run set; comment was not posted.\n")
+        return EXIT_OK
+
+    try:
+        posted = client.comment_pr(args.slug, args.pr, body, token=token)
+    except ToolError as exc:
+        sys.stderr.write(f"upgradelens: failed to post PR comment: {exc}\n")
+        return EXIT_RUNTIME
+
+    url = (posted or {}).get("html_url")
+    sys.stderr.write(
+        "upgradelens: posted assessment to "
+        f"{args.slug}#{args.pr}{(' (' + url + ')') if url else ''}\n"
+    )
     return EXIT_OK
 
 
@@ -744,6 +860,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _ASSESS_COMMAND:
         return _assess_command(args)
+
+    if args.command == _COMMENT_PR_COMMAND:
+        return _comment_pr_command(args)
 
     if args.command == _FETCH_DOCS_COMMAND:
         return _fetch_docs_command(args)

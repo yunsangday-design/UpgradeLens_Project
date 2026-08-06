@@ -38,6 +38,10 @@ module-name = "upgradelens"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Fixture repositories contain their own test files, which are *input data* for
+# the analyser, not tests of this project. Collecting them would fail on
+# unresolvable imports and intentionally broken syntax.
+norecursedirs = ["tests/fixtures"]
 
 [tool.ruff]
 target-version = "py312"

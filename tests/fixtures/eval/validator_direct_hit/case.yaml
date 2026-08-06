@@ -1,0 +1,17 @@
+case_id: validator_direct_hit
+description: >-
+  Production code uses the pydantic v1 @validator decorator and .dict(), both of
+  which changed in v2. The happiest of happy paths.
+dependency: pydantic
+source_version: "1.10"
+target_version: "2.7"
+skill_id: pydantic_v1_to_v2
+with_docs: true
+expect:
+  conclusion: impacted
+  min_verified_risks: 1
+  must_cite_paths:
+    - src/models.py
+  must_flag_symbols:
+    - validator
+  partial: false

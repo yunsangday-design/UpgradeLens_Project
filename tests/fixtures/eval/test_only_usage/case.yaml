@@ -1,0 +1,16 @@
+case_id: test_only_usage
+description: >-
+  The dependency appears only in test code. That is a genuine impact -- the test
+  suite will break -- but it must be scored lower than production breakage,
+  which the `production_code` factor is responsible for.
+dependency: pydantic
+source_version: "1.10"
+target_version: "2.7"
+skill_id: pydantic_v1_to_v2
+with_docs: true
+expect:
+  conclusion: impacted
+  must_cite_paths:
+    - tests/test_schema.py
+  max_severity: low
+  partial: false

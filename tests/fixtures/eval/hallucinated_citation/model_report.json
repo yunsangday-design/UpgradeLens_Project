@@ -1,0 +1,31 @@
+{
+  "schema_version": "impact-report/1",
+  "target_dependency": "pydantic",
+  "source_version_spec": "1.10",
+  "target_version_spec": "2.7",
+  "static": false,
+  "notes": "Synthetic model output used by the offline evaluation harness.",
+  "risks": [
+    {
+      "risk_id": "r-validator",
+      "title": "validator is removed in Pydantic v2",
+      "severity": "high",
+      "confidence": "high",
+      "evidence_ids": [
+        "{{code:src/models.py:validator}}",
+        "{{doc:0}}"
+      ],
+      "recommendation": "Replace @validator with @field_validator and add @classmethod."
+    },
+    {
+      "risk_id": "r-fabricated",
+      "title": "The inner Config class must be replaced by model_config",
+      "severity": "high",
+      "confidence": "high",
+      "evidence_ids": [
+        "code:pydantic:usage:0000000000deadbeef"
+      ],
+      "recommendation": "Migrate class Config to model_config = ConfigDict(...)."
+    }
+  ]
+}

@@ -54,10 +54,15 @@ from upgradelens.domain import (
     ParseIssue,
     ResolutionStatus,
 )
+from upgradelens.domain.skill import SkillPackage
+from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
 from upgradelens.graph import AssessmentSpec, retrieve_skill_evidence, run_assessment
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.models.impact import build_bundle
+from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
+from upgradelens.verify import verify_report
+from upgradelens.verify.version_match import extract_version
 
 __all__ = ["build_parser", "main"]
 
@@ -72,6 +77,11 @@ _RESOLVE_SKILL_COMMAND = "resolve-skill"
 _INGEST_DOCS_COMMAND = "ingest-docs"
 _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 _ASSESS_COMMAND = "assess"
+_EVAL_COMMAND = "eval"
+
+#: Shipped Core fixtures, resolved relative to the installed package so the
+#: command works from any working directory.
+DEFAULT_CASES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "eval"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -210,6 +220,47 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum total tokens for the assessment (model calls rejected beyond it).",
     )
+    assess.add_argument(
+        "--format",
+        default="json",
+        choices=["json", "md"],
+        help="Output format: machine JSON (default) or a Markdown report.",
+    )
+    assess.add_argument(
+        "--raw",
+        action="store_true",
+        help="Emit the unverified model report instead of the verified one (debugging).",
+    )
+
+    evaluate = subparsers.add_parser(
+        _EVAL_COMMAND,
+        help="Run the offline evaluation over the Core fixtures (stage 6).",
+    )
+    evaluate.add_argument(
+        "--cases",
+        type=Path,
+        default=DEFAULT_CASES_DIR,
+        help=f"Directory of evaluation cases (default: {DEFAULT_CASES_DIR}).",
+    )
+    evaluate.add_argument(
+        "--baseline",
+        action="append",
+        default=None,
+        choices=sorted(BASELINES),
+        help="Baseline to run; repeat to select several (default: all).",
+    )
+    evaluate.add_argument(
+        "--format",
+        default="md",
+        choices=["json", "md"],
+        help="Output format (default: Markdown summary).",
+    )
+    evaluate.add_argument(
+        "--fail-under",
+        type=float,
+        default=None,
+        help="Exit non-zero if the hybrid baseline pass rate is below this value (0..1).",
+    )
     return parser
 
 
@@ -248,6 +299,13 @@ def _emit(result: object) -> None:
     sys.stdout.write(payload + "\n")
 
 
+def _emit_text(text: str) -> None:
+    """Write pre-rendered text (Markdown) as UTF-8, bypassing JSON encoding."""
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.write(text)
+
+
 def _build_model_config(args: argparse.Namespace, settings: Settings) -> ModelConfig:
     """Resolve the model gateway configuration from CLI flags and settings."""
     mode = (
@@ -269,12 +327,41 @@ def _build_model_config(args: argparse.Namespace, settings: Settings) -> ModelCo
     )
 
 
+def _resolve_skill(
+    registry: SkillRegistry, dependency: str, target_version_spec: str | None
+) -> SkillPackage | None:
+    """Find the Skill Pack that serves ``dependency``.
+
+    ``SkillRegistry.get`` is keyed by *skill id*, not by package name, so it can
+    never resolve a dependency name. We try proper version-aware selection first
+    and fall back to a package-name match when the target version is missing or
+    not PEP 440 parseable (e.g. a raw spec like ``">=2.0"``).
+    """
+    concrete = extract_version(target_version_spec or "")
+    if concrete:
+        try:
+            selection = registry.select_skill(dependency, concrete)
+        except SkillParseError:
+            selection = None
+        if selection is not None:
+            found = registry.get(selection.skill_id)
+            if found is not None:
+                return found
+
+    canonical = canonicalize_name(dependency.strip())
+    for skill in registry.all():
+        if canonical in skill.canonical_package_names:
+            return skill
+    return None
+
+
 def _assess_command(args: argparse.Namespace) -> int:
-    """Run the stage 5 closed loop and print a structured impact report."""
+    """Run the stage 5 closed loop, verify it, and print the report."""
     settings = Settings()
     registry = builtin_registry()
-    skill = registry.get(args.dependency)
     code_report = scan_code_evidence(args.repo, args.dependency)
+
+    skill = _resolve_skill(registry, args.dependency, args.target_version)
 
     session = None
     if args.db is not None:
@@ -282,12 +369,23 @@ def _assess_command(args: argparse.Namespace) -> int:
         init_db(engine)
         session = session_for(engine)()
 
+    degradations: list[str] = []
     try:
         doc_evidences = (
             retrieve_skill_evidence(session, skill, source_id=args.source_id)
             if (session is not None and skill is not None)
             else []
         )
+        if session is None:
+            degradations.append(
+                "No documentation index was provided (--db); "
+                "risks cannot reach 'verified' without doc evidence."
+            )
+        if skill is None:
+            degradations.append(
+                f"No Skill Pack matched '{args.dependency}'; "
+                "severity rules fall back to generic scoring."
+            )
         bundle = build_bundle(code_report, doc_evidences, dependency=args.dependency)
         target_version = args.target_version or (skill.target_version_spec if skill else "") or ""
         source_version = getattr(code_report, "version", "") or ""
@@ -304,7 +402,46 @@ def _assess_command(args: argparse.Namespace) -> int:
         if session is not None:
             session.close()
 
-    _emit(report)
+    if args.raw:
+        _emit(report)
+        return EXIT_OK
+
+    verified = verify_report(
+        report,
+        repo_root=Path(args.repo),
+        bundle=bundle,
+        code_report=code_report,
+        skill=skill,
+        degradations=degradations,
+    )
+    if args.format == "md":
+        _emit_text(render_markdown(verified))
+    else:
+        _emit(verified)
+    return EXIT_OK
+
+
+def _eval_command(args: argparse.Namespace) -> int:
+    """Run the offline evaluation and print the baseline comparison."""
+    try:
+        result = run_evaluation(args.cases, baselines=args.baseline)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.stderr.write(f"upgradelens: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    if args.format == "md":
+        _emit_text(render_summary_markdown(result))
+    else:
+        _emit(result.to_dict())
+
+    if args.fail_under is not None:
+        hybrid = next((s for s in result.summaries if s.baseline == "hybrid"), None)
+        if hybrid is not None and hybrid.pass_rate < args.fail_under:
+            sys.stderr.write(
+                f"upgradelens: hybrid pass rate {hybrid.pass_rate:.0%} "
+                f"is below the required {args.fail_under:.0%}\n"
+            )
+            return EXIT_INVALID_REQUEST
     return EXIT_OK
 
 
@@ -384,6 +521,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _ASSESS_COMMAND:
         return _assess_command(args)
+
+    if args.command == _EVAL_COMMAND:
+        return _eval_command(args)
 
     try:
         request = DependencyAnalysisRequest(

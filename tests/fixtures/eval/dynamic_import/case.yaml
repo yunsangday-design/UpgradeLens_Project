@@ -1,0 +1,14 @@
+case_id: dynamic_import
+description: >-
+  The dependency is only reached through importlib. Static analysis cannot prove
+  what is used, so no risk may be promoted to "verified" on this evidence alone.
+dependency: pydantic
+source_version: "1.10"
+target_version: "2.7"
+skill_id: pydantic_v1_to_v2
+with_docs: true
+expect:
+  conclusion: evidence_insufficient
+  max_verified_risks: 0
+  must_cite_paths: []
+  partial: false

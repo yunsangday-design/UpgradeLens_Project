@@ -1,0 +1,15 @@
+case_id: parse_error
+description: >-
+  One file cannot be parsed. Coverage is therefore incomplete and the report
+  must say so instead of quietly analysing the remainder.
+dependency: pydantic
+source_version: "1.10"
+target_version: "2.7"
+skill_id: pydantic_v1_to_v2
+with_docs: true
+expect:
+  conclusion: impacted
+  min_verified_risks: 1
+  must_cite_paths:
+    - src/ok.py
+  partial: true

@@ -179,8 +179,12 @@ def build_bundle(
                 meta={
                     "path": usage.path,
                     "line": usage.start_line,
+                    "end_line": usage.end_line,
                     "usage_kind": str(usage.kind),
                     "symbol": usage.symbol,
+                    "content_hash": usage.content_hash,
+                    "is_test_code": usage.is_test_code,
+                    "confidence": usage.confidence,
                 },
             )
         )
@@ -193,7 +197,7 @@ def build_bundle(
                 kind="parse_error",
                 summary=f"parse error in {rel}: {perr.message}",
                 detail=f"{rel}: {perr.message}",
-                meta={"path": perr.path},
+                meta={"path": perr.path, "is_test_code": perr.is_test_code},
             )
         )
     for dyn in code_report.dynamic_imports:
@@ -205,7 +209,13 @@ def build_bundle(
                 kind="dynamic_import",
                 summary=f"dynamic import ({dyn.mechanism}) in {rel}",
                 detail=(dyn.snippet or "").strip(),
-                meta={"path": dyn.path, "line": dyn.line, "mechanism": dyn.mechanism},
+                meta={
+                    "path": dyn.path,
+                    "line": dyn.line,
+                    "mechanism": dyn.mechanism,
+                    "is_test_code": dyn.is_test_code,
+                    "resolved_name": dyn.resolved_name,
+                },
             )
         )
     for run in doc_runs or []:
@@ -222,6 +232,9 @@ def build_bundle(
                         "chunk_id": chunk_id,
                         "heading_path": heading,
                         "url": de.url,
+                        "title": de.title,
+                        "snapshot_hash": de.snapshot_hash,
+                        "score": de.score,
                     },
                 )
             )

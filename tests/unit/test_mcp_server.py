@@ -22,10 +22,7 @@ def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "sample"
     repo.mkdir()
     (repo / "model.py").write_text(
-        "import pydantic\n\n"
-        "class User(pydantic.BaseModel):\n"
-        "    name: str\n"
-        "    age: int = 0\n",
+        "import pydantic\n\nclass User(pydantic.BaseModel):\n    name: str\n    age: int = 0\n",
         encoding="utf-8",
     )
     return repo

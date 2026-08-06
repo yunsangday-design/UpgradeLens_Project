@@ -196,8 +196,8 @@ the MCP server and any future agent loop build on:
 from upgradelens.tools.registry import ToolContext, default_registry
 
 registry = default_registry()
-registry.names()   # clone_repo, resolve_skill, retrieve_docs, scan_code, ...
-registry.specs()   # OpenAI/MCP-style function definitions
+registry.names()  # clone_repo, resolve_skill, retrieve_docs, scan_code, ...
+registry.specs()  # OpenAI/MCP-style function definitions
 
 with ToolContext() as ctx:
     result = registry.run("scan_code", {"repo": ".", "dependency": "pydantic"}, ctx)

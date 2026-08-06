@@ -1,0 +1,23 @@
+- id: sqlalchemy_ext_declarative_to_orm
+  precondition: "从 sqlalchemy.ext.declarative 导入 declarative_base/declared_attr/as_declarative 等"
+  forbid_condition: "导入行使用 import * 或别名掩盖真实名称"
+  target_pattern: "from sqlalchemy.ext.declarative import ..."
+  replacement_template: "from sqlalchemy.orm import ..."
+  target_regex: 'from sqlalchemy\.ext\.declarative import (.*)'
+  replacement: 'from sqlalchemy.orm import \1'
+  required_evidence:
+    - sqla_ext_declarative_import
+  requires_quality_model: false
+  patch_risk_level: low
+
+- id: sqlalchemy_ext_hybrid_to_orm
+  precondition: "从 sqlalchemy.ext.hybrid 导入 hybrid_property/hybrid_method"
+  forbid_condition: "导入行使用 import * 或别名掩盖真实名称"
+  target_pattern: "from sqlalchemy.ext.hybrid import ..."
+  replacement_template: "from sqlalchemy.orm import ..."
+  target_regex: 'from sqlalchemy\.ext\.hybrid import (.*)'
+  replacement: 'from sqlalchemy.orm import \1'
+  required_evidence:
+    - sqla_ext_hybrid_import
+  requires_quality_model: false
+  patch_risk_level: low

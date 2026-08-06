@@ -1,0 +1,20 @@
+- id: sqlalchemy_migration_guide
+  url: "https://docs.sqlalchemy.org/en/20/changelog/migration_20.html"
+  source_type: migration_guide
+  trust_level: official
+  target_version_spec: ">=2,<3"
+  fetch_strategy: html
+  parse_strategy: extract_sections
+
+- id: sqlalchemy_20_documentation
+  url: "https://docs.sqlalchemy.org/en/20/"
+  source_type: official_doc
+  trust_level: official
+  target_version_spec: ">=2,<3"
+  fetch_strategy: html
+
+- id: sqlalchemy_changelog
+  url: "https://docs.sqlalchemy.org/en/20/changelog/"
+  source_type: changelog
+  trust_level: official
+  fetch_strategy: html

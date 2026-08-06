@@ -1,0 +1,51 @@
+- id: sqla_ext_declarative_import
+  kind: import
+  match: declarative_base
+  usage_type: import_relocation
+  risk_hint: "sqlalchemy.ext.declarative 在 2.0 被移除，declarative_base/declared_attr 需改从 sqlalchemy.orm 导入。"
+  retrieval_queries:
+    - "sqlalchemy 2.0 declarative_base import from sqlalchemy.orm"
+    - "sqlalchemy migration 2.0 ext.declarative removed"
+  severity: low
+  confidence: high
+
+- id: sqla_ext_hybrid_import
+  kind: import
+  match: hybrid_property
+  usage_type: import_relocation
+  risk_hint: "sqlalchemy.ext.hybrid 在 2.0 被移除，hybrid_property/hybrid_method 需改从 sqlalchemy.orm 导入。"
+  retrieval_queries:
+    - "sqlalchemy 2.0 hybrid_property import from sqlalchemy.orm"
+  severity: low
+  confidence: high
+
+- id: sqla_session_query
+  kind: method_call
+  match: query
+  usage_type: deprecated_api
+  risk_hint: "session.query(Model) 在 2.0 风格下被弃用，应改写为 session.execute(select(Model)).scalars()；返回类型由 Query 变为 Result，需人工复核。"
+  retrieval_queries:
+    - "sqlalchemy 2.0 session.query deprecated use select"
+    - "sqlalchemy migration query to select execute scalars"
+  severity: high
+  confidence: high
+
+- id: sqla_query_get
+  kind: method_call
+  match: get
+  usage_type: removed_api
+  risk_hint: "Query.get() 在 2.0 风格下被移除，应改写为 Session.get(Model, id)。接收者与参数位置都会变化，需人工复核。"
+  retrieval_queries:
+    - "sqlalchemy 2.0 query.get removed session.get"
+  severity: high
+  confidence: high
+
+- id: sqla_engine_execute
+  kind: method_call
+  match: execute
+  usage_type: changed_execution_model
+  risk_hint: "Engine.execute() 在 2.0 被移除，execute() 现在要求传入语句对象（text()/select()）并以独立参数 dict 传参，而非位置参数绑定。"
+  retrieval_queries:
+    - "sqlalchemy 2.0 engine.execute removed connection.execute text parameters"
+  severity: medium
+  confidence: high

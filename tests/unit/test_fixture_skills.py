@@ -16,6 +16,7 @@ def test_builtin_skills_load_without_error() -> None:
     ids = {s.skill_id for s in discover_builtin_skills()}
     assert "pydantic_v1_to_v2" in ids
     assert "generic_python_dependency" in ids
+    assert "sqlalchemy_v1_to_v2" in ids
 
 
 def test_pydantic_skill_has_expected_shape() -> None:
@@ -33,7 +34,41 @@ def test_pydantic_skill_has_expected_shape() -> None:
 def test_adding_a_skill_needs_no_core_change() -> None:
     # The registry is built purely from discovered directories, so the number
     # of skills is not hard-coded into the workflow (plan section 3, line 1709).
-    assert len(discover_builtin_skills()) >= 2
+    assert len(discover_builtin_skills()) >= 3
+
+
+def test_sqlalchemy_skill_has_expected_shape() -> None:
+    sqla = builtin_registry().get("sqlalchemy_v1_to_v2")
+    assert sqla is not None
+    assert sqla.support_status == "dedicated"
+    assert sqla.priority == 100
+    assert sqla.allow_patch_draft is True
+    # 2 import relocations (auto-safe) + 3 semantic rewrites (review-only).
+    assert len(sqla.patterns) == 5
+    assert len(sqla.sources) == 3
+    # Only the two import relocations have safe mechanical rules.
+    assert len(sqla.patch_rules) == 2
+    for rule in sqla.patch_rules:
+        assert rule.target_regex
+        assert rule.replacement
+    assert sqla.content_hash  # hashed from the on-disk YAML files
+
+
+def test_resolve_sqlalchemy_uses_dedicated_pack() -> None:
+    sel = builtin_registry().select_skill("sqlalchemy", "2.0.0")
+    assert sel.skill_id == "sqlalchemy_v1_to_v2"
+    assert sel.is_generic is False
+    assert sel.matched_by == "version_range"
+    assert sel.skill_version == "1.0.0"
+    assert sel.package_name == "sqlalchemy"
+
+
+def test_resolve_sqlalchemy_14_falls_back_to_generic() -> None:
+    # select_skill matches against the *target* range (>=2,<3); a 1.4 source
+    # version correctly falls back to the generic pack rather than the 2.0 pack.
+    sel = builtin_registry().select_skill("sqlalchemy", "1.4.50")
+    assert sel.is_generic is True
+    assert sel.matched_by == "generic_fallback"
 
 
 def test_generic_skill_lowers_capability_claims() -> None:

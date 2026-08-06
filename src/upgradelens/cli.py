@@ -43,7 +43,6 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
@@ -63,23 +62,21 @@ from upgradelens.domain import (
 )
 from upgradelens.domain.skill import SkillPackage
 from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
-from upgradelens.graph import AssessmentSpec, retrieve_skill_evidence, run_assessment
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
-from upgradelens.models.impact import ImpactReport, build_bundle
-from upgradelens.patch import generate_patch_draft
+from upgradelens.models.impact import EvidenceBundle
+from upgradelens.patch import PatchDraft, generate_patch_draft
+from upgradelens.pipeline import AssessmentOutcome, AssessmentRequest, run_pipeline
 from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 from upgradelens.tools.cache import DocCache
-from upgradelens.tools.errors import ToolError
+from upgradelens.tools.errors import ToolError, ToolExecutionError
 from upgradelens.tools.fetcher import RestrictedFetcher
 from upgradelens.tools.github import GitHubClient
 from upgradelens.tools.ingest_live import ingest_live_source, ingest_pypi_changelog
-from upgradelens.tools.live_repo import clone_live_repo, is_repo_url
 from upgradelens.tools.pypi import PyPIClient
+from upgradelens.tools.registry import ToolContext, resolve_skill_package
 from upgradelens.tools.trace import ToolTrace
-from upgradelens.verify import verify_report
 from upgradelens.verify.models import VerifiedReport
-from upgradelens.verify.version_match import extract_version
 
 __all__ = ["build_parser", "main"]
 
@@ -460,148 +457,65 @@ def _build_model_config(args: argparse.Namespace, settings: Settings) -> ModelCo
     )
 
 
-def _resolve_skill(
-    registry: SkillRegistry, dependency: str, target_version_spec: str | None
-) -> SkillPackage | None:
-    """Find the Skill Pack that serves ``dependency``.
+def _assess_repo(args: argparse.Namespace, ctx: ToolContext) -> AssessmentOutcome:
+    """Run the shared assessment pipeline for ``assess``/``comment-pr``.
 
-    ``SkillRegistry.get`` is keyed by *skill id*, not by package name, so it can
-    never resolve a dependency name. We try proper version-aware selection first
-    and fall back to a package-name match when the target version is missing or
-    not PEP 440 parseable (e.g. a raw spec like ``">=2.0"``).
+    The CLI's only job here is translating argparse's flat namespace into an
+    :class:`AssessmentRequest` and mapping failures onto exit codes; the
+    sequence itself lives in :mod:`upgradelens.pipeline`, shared with the MCP
+    server and the demo.
+
+    ``ctx`` must stay open while the caller uses the result: for a live repo the
+    returned ``repo_path`` is a temp checkout that the context owns.
     """
-    concrete = extract_version(target_version_spec or "")
-    if concrete:
-        try:
-            selection = registry.select_skill(dependency, concrete)
-        except SkillParseError:
-            selection = None
-        if selection is not None:
-            found = registry.get(selection.skill_id)
-            if found is not None:
-                return found
-
-    canonical = canonicalize_name(dependency.strip())
-    for skill in registry.all():
-        if canonical in skill.canonical_package_names:
-            return skill
-    return None
-
-
-@dataclass
-class _AssessmentResult:
-    """The product of a full assessment run, shared by ``assess``/``comment-pr``."""
-
-    report: ImpactReport
-    verified: VerifiedReport
-    repo_path: Path
-    skill: SkillPackage | None
-    bundle: object
-
-
-def _assess_repo(args: argparse.Namespace) -> _AssessmentResult:
-    """Run the stage 5 closed loop and verify it.
-
-    Shared by ``assess`` and ``comment-pr`` so both expose identical analysis.
-    A failed live-repo clone raises :class:`SystemExit` (the caller translates
-    it to ``EXIT_INVALID_REQUEST``), preserving the old ``assess`` behaviour.
-    """
-    settings = Settings()
-    registry = builtin_registry()
-
-    repo_arg = str(args.repo)
-    live_handle = None
-    if is_repo_url(repo_arg):
-        try:
-            live_handle = clone_live_repo(repo_arg, getattr(args, "ref", None))
-        except ToolError as exc:
-            sys.stderr.write(f"upgradelens: cannot clone live repo: {exc}\n")
-            raise SystemExit(EXIT_INVALID_REQUEST) from None
-    repo_path = live_handle.path if live_handle is not None else Path(repo_arg)
-
-    code_report = scan_code_evidence(repo_path, args.dependency)
-    skill = _resolve_skill(registry, args.dependency, args.target_version)
-
-    session = None
-    if args.db is not None:
-        engine = engine_for(args.db)
-        init_db(engine)
-        session = session_for(engine)()
-
-    degradations: list[str] = []
+    request = AssessmentRequest(
+        repo=str(args.repo),
+        dependency=args.dependency,
+        target_version=args.target_version,
+        db=args.db,
+        source_id=args.source_id,
+        ref=getattr(args, "ref", None),
+    )
+    gateway = ModelGateway(
+        _build_model_config(args, Settings()),
+        recording_dir=getattr(args, "record_replay", None),
+    )
     try:
-        doc_evidences = (
-            retrieve_skill_evidence(session, skill, source_id=args.source_id)
-            if (session is not None and skill is not None)
-            else []
-        )
-        if session is None:
-            degradations.append(
-                "No documentation index was provided (--db); "
-                "risks cannot reach 'verified' without doc evidence."
-            )
-        if skill is None:
-            degradations.append(
-                f"No Skill Pack matched '{args.dependency}'; "
-                "severity rules fall back to generic scoring."
-            )
-        bundle = build_bundle(code_report, doc_evidences, dependency=args.dependency)
-        target_version = args.target_version or (skill.target_version_spec if skill else "") or ""
-        source_version = getattr(code_report, "version", "") or ""
-        spec = AssessmentSpec(
-            repo=str(repo_path),
-            dependency=args.dependency,
-            target_version_spec=target_version,
-            source_version_spec=source_version,
-        )
-        config = _build_model_config(args, settings)
-        gateway = ModelGateway(config, recording_dir=getattr(args, "record_replay", None))
-        report = run_assessment(spec, bundle, gateway, skill=skill)
-    finally:
-        if session is not None:
-            session.close()
-        if live_handle is not None:
-            live_handle.cleanup()
-
-    verified = verify_report(
-        report,
-        repo_root=repo_path,
-        bundle=bundle,
-        code_report=code_report,
-        skill=skill,
-        degradations=degradations,
-    )
-    return _AssessmentResult(
-        report=report,
-        verified=verified,
-        repo_path=repo_path,
-        skill=skill,
-        bundle=bundle,
-    )
+        return run_pipeline(request, gateway, ctx)
+    except ToolExecutionError:
+        # Our own code broke; that is a runtime fault, not a bad request.
+        raise
+    except ToolError as exc:
+        # The request could not be served: unclonable URL, refused host, ...
+        sys.stderr.write(f"upgradelens: cannot analyse repository: {exc}\n")
+        raise SystemExit(EXIT_INVALID_REQUEST) from None
 
 
 def _assess_command(args: argparse.Namespace) -> int:
     """Run the stage 5 closed loop, verify it, and print the report.
 
     When ``--repo`` is a GitHub URL, the repository is shallow-cloned to a temp
-    dir first (stage 7); the checkout is always removed afterwards.
+    dir first (stage 7). The checkout lives for as long as the ``ToolContext``
+    below, which is deliberately wider than the assessment itself: verification
+    and patch drafting both re-read the analysed tree.
     """
-    try:
-        result = _assess_repo(args)
-    except SystemExit as exc:
-        return int(exc.code) if exc.code else EXIT_INVALID_REQUEST
+    with ToolContext() as ctx:
+        try:
+            result = _assess_repo(args, ctx)
+        except SystemExit as exc:
+            return int(exc.code) if exc.code else EXIT_INVALID_REQUEST
 
-    if args.raw:
-        _emit(result.report)
-        return EXIT_OK
+        if args.raw:
+            _emit(result.report)
+            return EXIT_OK
 
-    if args.format == "md":
-        _emit_text(render_markdown(result.verified))
-    else:
-        _emit(result.verified)
+        if args.format == "md":
+            _emit_text(render_markdown(result.verified))
+        else:
+            _emit(result.verified)
 
-    if args.emit_patch is not None:
-        _emit_patch_draft(args, result.verified, result.repo_path, result.skill, result.bundle)
+        if args.emit_patch is not None:
+            _emit_patch_draft(args, result.verified, result.repo_path, result.skill, result.bundle)
     return EXIT_OK
 
 
@@ -612,12 +526,13 @@ def _comment_pr_command(args: argparse.Namespace) -> int:
     :func:`_assess_repo`). When ``--dry-run`` is set the rendered comment is
     printed to stdout and nothing is posted -- useful for local/offline checks.
     """
-    try:
-        result = _assess_repo(args)
-    except SystemExit as exc:
-        return int(exc.code) if exc.code else EXIT_INVALID_REQUEST
+    with ToolContext() as ctx:
+        try:
+            result = _assess_repo(args, ctx)
+        except SystemExit as exc:
+            return int(exc.code) if exc.code else EXIT_INVALID_REQUEST
+        body = render_markdown(result.verified, max_chars=args.max_chars)
 
-    body = render_markdown(result.verified, max_chars=args.max_chars)
     token = args.token or os.environ.get("GITHUB_TOKEN")
     trace = ToolTrace()
     fetcher = RestrictedFetcher(trace=trace, cache=None)
@@ -644,20 +559,16 @@ def _comment_pr_command(args: argparse.Namespace) -> int:
 
 def _emit_patch_draft(
     args: argparse.Namespace,
-    verified: object,
+    verified: VerifiedReport,
     repo_path: Path,
     skill: SkillPackage | None,
-    bundle: object,
+    bundle: EvidenceBundle,
 ) -> None:
     """Generate a Unified Diff patch draft and write it (stage 8).
 
     Never writes to the analysed tree; only to ``--emit-patch``. When the skill
     disallows drafts, or no verified rewrite is eligible, nothing is written.
     """
-    from upgradelens.patch import PatchDraft
-    from upgradelens.verify.models import VerifiedReport
-
-    assert isinstance(verified, VerifiedReport)
     if skill is None or not skill.allow_patch_draft:
         sys.stderr.write("upgradelens: skill does not allow patch drafts; nothing written.\n")
         return
@@ -665,7 +576,7 @@ def _emit_patch_draft(
         repo_path,
         verified.verified_risks,
         skill,
-        bundle,  # type: ignore[arg-type]
+        bundle,
         quality_model_available=args.allow_quality_patch,
     )
     text = draft.to_unified_diff()
@@ -689,8 +600,7 @@ def _fetch_docs_command(args: argparse.Namespace) -> int:
     recorded in a Tool Trace so an auditor can see exactly which URLs were hit
     and how many bytes came back (or whether the result was served from cache).
     """
-    registry = builtin_registry()
-    skill = _resolve_skill(registry, args.dependency, args.target_version)
+    skill = resolve_skill_package(args.dependency, args.target_version)
 
     cache = DocCache(Path(args.cache_dir))
     trace = ToolTrace()

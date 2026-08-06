@@ -169,7 +169,8 @@ src/upgradelens/
     gateway.py         # fake / replay / live model gateway
     context.py         # evidence context builder + token budget
     prompts.py         # externalised prompt templates + evidence contract
-  graph/               # the assess pipeline (plan -> analyze -> report)
+  graph/               # the model loop (plan -> analyze -> report)
+  pipeline.py          # the one assessment sequence every front door runs
   verify/              # stage 6 verifier, risk rules, recommender
   patch/               # stage 6 draft patch generator
   report/              # Markdown / JSON rendering
@@ -185,7 +186,30 @@ tests/
   unit/                # domain, parsers, tools, prompts, verifier, gateway
   cli/                 # CLI behaviour and exit codes
   fixtures/            # offline fixtures (request + expected JSON) + LLM replays
+  test_front_door_parity.py  # CLI == MCP == demo, so they cannot drift again
 ```
+
+### One pipeline, several front doors
+
+`assess`, `comment-pr`, the MCP `assess` tool and the Streamlit demo all run the
+same sequence, and none of them own a copy of it:
+
+```python
+from upgradelens.pipeline import AssessmentRequest, collect_evidence, analyse
+from upgradelens.tools.registry import ToolContext
+
+request = AssessmentRequest(repo=".", dependency="pydantic", target_version="2.0")
+
+with ToolContext() as ctx:  # owns temp checkouts and DB sessions
+    collection = collect_evidence(request, ctx)  # scan, skill, docs, bundle
+    outcome = analyse(collection, gateway, ctx)  # model loop, then verify
+    outcome.verified.conclusion
+```
+
+The two phases are separate so a caller can inspect -- or add to -- the evidence
+before the model sees it, which is how the demo injects its illustrative
+citations. The context must stay open through `analyse`: verification re-reads
+the analysed tree to confirm every cited location is real.
 
 ### The Tool abstraction
 

@@ -3,11 +3,13 @@
 Kept free of any Streamlit import so the logic can be smoke-tested offline
 without a browser. ``demo/app.py`` is a thin UI layer over :func:`run_assess`.
 
-In ``fake`` mode the model gateway returns empty canned responses, which makes
-the closed loop produce a boring, risk-free report. To keep the demo
-illustrative while staying fully offline, :func:`_build_fake_responses` crafts
-*canned but evidence-anchored* model outputs: the risks reference the **real**
-code-evidence ids discovered in the target repo, plus a synthetic
+The analysis itself is :mod:`upgradelens.pipeline`, exactly as the CLI and the
+MCP server run it -- what lives here is only the part that is genuinely the
+demo's own. In ``fake`` mode the model gateway returns empty canned responses,
+which makes the closed loop produce a boring, risk-free report. To keep the
+demo illustrative while staying fully offline, :func:`_build_fake_responses`
+crafts *canned but evidence-anchored* model outputs: the risks reference the
+**real** code-evidence ids discovered in the target repo, plus a synthetic
 ``doc_chunk`` so the verifier can promote them to ``VERIFIED`` and the patch
 generator can fire on the actual source line. This is clearly an illustrative
 fixture, not real model reasoning.
@@ -15,26 +17,17 @@ fixture, not real model reasoning.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from upgradelens.analyzers import scan_code_evidence
 from upgradelens.domain.skill import SkillPackage
-from upgradelens.graph import AssessmentSpec, run_assessment
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
-from upgradelens.models.impact import (
-    EvidenceBundle,
-    EvidenceItem,
-    ImpactReport,
-    RiskItem,
-    build_bundle,
-)
+from upgradelens.models.impact import EvidenceBundle, EvidenceItem, ImpactReport, RiskItem
 from upgradelens.patch import generate_patch_draft
-from upgradelens.skills import builtin_registry
-from upgradelens.verify import verify_report
-
-
-def looks_like_spec(value: str) -> bool:
-    return any(ch in value for ch in (">", "<", "=", "~", "*"))
+from upgradelens.pipeline import (
+    AssessmentRequest,
+    EvidenceCollection,
+    analyse,
+    collect_evidence,
+)
+from upgradelens.tools.registry import ToolContext
 
 
 def _build_fake_responses(
@@ -169,84 +162,61 @@ def run_assess(
     recording_dir: str | None = None,
 ) -> dict[str, object]:
     """Run the full assess pipeline and return a result bundle for rendering."""
-    registry = builtin_registry()
-    repo_path = Path(repo)
+    request = AssessmentRequest(repo=repo, dependency=dependency, target_version=target_version)
 
-    code_report = scan_code_evidence(repo_path, dependency)
-
-    skill: SkillPackage | None = None
-    degradations: list[str] = []
-    try:
-        selection = registry.select_skill(dependency, target_version)
-        skill = registry.get(selection.skill_id)
-    except Exception as exc:  # e.g. target_version is a range, not a concrete version
-        degradations.append(f"skill 解析失败（目标版本需为具体版本号），按通用依赖处理: {exc}")
-        skill = None
-    if skill is None:
-        degradations.append("未解析到专用 skill，按通用依赖分析（风险面更大）")
-
-    bundle = build_bundle(code_report, dependency=dependency)
-    if not bundle.items:
-        degradations.append("无代码用法证据，无法评估具体影响")
-
-    fake_responses: dict[str, object] = {}
-    if mode == "fake":
-        try:
-            fake_responses, injected_docs = _build_fake_responses(bundle, dependency, skill)
-            for doc in injected_docs:
-                bundle.add(doc)
-        except Exception:  # never let demo fixtures break the real pipeline
-            fake_responses, injected_docs = {}, []
-
-    target_version_spec = (
-        target_version if looks_like_spec(target_version) else f"=={target_version}"
-    )
-    source_version_spec = getattr(code_report, "version", "") or ""
-    spec = AssessmentSpec(
-        repo=str(repo_path),
-        dependency=dependency,
-        target_version_spec=target_version_spec,
-        source_version_spec=source_version_spec,
-    )
-
-    config = ModelConfig(
-        mode=ModelMode(mode),
-        model=model or "qwen-plus",
-        api_key=api_key or "",
-        base_url=base_url or "",
-    )
-    gateway = ModelGateway(
-        config,
-        fake_responses=fake_responses or None,
-        replay_dir=replay_dir,
-        recording_dir=recording_dir,
-    )
-
-    report = run_assessment(spec, bundle, gateway, skill=skill)
-    verified = verify_report(
-        report,
-        repo_root=repo_path,
-        bundle=bundle,
-        code_report=code_report,
-        skill=skill,
-        degradations=degradations,
-    )
-
-    draft = None
-    if skill is not None and skill.allow_patch_draft:
-        draft = generate_patch_draft(
-            repo_path,
-            verified.verified_risks,
-            skill,
-            bundle,
-            quality_model_available=allow_quality_patch,
+    with ToolContext() as ctx:
+        collection = collect_evidence(request, ctx)
+        # Fake responses must be built *after* collection: they cite the real
+        # evidence ids that the scan just discovered.
+        fake_responses = _inject_demo_fixtures(collection) if mode == "fake" else {}
+        gateway = ModelGateway(
+            ModelConfig(
+                mode=ModelMode(mode),
+                model=model or "qwen-plus",
+                api_key=api_key or "",
+                base_url=base_url or "",
+            ),
+            fake_responses=fake_responses or None,
+            replay_dir=replay_dir,
+            recording_dir=recording_dir,
         )
+        outcome = analyse(collection, gateway, ctx)
+
+        draft = None
+        skill = outcome.skill
+        if skill is not None and skill.allow_patch_draft:
+            draft = generate_patch_draft(
+                outcome.repo_path,
+                outcome.verified.verified_risks,
+                skill,
+                outcome.bundle,
+                quality_model_available=allow_quality_patch,
+            )
 
     return {
-        "code_report": code_report,
+        "code_report": outcome.code_report,
         "skill": skill,
-        "bundle": bundle,
-        "report": report,
-        "verified": verified,
+        "bundle": outcome.bundle,
+        "report": outcome.report,
+        "verified": outcome.verified,
         "draft": draft,
     }
+
+
+def _inject_demo_fixtures(collection: EvidenceCollection) -> dict[str, object]:
+    """Add the illustrative doc citation to the bundle and return canned outputs.
+
+    Mutates ``collection.bundle`` so the verifier can see the synthetic
+    ``doc_chunk`` the crafted risks cite. Demo fixtures must never be the reason
+    a run fails, so any error here degrades to "no canned output" -- the real
+    pipeline then produces its (boring but honest) empty report.
+    """
+    try:
+        responses, injected_docs = _build_fake_responses(
+            collection.bundle, collection.request.dependency, collection.skill
+        )
+    except Exception:
+        return {}
+    for doc in injected_docs:
+        collection.bundle.add(doc)
+    return responses

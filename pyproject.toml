@@ -47,6 +47,10 @@ module-name = "upgradelens"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# The Streamlit demo is not part of the installed distribution, but its
+# headless pipeline is covered by the front-door parity tests, so the project
+# root has to be importable.
+pythonpath = ["."]
 # Fixture repositories contain their own test files, which are *input data* for
 # the analyser, not tests of this project. Collecting them would fail on
 # unresolvable imports and intentionally broken syntax.

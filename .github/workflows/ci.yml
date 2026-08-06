@@ -11,7 +11,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # Linux is where this actually gets deployed (CI runners, containers);
+        # macOS and Windows are here because the path/encoding helpers in
+        # platform.py exist precisely to keep those two honest.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

@@ -175,14 +175,19 @@ class Tool:
         *,
         error: Exception | None,
     ) -> None:
-        params = args.model_dump(mode="json", exclude_none=True)
+        # Iterate the model instead of dumping it: some inputs carry a whole
+        # report and evidence bundle, and serialising megabytes of payload only
+        # to discard everything non-scalar is a real cost on every call.
+        params = {
+            name: value for name, value in args if isinstance(value, str | int | float | bool)
+        }
         ctx.trace.record(
             tool=self.name,
             target=_target_of(params),
             status="error" if error else "ok",
             latency_ms=(time.monotonic() - started) * 1000.0,
             error=str(error) if error else None,
-            params={k: v for k, v in params.items() if isinstance(v, str | int | float | bool)},
+            params=params,
         )
 
 

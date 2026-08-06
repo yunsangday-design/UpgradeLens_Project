@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from packaging.utils import canonicalize_name
 from sqlalchemy.orm import Session
 
 from upgradelens.analyzers import scan_code_evidence
@@ -44,16 +43,12 @@ from upgradelens.config import Settings
 from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.docs import ingest_skill, retrieve
 from upgradelens.domain import DependencyAnalysisRequest
-from upgradelens.domain.skill import SkillPackage
 from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
-from upgradelens.graph import AssessmentSpec, retrieve_skill_evidence, run_assessment
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
-from upgradelens.models.impact import build_bundle
 from upgradelens.patch import generate_patch_draft
-from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
-from upgradelens.tools.live_repo import clone_live_repo, is_repo_url
-from upgradelens.verify import verify_report
-from upgradelens.verify.version_match import extract_version
+from upgradelens.pipeline import AssessmentOutcome, AssessmentRequest, run_pipeline
+from upgradelens.skills import SkillRegistry, builtin_registry
+from upgradelens.tools.registry import ToolContext, resolve_skill_package
 
 #: Default on-disk cache for fetched documents (stage 7 cache-first strategy).
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "upgradelens"
@@ -67,26 +62,6 @@ mcp = FastMCP("upgradelens")
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _resolve_skill(dependency: str, target_version_spec: str | None) -> SkillPackage | None:
-    """Find the Skill Pack that serves ``dependency`` (mirrors ``cli._resolve_skill``)."""
-    registry = builtin_registry()
-    concrete = extract_version(target_version_spec or "")
-    if concrete:
-        try:
-            selection = registry.select_skill(dependency, concrete)
-        except SkillParseError:
-            selection = None
-        if selection is not None:
-            found = registry.get(selection.skill_id)
-            if found is not None:
-                return found
-    canonical = canonicalize_name(dependency.strip())
-    for skill in registry.all():
-        if canonical in skill.canonical_package_names:
-            return skill
-    return None
-
-
 def _build_gateway(
     mode: str | None,
     model: str | None,
@@ -280,80 +255,49 @@ def assess(
         record_replay: Record/reply directory for live/replay modes.
         ref: Git branch/tag to clone when ``repo`` is a GitHub URL.
     """
-    live_handle = None
-    if is_repo_url(repo):
-        live_handle = clone_live_repo(repo, ref)
-    repo_path = live_handle.path if live_handle is not None else Path(repo)
+    request = AssessmentRequest(
+        repo=repo,
+        dependency=dependency,
+        target_version=target_version,
+        db=Path(db) if db is not None else None,
+        source_id=source_id,
+        ref=ref,
+    )
+    gateway = _build_gateway(mode, model, api_key, base_url, budget_tokens, record_replay)
 
-    code_report = scan_code_evidence(repo_path, dependency)
-    skill = _resolve_skill(dependency, target_version)
-
-    session = _open_session(Path(db)) if db is not None else None
-    degradations: list[str] = []
-    try:
-        doc_evidences = (
-            retrieve_skill_evidence(session, skill, source_id=source_id)
-            if (session is not None and skill is not None)
-            else []
-        )
-        if session is None:
-            degradations.append(
-                "No documentation index was provided (db); "
-                "risks cannot reach 'verified' without doc evidence."
-            )
-        if skill is None:
-            degradations.append(
-                f"No Skill Pack matched '{dependency}'; "
-                "severity rules fall back to generic scoring."
-            )
-        bundle = build_bundle(code_report, doc_evidences, dependency=dependency)
-        target_version_spec = target_version or (skill.target_version_spec if skill else "") or ""
-        source_version_spec = getattr(code_report, "version", "") or ""
-        spec = AssessmentSpec(
-            repo=str(repo_path),
-            dependency=dependency,
-            target_version_spec=target_version_spec,
-            source_version_spec=source_version_spec,
-        )
-        gateway = _build_gateway(mode, model, api_key, base_url, budget_tokens, record_replay)
-        report = run_assessment(spec, bundle, gateway, skill=skill)
-        verified = verify_report(
-            report,
-            repo_root=repo_path,
-            bundle=bundle,
-            code_report=code_report,
-            skill=skill,
-            degradations=degradations,
-        )
-    finally:
-        if session is not None:
-            session.close()
-        if live_handle is not None:
-            live_handle.cleanup()
-
-    result = verified.model_dump(mode="json")
-
-    if emit_patch is not None:
-        if skill is None or not skill.allow_patch_draft:
-            result["patch_warning"] = "skill does not allow patch drafts; nothing written"
-        else:
-            draft = generate_patch_draft(
-                repo_path,
-                verified.verified_risks,
-                skill,
-                bundle,
-                quality_model_available=allow_quality_patch,
-            )
-            patch_text = draft.to_unified_diff()
-            if patch_text:
-                Path(emit_patch).write_text(patch_text, encoding="utf-8")
-                result["patch"] = patch_text
-            else:
-                result["patch_warning"] = (
-                    "no patch draft generated "
-                    "(no eligible verified rewrite at the reported locations)"
-                )
+    # The context owns any temp checkout: patch drafting below still reads it.
+    with ToolContext() as ctx:
+        outcome = run_pipeline(request, gateway, ctx)
+        result: dict[str, Any] = outcome.verified.model_dump(mode="json")
+        if emit_patch is not None:
+            result.update(_draft_patch(outcome, Path(emit_patch), allow_quality_patch))
     return result
+
+
+def _draft_patch(
+    outcome: AssessmentOutcome, destination: Path, allow_quality_patch: bool
+) -> dict[str, Any]:
+    """Write a Unified Diff draft for ``outcome``, or explain why there is none."""
+    skill = outcome.skill
+    if skill is None or not skill.allow_patch_draft:
+        return {"patch_warning": "skill does not allow patch drafts; nothing written"}
+
+    draft = generate_patch_draft(
+        outcome.repo_path,
+        outcome.verified.verified_risks,
+        skill,
+        outcome.bundle,
+        quality_model_available=allow_quality_patch,
+    )
+    patch_text = draft.to_unified_diff()
+    if not patch_text:
+        return {
+            "patch_warning": (
+                "no patch draft generated (no eligible verified rewrite at the reported locations)"
+            )
+        }
+    destination.write_text(patch_text, encoding="utf-8")
+    return {"patch": patch_text}
 
 
 @mcp.tool()
@@ -380,7 +324,7 @@ def fetch_docs(
     from upgradelens.tools.pypi import PyPIClient
     from upgradelens.tools.trace import ToolTrace
 
-    skill = _resolve_skill(dependency, target_version)
+    skill = resolve_skill_package(dependency, target_version)
 
     cache = DocCache(Path(cache_dir)) if cache_dir else DocCache(DEFAULT_CACHE_DIR)
     trace = ToolTrace()

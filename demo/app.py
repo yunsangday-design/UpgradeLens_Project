@@ -11,9 +11,11 @@
 默认模型模式为 ``fake``，完全离线、无需任何 API Key 即可体验全流程。
 切换到 ``live`` 模式才需要填写模型名 / API Key / Base URL。
 
-注意：演示刻意不接入文档检索（RAG）与 SQLite 文档库，因此在 fake 模式下
-风险只能达到 PARTIALLY_VERIFIED 级别，patch 草稿为空——这如实反映了 verifier
-"证据不足则诚实降级"的设计，并非缺陷。
+注意：fake 模式并非真的"无文档"。为了让离线演示也能走通完整链路，
+``demo/pipeline.py`` 会注入一条"例证性的官方文档引用"（``doc_chunk``，指向该
+skill 真实的官方 ``source_id``），因此风险可被 verifier 提升为 VERIFIED，并能在
+真实源码行上产出机械 patch。这一切都明确标注为 illustrative，并非真实模型推理，
+也不代表真实文档检索质量。
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ def _render_overview(result: dict[str, object]) -> None:
     skill_label = (
         f"{skill.skill_id} v{skill.version}" if skill is not None else "通用依赖（无专用 skill）"
     )
-    st.caption(f"依赖：{result['code_report']}  解析 skill：{skill_label}")
+    st.caption(f"依赖：{result['code_report'].dependency_name}  解析 skill：{skill_label}")
 
     degradations = getattr(verified_report, "degradations", [])
     if degradations:
@@ -108,14 +110,13 @@ def _render_report(result: dict[str, object]) -> None:
 def _render_patch(result: dict[str, object]) -> None:
     draft = result.get("draft")
     if draft is None:
-        st.info("该依赖不允许生成 patch 草稿（skill.allow_patch_draft=False）。")
+        st.info("该依赖未解析到可生成 patch 的专用 skill（或 skill 不允许生成）。")
         return
     diff = draft.to_unified_diff()
     if not diff:
         st.info(
-            "未生成 patch 草稿。在 fake / 无文档模式下，风险止于 PARTIALLY_VERIFIED，"
-            "patch 生成器仅对 VERIFIED 风险生效。接入文档证据库后（真实 RAG 流程）"
-            "方可达到 VERIFIED 并产出机械 patch。"
+            "未生成 patch 草稿。patch 生成器仅对 VERIFIED 风险、且 skill 提供"
+            "安全机械改写规则的位置生效；语义改写类风险会被如实留空交人工复核。"
         )
         notes = getattr(draft, "notes", [])
         for note in notes:

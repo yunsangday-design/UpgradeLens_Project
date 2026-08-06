@@ -8,7 +8,7 @@ the closed loop produce a boring, risk-free report. To keep the demo
 illustrative while staying fully offline, :func:`_build_fake_responses` crafts
 *canned but evidence-anchored* model outputs: the risks reference the **real**
 code-evidence ids discovered in the target repo, plus a synthetic
-``doc_citation`` so the verifier can promote them to ``VERIFIED`` and the patch
+``doc_chunk`` so the verifier can promote them to ``VERIFIED`` and the patch
 generator can fire on the actual source line. This is clearly an illustrative
 fixture, not real model reasoning.
 """
@@ -65,23 +65,21 @@ def _build_fake_responses(
     injected_docs: list[EvidenceItem] = []
     risks: list[RiskItem] = []
 
-    def _doc(doc_source_id: str, title: str) -> str:
-        doc_id = f"doc:{doc_source_id}:synthetic"
-        injected_docs.append(
-            EvidenceItem(
-                evidence_id=doc_id,
-                kind="doc_chunk",
-                summary=title,
-                detail=title,
-                meta={"source_id": doc_source_id, "title": title},
-            )
+    doc_id = f"doc:{source_id}:synthetic" if source_id else "doc:synthetic"
+    doc_title = f"{dependency} official migration guide (synthetic)"
+    injected_docs.append(
+        EvidenceItem(
+            evidence_id=doc_id,
+            kind="doc_chunk",
+            summary=f"{dependency} upgrade (illustrative doc citation)",
+            detail=f"{dependency} upgrade (illustrative doc citation)",
+            meta={"source_id": source_id, "title": doc_title},
         )
-        return doc_id
+    )
 
-    # .dict() -> model_dump() (pydantic v2): low-risk mechanical patch.
+    # Pydantic-specific, nicely worded risks (the shipped default demo target).
     for it in code_items:
         if ".dict(" in (it.detail or "") or ".dict(" in (it.summary or ""):
-            doc_id = _doc(source_id, "pydantic v2: Model.dict() removed, use model_dump()")
             risks.append(
                 RiskItem(
                     risk_id="pyd01",
@@ -114,7 +112,6 @@ def _build_fake_responses(
             None,
         )
     if validator_item is not None:
-        doc_id = _doc(source_id, "pydantic v2: @validator -> @field_validator")
         risks.append(
             RiskItem(
                 risk_id="pyd02",
@@ -125,6 +122,28 @@ def _build_fake_responses(
                 recommendation="Replace @validator with @field_validator (signature changed).",
             )
         )
+
+    # Generic fallback: for non-pydantic dependencies (e.g. sqlalchemy) still
+    # surface evidence-anchored VERIFIED risks (and any mechanical patch the
+    # skill supports) instead of an empty report. Each risk points at a *real*
+    # code-usage location, so the patch generator fires only where a rule's
+    # regex actually matches the line.
+    if not risks:
+        for it in code_items:
+            symbol = str(it.meta.get("symbol", "")) or it.summary or "usage"
+            risks.append(
+                RiskItem(
+                    risk_id=f"fake:{it.evidence_id}",
+                    title=f"{dependency}: {symbol} usage",
+                    severity="medium",
+                    confidence="high",
+                    evidence_ids=[it.evidence_id, doc_id],
+                    recommendation=(
+                        f"Review this {dependency} usage for the target upgrade; "
+                        "see the official migration guide."
+                    ),
+                )
+            )
 
     if not risks:
         return {}, []

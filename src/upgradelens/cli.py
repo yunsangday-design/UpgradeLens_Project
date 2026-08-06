@@ -17,6 +17,11 @@ Subcommands:
   SQLite + FTS5 index;
 - ``retrieve-docs`` (stage 4) — run keyword RAG over an ingested documentation
   source and return citable evidence.
+- ``fetch-docs`` (stage 7) — fetch a dependency's documentation live from the
+  web (PyPI + skill-declared sources), cache-first, and ingest it into the
+  SQLite evidence store. Every fetch is recorded in a Tool Trace.
+- ``assess --repo <url>`` (stage 7) — pass a GitHub URL instead of a local path
+  to clone it, analyse it, and clean up the temp checkout.
 
 Exit codes:
 
@@ -61,6 +66,13 @@ from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.models.impact import build_bundle
 from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
+from upgradelens.tools.cache import DocCache
+from upgradelens.tools.errors import ToolError
+from upgradelens.tools.fetcher import RestrictedFetcher
+from upgradelens.tools.ingest_live import ingest_live_source, ingest_pypi_changelog
+from upgradelens.tools.live_repo import clone_live_repo, is_repo_url
+from upgradelens.tools.pypi import PyPIClient
+from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify import verify_report
 from upgradelens.verify.version_match import extract_version
 
@@ -78,10 +90,14 @@ _INGEST_DOCS_COMMAND = "ingest-docs"
 _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 _ASSESS_COMMAND = "assess"
 _EVAL_COMMAND = "eval"
+_FETCH_DOCS_COMMAND = "fetch-docs"
 
 #: Shipped Core fixtures, resolved relative to the installed package so the
 #: command works from any working directory.
 DEFAULT_CASES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "eval"
+
+#: Default on-disk cache for fetched documents (stage 7 cache-first strategy).
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "upgradelens"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -231,6 +247,45 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit the unverified model report instead of the verified one (debugging).",
     )
+    assess.add_argument(
+        "--ref",
+        default=None,
+        help="Git branch/tag to clone when --repo is a GitHub URL (stage 7 live repo).",
+    )
+
+    fetch_docs = subparsers.add_parser(
+        _FETCH_DOCS_COMMAND,
+        help="Fetch a dependency's docs live (PyPI + skill sources) and ingest (stage 7).",
+    )
+    fetch_docs.add_argument(
+        "--db",
+        type=Path,
+        required=True,
+        help="SQLite database to ingest the fetched docs into.",
+    )
+    fetch_docs.add_argument("--dependency", required=True, help="Dependency name (any casing).")
+    fetch_docs.add_argument(
+        "--target-version",
+        default=None,
+        help="Target version spec; used to scope the PyPI changelog query.",
+    )
+    fetch_docs.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Ignore the on-disk cache and re-fetch every source.",
+    )
+    fetch_docs.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=DEFAULT_CACHE_DIR,
+        help=f"Directory for the fetched-doc cache (default: {DEFAULT_CACHE_DIR}).",
+    )
+    fetch_docs.add_argument(
+        "--format",
+        default="md",
+        choices=["json", "md"],
+        help="Output format: Markdown summary (default) or JSON Tool Trace.",
+    )
 
     evaluate = subparsers.add_parser(
         _EVAL_COMMAND,
@@ -356,11 +411,25 @@ def _resolve_skill(
 
 
 def _assess_command(args: argparse.Namespace) -> int:
-    """Run the stage 5 closed loop, verify it, and print the report."""
+    """Run the stage 5 closed loop, verify it, and print the report.
+
+    When ``--repo`` is a GitHub URL, the repository is shallow-cloned to a temp
+    dir first (stage 7); the checkout is always removed afterwards.
+    """
     settings = Settings()
     registry = builtin_registry()
-    code_report = scan_code_evidence(args.repo, args.dependency)
 
+    repo_arg = str(args.repo)
+    live_handle = None
+    if is_repo_url(repo_arg):
+        try:
+            live_handle = clone_live_repo(repo_arg, getattr(args, "ref", None))
+        except ToolError as exc:
+            sys.stderr.write(f"upgradelens: cannot clone live repo: {exc}\n")
+            return EXIT_INVALID_REQUEST
+    repo_path = live_handle.path if live_handle is not None else Path(repo_arg)
+
+    code_report = scan_code_evidence(repo_path, args.dependency)
     skill = _resolve_skill(registry, args.dependency, args.target_version)
 
     session = None
@@ -390,7 +459,7 @@ def _assess_command(args: argparse.Namespace) -> int:
         target_version = args.target_version or (skill.target_version_spec if skill else "") or ""
         source_version = getattr(code_report, "version", "") or ""
         spec = AssessmentSpec(
-            repo=str(args.repo),
+            repo=str(repo_path),
             dependency=args.dependency,
             target_version_spec=target_version,
             source_version_spec=source_version,
@@ -401,6 +470,8 @@ def _assess_command(args: argparse.Namespace) -> int:
     finally:
         if session is not None:
             session.close()
+        if live_handle is not None:
+            live_handle.cleanup()
 
     if args.raw:
         _emit(report)
@@ -408,7 +479,7 @@ def _assess_command(args: argparse.Namespace) -> int:
 
     verified = verify_report(
         report,
-        repo_root=Path(args.repo),
+        repo_root=repo_path,
         bundle=bundle,
         code_report=code_report,
         skill=skill,
@@ -418,6 +489,84 @@ def _assess_command(args: argparse.Namespace) -> int:
         _emit_text(render_markdown(verified))
     else:
         _emit(verified)
+    return EXIT_OK
+
+
+def _fetch_docs_command(args: argparse.Namespace) -> int:
+    """Fetch a dependency's docs live and ingest them (stage 7).
+
+    Uses a cache-first, traced, SSRF-restricted fetcher. Every network call is
+    recorded in a Tool Trace so an auditor can see exactly which URLs were hit
+    and how many bytes came back (or whether the result was served from cache).
+    """
+    registry = builtin_registry()
+    skill = _resolve_skill(registry, args.dependency, args.target_version)
+
+    cache = DocCache(Path(args.cache_dir))
+    trace = ToolTrace()
+    fetcher = RestrictedFetcher(trace=trace, cache=cache)
+    pypi = PyPIClient(fetcher)
+
+    engine = engine_for(args.db)
+    init_db(engine)
+    session = session_for(engine)()
+
+    records: list[object] = []
+    try:
+        if skill is not None:
+            for source in skill.sources:
+                if not source.url:
+                    continue
+                rec = ingest_live_source(session, source, fetcher, refresh=args.refresh)
+                if rec is not None:
+                    records.append(rec)
+
+        target_spec = args.target_version or (skill.target_version_spec if skill else "") or ""
+        try:
+            changelog = pypi.changelog(args.dependency, target_spec or None)
+        except ToolError as exc:
+            sys.stderr.write(f"upgradelens: pypi changelog skipped: {exc}\n")
+            changelog = []
+        if changelog:
+            records.append(
+                ingest_pypi_changelog(
+                    session, args.dependency, changelog, target_version_spec=target_spec
+                )
+            )
+    finally:
+        session.close()
+
+    summary = {
+        "dependency": args.dependency,
+        "skill_id": skill.skill_id if skill is not None else None,
+        "ingested": len(records),
+        "network_calls": trace.network_calls(),
+        "cache_hits": trace.cache_hits(),
+        "network_bytes": trace.network_bytes(),
+        "tool_trace": trace.to_dict(),
+    }
+    if args.format == "md":
+        lines = [
+            f"# Live doc fetch: {args.dependency}",
+            "",
+            f"- skill: `{summary['skill_id']}`",
+            f"- sources ingested: **{summary['ingested']}**",
+            f"- network calls: **{summary['network_calls']}** "
+            f"(cache hits: {summary['cache_hits']}, {summary['network_bytes']} bytes)",
+            "",
+            "## Tool Trace",
+            "",
+            "| tool | target | status | http | bytes | cache |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for ev in trace.events:
+            lines.append(
+                f"| {ev.tool} | {ev.target} | {ev.status} | "
+                f"{ev.http_status or ''} | {ev.bytes} | {'yes' if ev.cache_hit else 'no'} |"
+            )
+        _emit_text("\n".join(lines) + "\n")
+    else:
+        _emit(summary)
     return EXIT_OK
 
 
@@ -521,6 +670,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _ASSESS_COMMAND:
         return _assess_command(args)
+
+    if args.command == _FETCH_DOCS_COMMAND:
+        return _fetch_docs_command(args)
 
     if args.command == _EVAL_COMMAND:
         return _eval_command(args)

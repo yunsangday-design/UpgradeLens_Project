@@ -1,4 +1,4 @@
-"""Document ingestion: snapshot → cleaned text → chunks → SQLite + FTS5 (stage 4)."""
+"""Document ingestion: snapshot -> cleaned text -> chunks -> SQLite + FTS5 (stage 4)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from upgradelens.db import models
 from upgradelens.docs.chunking import chunk_markdown
 from upgradelens.docs.cleaning import clean_document
 from upgradelens.domain.doc_evidence import DocSourceRecord
-from upgradelens.domain.skill import DocSource, SkillPackage
+from upgradelens.domain.skill import DocSource, SkillPackage, TrustLevel
 from upgradelens.skills.loader import SkillParseError
 
 
@@ -32,21 +32,25 @@ def _resolve_fixture(skill: SkillPackage, source: DocSource) -> Path:
     return fixture
 
 
-def ingest_skill_source(
-    session: Session, skill: SkillPackage, source: DocSource
+def persist_source_text(
+    session: Session,
+    source: DocSource,
+    raw: str,
+    snapshot_path: str,
+    *,
+    trust_level: TrustLevel | None = None,
+    title: str | None = None,
 ) -> DocSourceRecord:
-    """Clean, chunk and persist one documentation source for a skill.
+    """Clean, chunk and persist one documentation source's text.
 
-    Re-ingesting the same source id removes its previous chunks (and their FTS5
-    rows) first, so the index stays deduplicated and reflects the latest snapshot.
+    Shared by the offline fixture path (stage 4) and the live fetch path
+    (stage 7). Re-ingesting the same source id removes its previous chunks
+    (and their FTS5 rows) first, so the index stays deduplicated.
     """
-    fixture = _resolve_fixture(skill, source)
-    raw = fixture.read_text(encoding="utf-8")
     snapshot_hash = _sha256(raw)
     cleaned = clean_document(raw, source.fetch_strategy)
     chunks = chunk_markdown(cleaned, source.id)
 
-    # De-duplicate: drop previous chunks and their FTS5 rows for this source.
     existing = (
         session.execute(select(models.DocChunkRow).where(models.DocChunkRow.source_id == source.id))
         .scalars()
@@ -63,11 +67,11 @@ def ingest_skill_source(
         session.add(source_row)
     source_row.url = source.url
     source_row.source_type = source.source_type
-    source_row.trust_level = source.trust_level
+    source_row.trust_level = trust_level or source.trust_level
     source_row.title = source.id
     target_spec = source.target_version_spec or ""
     source_row.target_version_spec = target_spec
-    source_row.snapshot_path = str(fixture)
+    source_row.snapshot_path = snapshot_path
     source_row.snapshot_hash = snapshot_hash
     session.flush()
 
@@ -103,6 +107,15 @@ def ingest_skill_source(
         target_version_spec=target_spec,
         chunk_count=len(chunks),
     )
+
+
+def ingest_skill_source(
+    session: Session, skill: SkillPackage, source: DocSource
+) -> DocSourceRecord:
+    """Clean, chunk and persist one documentation source for a skill."""
+    fixture = _resolve_fixture(skill, source)
+    raw = fixture.read_text(encoding="utf-8")
+    return persist_source_text(session, source, raw, str(fixture))
 
 
 def ingest_skill(session: Session, skill: SkillPackage) -> list[DocSourceRecord]:

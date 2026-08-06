@@ -13,6 +13,7 @@ from typing import Any
 from upgradelens.domain.skill import SkillPackage
 from upgradelens.graph.state import AssessmentSpec, GraphState
 from upgradelens.llm.gateway import ModelGateway
+from upgradelens.llm.prompts import BREAKING_CHANGE, IMPACT_REPORT, PLANNER
 from upgradelens.models.impact import (
     BreakingChange,
     EvidenceBundle,
@@ -36,13 +37,10 @@ def planner(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
         if skill
         else "(no skill)"
     )
-    prompt = (
-        "You are planning an upgrade impact analysis.\n"
-        f"Target dependency: {spec.dependency}\n"
-        f"Skill patterns:\n{patterns}\n"
-        f"Collected code evidence:\n{_summarize_code(bundle)}\n"
-        "Return a plan listing the skill pattern ids to inspect, with one "
-        "question each."
+    prompt = PLANNER.render(
+        dependency=spec.dependency,
+        patterns=patterns,
+        code_evidence=_summarize_code(bundle),
     )
     plan, _ = gateway.complete_structured(prompt=prompt, schema=Plan, name="planner")
     return {"plan": plan}
@@ -53,12 +51,10 @@ def breaking_change_extractor(state: GraphState, gateway: ModelGateway) -> dict[
     ctx = state.get("context", "")
     changes: list[BreakingChange] = []
     for item in plan.items:
-        prompt = (
-            f"Analyze the potential breaking change for pattern '{item.pattern_id}'.\n"
-            f"Question: {item.question}\n\n"
-            f"Context evidence:\n{ctx}\n\n"
-            "Return a BreakingChange. Reference only evidence ids present in the "
-            "context."
+        prompt = BREAKING_CHANGE.render(
+            pattern_id=item.pattern_id,
+            question=item.question,
+            context=ctx,
         )
         bc, _ = gateway.complete_structured(
             prompt=prompt, schema=BreakingChange, name=f"extractor__{item.pattern_id}"
@@ -76,13 +72,11 @@ def impact_analyzer(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
 
     plan_block = "\n".join(f"- {it.pattern_id}" for it in plan.items) or "(none)"
     change_block = "\n".join(f"- {c.title} ({c.severity})" for c in changes) or "(none)"
-    prompt = (
-        f"Produce the final upgrade impact report for '{spec.dependency}'.\n"
-        f"Plan:\n{plan_block}\n"
-        f"Breaking changes:\n{change_block}\n"
-        f"Context evidence:\n{ctx}\n\n"
-        "Return an ImpactReport. Every risk MUST reference only evidence ids that "
-        "appear in the context."
+    prompt = IMPACT_REPORT.render(
+        dependency=spec.dependency,
+        plan=plan_block,
+        breaking_changes=change_block,
+        context=ctx,
     )
     draft, _ = gateway.complete_structured(
         prompt=prompt, schema=ImpactReport, name="impact_analyzer"

@@ -12,6 +12,14 @@ class ToolError(Exception):
     """Base class for all tool-layer failures."""
 
 
+class ToolInputError(ToolError):
+    """A tool was invoked with arguments that fail its declared input schema."""
+
+
+class ToolExecutionError(ToolError):
+    """A tool handler raised an error that is not already a :class:`ToolError`."""
+
+
 class OutOfNetworkError(ToolError):
     """A host resolved to a private/internal/rejected address, or failed the
     allow-list. This is the SSRF guard firing."""

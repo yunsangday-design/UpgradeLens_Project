@@ -16,6 +16,8 @@ from upgradelens.tools.errors import (
     RateLimitError,
     TooLargeError,
     ToolError,
+    ToolExecutionError,
+    ToolInputError,
     TooManyRedirectsError,
 )
 from upgradelens.tools.fetcher import FetchConfig, FetchResult, RestrictedFetcher
@@ -40,6 +42,8 @@ __all__ = [
     "OutOfNetworkError",
     "RateLimitError",
     "ToolError",
+    "ToolExecutionError",
+    "ToolInputError",
     "TooLargeError",
     "TooManyRedirectsError",
     "FetchConfig",

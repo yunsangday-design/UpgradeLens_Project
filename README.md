@@ -156,16 +156,56 @@ The target repository is never imported, installed or executed.
 
 ```text
 src/upgradelens/
-  cli.py               # scan-dependency entry point
-  config.py            # minimal pydantic-settings
+  cli.py               # assess / scan-dependency / fetch-docs / comment-pr / eval
+  config.py            # pydantic-settings (model mode, keys, budgets)
   platform.py          # cross-platform path/text helpers
   observability/       # structured logging
-  domain/              # stage 1 domain models
-  analyzers/           # manifest parsers + version comparison
+  domain/              # stage 1-3 domain models (dependency, code, doc, skill)
+  analyzers/           # manifest parsers, version comparison, AST code scan
+  skills/              # Skill Pack loader + built-in registry
+  docs/                # doc cleaning, chunking, ingest, keyword retrieval
+  db/                  # SQLite evidence store (SQLAlchemy models + repository)
+  llm/
+    gateway.py         # fake / replay / live model gateway
+    context.py         # evidence context builder + token budget
+    prompts.py         # externalised prompt templates + evidence contract
+  graph/               # the assess pipeline (plan -> analyze -> report)
+  verify/              # stage 6 verifier, risk rules, recommender
+  patch/               # stage 6 draft patch generator
+  report/              # Markdown / JSON rendering
+  tools/
+    registry.py        # uniform Tool abstraction over every capability
+    fetcher.py         # SSRF-guarded HTTP fetcher + cache
+    github.py          # PR comment client
+    live_repo.py       # shallow clone of public GitHub repos
+    trace.py           # tool call trace / metrics
+  eval/                # offline evaluation harness and scorers
+  mcp/                 # MCP server exposing the same tools
 tests/
-  unit/                # domain, parsers, comparison, fixture contracts
+  unit/                # domain, parsers, tools, prompts, verifier, gateway
   cli/                 # CLI behaviour and exit codes
-  fixtures/            # offline pydantic fixtures (request + expected JSON)
+  fixtures/            # offline fixtures (request + expected JSON) + LLM replays
 ```
+
+### The Tool abstraction
+
+Every capability is also reachable through one uniform interface, which is what
+the MCP server and any future agent loop build on:
+
+```python
+from upgradelens.tools.registry import ToolContext, default_registry
+
+registry = default_registry()
+registry.names()   # clone_repo, resolve_skill, retrieve_docs, scan_code, ...
+registry.specs()   # OpenAI/MCP-style function definitions
+
+with ToolContext() as ctx:
+    result = registry.run("scan_code", {"repo": ".", "dependency": "pydantic"}, ctx)
+    ctx.trace.events  # one entry per call, with status and latency
+```
+
+Arguments are validated against a pydantic model before anything runs, results
+are always JSON-safe, and failures surface as `ToolError` subclasses
+(`ToolInputError` for bad arguments, `ToolExecutionError` for handler faults).
 
 See `升级透镜第一步实施计划_环境与依赖解析.md` for the full plan and acceptance gates.

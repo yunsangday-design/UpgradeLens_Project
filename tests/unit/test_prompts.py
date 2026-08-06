@@ -60,7 +60,7 @@ def test_values_with_braces_survive_rendering() -> None:
 
 
 def test_registry_lookup() -> None:
-    assert set(PROMPTS) == {"planner", "breaking_change", "impact_report"}
+    assert set(PROMPTS) == {"planner", "breaking_change", "impact_report", "router"}
     assert get_prompt("planner") is PLANNER
     with pytest.raises(KeyError):
         get_prompt("nope")

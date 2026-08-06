@@ -188,6 +188,11 @@ class ModelGateway:
     def ledger(self) -> list[CompletionRecord]:
         return list(self._ledger)
 
+    @property
+    def mode(self) -> ModelMode:
+        """The active run mode -- handy for callers that must skip the model."""
+        return self._config.mode
+
     def complete_structured(
         self, *, prompt: str, schema: type[_M], name: str
     ) -> tuple[_M, CompletionRecord]:

@@ -107,8 +107,28 @@ Return an ImpactReport. Every risk MUST reference only evidence ids that appear
 in the context.""",
 )
 
+ROUTER = PromptTemplate(
+    name="router",
+    version=PROMPT_VERSION,
+    body="""\
+Classify the user's request and extract the three elements needed to run a
+dependency-upgrade impact assessment.
+
+User request:
+$user_text
+
+Return an Intent with:
+- kind: one of upgrade_task / not_upgrade / invalid_url / need_clarification
+- repo: the GitHub repository URL or local path, only if one is present
+- dependency: the Python package being upgraded, only if present
+- target_version: the version being upgraded TO, only if present
+- source_version: the current version being upgraded FROM, only if present
+- missing: which of repo / dependency / target_version are absent
+- confidence: your confidence in this classification, between 0 and 1""",
+)
+
 PROMPTS: dict[str, PromptTemplate] = {
-    template.name: template for template in (PLANNER, BREAKING_CHANGE, IMPACT_REPORT)
+    template.name: template for template in (PLANNER, BREAKING_CHANGE, IMPACT_REPORT, ROUTER)
 }
 
 
@@ -125,6 +145,7 @@ __all__ = [
     "EVIDENCE_CONTRACT",
     "IMPACT_REPORT",
     "PLANNER",
+    "ROUTER",
     "PROMPTS",
     "PROMPT_VERSION",
     "PromptTemplate",

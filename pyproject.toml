@@ -18,6 +18,11 @@ dependencies = [
 [project.scripts]
 upgradelens = "upgradelens.cli:main"
 
+[project.optional-dependencies]
+demo = [
+  "streamlit>=1.30",
+]
+
 [dependency-groups]
 test = [
   "pytest",

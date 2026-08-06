@@ -232,6 +232,13 @@ def build_parser() -> argparse.ArgumentParser:
     assess.add_argument("--api-key", default=None, help="API key (live mode, overrides env).")
     assess.add_argument("--base-url", default=None, help="OpenAI-compatible base url (live mode).")
     assess.add_argument(
+        "--record-replay",
+        metavar="DIR",
+        default=None,
+        help="Record every node response to DIR (use with --mode live). Replay mode "
+        "later reads from the same DIR to reproduce the run fully offline.",
+    )
+    assess.add_argument(
         "--budget-tokens",
         type=int,
         default=None,
@@ -477,7 +484,7 @@ def _assess_command(args: argparse.Namespace) -> int:
             source_version_spec=source_version,
         )
         config = _build_model_config(args, settings)
-        gateway = ModelGateway(config)
+        gateway = ModelGateway(config, recording_dir=getattr(args, "record_replay", None))
         report = run_assessment(spec, bundle, gateway, skill=skill)
     finally:
         if session is not None:

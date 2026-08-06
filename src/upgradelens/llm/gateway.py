@@ -18,6 +18,7 @@ import json
 import os
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from pydantic import BaseModel
@@ -168,6 +169,7 @@ class ModelGateway:
         *,
         fake_responses: dict[str, BaseModel] | None = None,
         replay_dir: str | None = None,
+        recording_dir: str | None = None,
         transport: CompletionTransport | None = None,
     ) -> None:
         self._config = config
@@ -175,6 +177,7 @@ class ModelGateway:
         self._ledger: list[CompletionRecord] = []
         self._fake = FakeBackend(fake_responses or {})
         self._replay = ReplayBackend(replay_dir) if replay_dir else None
+        self._recording_dir = recording_dir
         self._transport = transport
 
     @property
@@ -203,7 +206,23 @@ class ModelGateway:
 
         self._ledger.append(rec)
         self._budget.consume(rec.completion_tokens)
+        rec_dir = self._recording_dir
+        if rec_dir is not None and mode != ModelMode.REPLAY:
+            self._write_recording(name, obj, rec_dir)
         return obj, rec
+
+    def _write_recording(self, name: str, obj: BaseModel, recording_dir: str) -> None:
+        """Persist a node response so it can be replayed offline later.
+
+        The file name matches the node name passed to :meth:`complete_structured`
+        (e.g. ``planner``, ``extractor__<pattern_id>``, ``impact_analyzer``), which
+        is exactly what :class:`ReplayBackend` looks up.
+        """
+        out_dir = Path(recording_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        payload = {"output": obj.model_dump(mode="json")}
+        with open(out_dir / f"{name}.json", "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
 
     def _live_complete(self, prompt: str, schema: type[_M]) -> tuple[_M, CompletionRecord]:
         cfg = self._config

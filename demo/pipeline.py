@@ -165,6 +165,8 @@ def run_assess(
     api_key: str,
     base_url: str,
     allow_quality_patch: bool,
+    replay_dir: str | None = None,
+    recording_dir: str | None = None,
 ) -> dict[str, object]:
     """Run the full assess pipeline and return a result bundle for rendering."""
     registry = builtin_registry()
@@ -213,7 +215,12 @@ def run_assess(
         api_key=api_key or "",
         base_url=base_url or "",
     )
-    gateway = ModelGateway(config, fake_responses=fake_responses or None)
+    gateway = ModelGateway(
+        config,
+        fake_responses=fake_responses or None,
+        replay_dir=replay_dir,
+        recording_dir=recording_dir,
+    )
 
     report = run_assessment(spec, bundle, gateway, skill=skill)
     verified = verify_report(

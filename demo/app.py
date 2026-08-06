@@ -136,6 +136,12 @@ def main() -> None:
         dependency = st.text_input("依赖名", value="pydantic")
         target_version = st.text_input("目标版本（具体版本号）", value="2.0.0")
         mode = st.selectbox("模型模式", ["fake", "replay", "live"], index=0)
+        replay_dir = st.text_input(
+            "Replay 目录（仅 replay 模式）",
+            value="",
+            help="录制后由 --record-replay 生成的目录；replay 模式从这里离线回放模型响应。"
+            " 先用 CLI `upgradelens assess ... --mode live --record-replay <DIR>` 录制一次。",
+        )
         model = st.text_input("模型名（仅 live）", value="qwen-plus")
         api_key = st.text_input("API Key（仅 live）", type="password", value="")
         base_url = st.text_input("Base URL（仅 live）", value="")
@@ -160,6 +166,7 @@ def main() -> None:
                 api_key=api_key,
                 base_url=base_url,
                 allow_quality_patch=allow_quality_patch,
+                replay_dir=replay_dir if mode == "replay" else None,
             )
     except Exception as exc:  # surface any pipeline error in the UI
         st.exception(exc)

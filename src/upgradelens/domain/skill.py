@@ -99,6 +99,16 @@ class PatchRule(BaseModel):
     forbid_condition: str = Field(default="", description="Situation that blocks the rewrite.")
     target_pattern: str = Field(..., description="The code shape the rewrite targets.")
     replacement_template: str = Field(..., description="The proposed replacement shape.")
+    # Optional regex form: a capture-group-aware alternative to the literal
+    # pattern above. When present, the generator uses ``re.sub`` so field names
+    # and similar captured text survive the rewrite (e.g. @validator('name') ->
+    # @field_validator('name')).
+    target_regex: str | None = Field(
+        default=None, description="Optional regex matching the code shape to rewrite."
+    )
+    replacement: str | None = Field(
+        default=None, description="Replacement template for target_regex, may use \\1 etc."
+    )
     required_evidence: list[str] = Field(default_factory=list)
     requires_quality_model: bool = False
     patch_risk_level: PatchRiskLevel = "low"

@@ -64,6 +64,7 @@ from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
 from upgradelens.graph import AssessmentSpec, retrieve_skill_evidence, run_assessment
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.models.impact import build_bundle
+from upgradelens.patch import generate_patch_draft
 from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 from upgradelens.tools.cache import DocCache
@@ -251,6 +252,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--ref",
         default=None,
         help="Git branch/tag to clone when --repo is a GitHub URL (stage 7 live repo).",
+    )
+    assess.add_argument(
+        "--emit-patch",
+        type=Path,
+        default=None,
+        help="Write a generated Unified Diff patch draft to this path (stage 8).",
+    )
+    assess.add_argument(
+        "--allow-quality-patch",
+        action="store_true",
+        help="Also draft patches whose rules require a quality model (use with care).",
     )
 
     fetch_docs = subparsers.add_parser(
@@ -489,7 +501,50 @@ def _assess_command(args: argparse.Namespace) -> int:
         _emit_text(render_markdown(verified))
     else:
         _emit(verified)
+
+    if args.emit_patch is not None:
+        _emit_patch_draft(args, verified, repo_path, skill, bundle)
     return EXIT_OK
+
+
+def _emit_patch_draft(
+    args: argparse.Namespace,
+    verified: object,
+    repo_path: Path,
+    skill: SkillPackage | None,
+    bundle: object,
+) -> None:
+    """Generate a Unified Diff patch draft and write it (stage 8).
+
+    Never writes to the analysed tree; only to ``--emit-patch``. When the skill
+    disallows drafts, or no verified rewrite is eligible, nothing is written.
+    """
+    from upgradelens.patch import PatchDraft
+    from upgradelens.verify.models import VerifiedReport
+
+    assert isinstance(verified, VerifiedReport)
+    if skill is None or not skill.allow_patch_draft:
+        sys.stderr.write("upgradelens: skill does not allow patch drafts; nothing written.\n")
+        return
+    draft: PatchDraft = generate_patch_draft(
+        repo_path,
+        verified.verified_risks,
+        skill,
+        bundle,  # type: ignore[arg-type]
+        quality_model_available=args.allow_quality_patch,
+    )
+    text = draft.to_unified_diff()
+    if not text:
+        sys.stderr.write(
+            "upgradelens: no patch draft generated "
+            "(no eligible verified rewrite at the reported locations).\n"
+        )
+        return
+    args.emit_patch.write_text(text, encoding="utf-8")
+    sys.stderr.write(
+        f"upgradelens: wrote patch draft to {args.emit_patch} "
+        f"({len(draft.files)} file(s), rules: {', '.join(draft.applied_rules) or 'none'})\n"
+    )
 
 
 def _fetch_docs_command(args: argparse.Namespace) -> int:

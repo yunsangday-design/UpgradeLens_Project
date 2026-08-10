@@ -5,6 +5,7 @@
   target_version_spec: ">=2,<3"
   fetch_strategy: html
   parse_strategy: extract_sections
+  fixture_snapshot: sources/sqlalchemy_migration.html
 
 - id: sqlalchemy_20_documentation
   url: "https://docs.sqlalchemy.org/en/20/"

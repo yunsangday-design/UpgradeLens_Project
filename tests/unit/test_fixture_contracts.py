@@ -29,7 +29,11 @@ EVAL_CONTAINERS = {"eval"}
 # Record-replay capture directories (e.g. `llm_replay/`) are containers too:
 # they hold recorded LLM request/response pairs, not stage 1 scan contracts.
 REPLAY_CONTAINERS = {"llm_replay"}
-NON_STAGE1 = STAGE2_CODE_FIXTURES | EVAL_CONTAINERS | REPLAY_CONTAINERS
+# Retrieval evaluation cases (ROADMAP Step 4, B0) live under `retrieval/`: each
+# file is a labelled `(pattern, code_symbols) -> expected_chunks` case consumed by
+# `upgradelens eval retrieval-baseline`, not a stage 1 scan contract.
+RETRIEVAL_CONTAINERS = {"retrieval"}
+NON_STAGE1 = STAGE2_CODE_FIXTURES | EVAL_CONTAINERS | REPLAY_CONTAINERS | RETRIEVAL_CONTAINERS
 STAGE1_FIXTURE_DIRS = [p for p in FIXTURE_DIRS if p.name not in NON_STAGE1]
 STAGE1_FIXTURE_IDS = [p.name for p in STAGE1_FIXTURE_DIRS]
 
@@ -47,6 +51,7 @@ def test_fixture_set_is_complete() -> None:
         "pydantic_serialization",
         "pydantic_usage",
         "pydantic_validator",
+        "retrieval",
     ]
 
 

@@ -1,0 +1,8 @@
+case_id: pydantic_json_method
+package: pydantic
+source_version: "1.x"
+target_version: "2.x"
+pattern_id: pydantic_json_method
+code_symbols: [json, model_dump_json]
+expected_chunks:
+  - ".json() → model_dump_json()"

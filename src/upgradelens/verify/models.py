@@ -159,6 +159,7 @@ class VerifiedReport(BaseModel):
     schema_version: str = "verified-report/1"
     target_dependency: str = ""
     source_version_spec: str = ""
+    source_version_source: str = ""
     target_version_spec: str = ""
     generated_at: str = Field(default_factory=lambda: _dt.datetime.now(_dt.UTC).isoformat())
     conclusion: Conclusion = Conclusion.IMPACTED

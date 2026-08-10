@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from upgradelens.domain.skill import SkillPackage
 from upgradelens.graph.state import AssessmentSpec, GraphState
 from upgradelens.llm.gateway import ModelGateway
 from upgradelens.llm.prompts import BREAKING_CHANGE, IMPACT_REPORT, PLANNER
@@ -28,18 +27,36 @@ def _summarize_code(bundle: EvidenceBundle) -> str:
     return "\n".join(lines) or "(no code usages collected)"
 
 
+def _code_symbols(bundle: EvidenceBundle) -> str:
+    """The API surface the repository actually touches, taken from the AST scan.
+
+    This replaces the hand-curated skill pattern list: the symbols are derived
+    from evidence, so a dependency with no Skill Pack gets the same planning
+    signal as one with a pack.
+    """
+    symbols = {str(it.meta.get("symbol", "")) for it in bundle.by_kind("code_usage")}
+    symbols.discard("")
+    return "\n".join(f"- {symbol}" for symbol in sorted(symbols)) or "(no API symbols found)"
+
+
+def _summarize_docs(bundle: EvidenceBundle) -> str:
+    """Headings of the documentation the shared corpus retrieved for this upgrade."""
+    lines = []
+    for it in bundle.by_kind("doc_chunk"):
+        heading = str(it.meta.get("chunk_title") or "") or it.summary
+        lines.append(f"- [{it.evidence_id}] {heading}")
+    return "\n".join(lines) or "(no documentation retrieved)"
+
+
 def planner(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
+    """Plan the analysis from evidence only -- no dedicated Skill Pack required."""
     bundle = state["bundle"]
     spec: AssessmentSpec = state["spec"]
-    skill: SkillPackage | None = state.get("skill")
-    patterns = (
-        "\n".join(f"- {p.id} ({p.usage_type or '?'}): {p.risk_hint}" for p in skill.patterns)
-        if skill
-        else "(no skill)"
-    )
     prompt = PLANNER.render(
         dependency=spec.dependency,
-        patterns=patterns,
+        source_version=spec.source_version.label if spec.source_version else "",
+        code_symbols=_code_symbols(bundle),
+        doc_evidence=_summarize_docs(bundle),
         code_evidence=_summarize_code(bundle),
     )
     plan, _ = gateway.complete_structured(prompt=prompt, schema=Plan, name="planner")
@@ -74,6 +91,7 @@ def impact_analyzer(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
     change_block = "\n".join(f"- {c.title} ({c.severity})" for c in changes) or "(none)"
     prompt = IMPACT_REPORT.render(
         dependency=spec.dependency,
+        source_version=spec.source_version.label if spec.source_version else "",
         plan=plan_block,
         breaking_changes=change_block,
         context=ctx,
@@ -99,6 +117,7 @@ def impact_analyzer(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
         update={
             "target_dependency": spec.dependency,
             "source_version_spec": spec.source_version_spec,
+            "source_version_source": spec.source_version.label if spec.source_version else "",
             "target_version_spec": spec.target_version_spec,
             "risks": validated,
             "evidence_summary": summary,

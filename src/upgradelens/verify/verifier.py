@@ -11,6 +11,7 @@ The verifier never calls a model and never mutates the repository.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +39,20 @@ from upgradelens.verify.version_match import extract_version
 __all__ = ["EvidenceVerifier", "verify_report"]
 
 _CODE_KINDS = frozenset({"code_usage", "parse_error", "dynamic_import"})
+
+#: Symbols shorter than this are too generic to be matched against free text
+#: without producing false "the title mentions X" hits.
+_MIN_GROUNDED_SYMBOL_LEN = 3
+
+
+def _mentions_symbol(text: str, symbol: str) -> bool:
+    """True when ``symbol`` appears in ``text`` as a whole identifier.
+
+    Word boundaries matter: ``validator`` must not be considered "mentioned" by
+    a title that only talks about ``field_validator``.
+    """
+    pattern = rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])"
+    return re.search(pattern, text, re.IGNORECASE) is not None
 
 
 @dataclass(frozen=True)
@@ -129,13 +144,24 @@ class EvidenceVerifier:
 
     # -- documentation checks ---------------------------------------------
 
-    def _doc_source_spec(self, source_id: str) -> tuple[str | None, str]:
-        """Return ``(target_version_spec, trust_level)`` for a doc source."""
-        if self._skill is None:
-            return None, "unverified"
-        for source in self._skill.sources:
-            if source.id == source_id:
-                return source.target_version_spec, source.trust_level
+    def _doc_source_spec(self, item: EvidenceItem) -> tuple[str | None, str]:
+        """Return ``(target_version_spec, trust_level)`` for a doc evidence item.
+
+        The evidence itself is the source of truth: the shared corpus records the
+        version window and trust level of every chunk, so a document can be
+        version-checked whether or not a Skill Pack exists. The Skill lookup is
+        only a fallback for legacy evidence that predates those meta fields.
+        """
+        spec_text = str(item.meta.get("target_version_spec", "") or "") or None
+        trust = str(item.meta.get("trust_level", "") or "")
+        if spec_text is not None or trust:
+            return spec_text, trust or "unverified"
+
+        source_id = str(item.meta.get("source_id", ""))
+        if self._skill is not None:
+            for source in self._skill.sources:
+                if source.id == source_id:
+                    return source.target_version_spec, source.trust_level
         return None, "unverified"
 
     def _check_doc_item(
@@ -144,7 +170,7 @@ class EvidenceVerifier:
         """Flag documentation that clearly does not cover the target version."""
         issues: list[VerificationIssue] = []
         source_id = str(item.meta.get("source_id", ""))
-        spec_text, trust = self._doc_source_spec(source_id)
+        spec_text, trust = self._doc_source_spec(item)
 
         if trust not in ("official",):
             issues.append(
@@ -178,29 +204,41 @@ class EvidenceVerifier:
 
     # -- symbol grounding --------------------------------------------------
 
+    def _repo_symbols(self) -> set[str]:
+        """Every dependency API symbol the scan observed anywhere in the repository.
+
+        This vocabulary replaces the curated skill pattern list: it is derived
+        from the code evidence, so the check works for any dependency.
+        """
+        symbols = {str(i.meta.get("symbol", "")) for i in self._bundle.by_kind("code_usage")}
+        symbols.discard("")
+        return {s for s in symbols if len(s) >= _MIN_GROUNDED_SYMBOL_LEN}
+
     def _check_symbol_grounding(
         self, title: str, code_items: list[EvidenceItem]
     ) -> list[VerificationIssue]:
-        """Ensure a named API in the title actually appears in the evidence."""
-        if self._skill is None or not code_items:
+        """Ensure a named API in the title actually appears in the cited evidence.
+
+        The title is matched against the symbols the scan really found. When the
+        title names one of them but the risk cites code evidence for a different
+        symbol, the risk is pointing at the wrong location.
+        """
+        if not code_items:
             return []
-        symbols = {str(i.meta.get("symbol", "")) for i in code_items}
-        symbols.discard("")
-        lowered = title.lower()
-        for pattern in self._skill.patterns:
-            match = pattern.match
-            if match == "*" or match.lower() not in lowered:
+        cited = {str(i.meta.get("symbol", "")) for i in code_items}
+        cited.discard("")
+        for symbol in sorted(self._repo_symbols()):
+            if symbol in cited or not _mentions_symbol(title, symbol):
                 continue
-            if match not in symbols:
-                return [
-                    VerificationIssue(
-                        code=IssueCode.SYMBOL_NOT_IN_EVIDENCE,
-                        detail=(
-                            f"title mentions '{match}' but no cited code evidence uses it "
-                            f"(cited symbols: {sorted(symbols) or 'none'})"
-                        ),
-                    )
-                ]
+            return [
+                VerificationIssue(
+                    code=IssueCode.SYMBOL_NOT_IN_EVIDENCE,
+                    detail=(
+                        f"title mentions '{symbol}' but no cited code evidence uses it "
+                        f"(cited symbols: {sorted(cited) or 'none'})"
+                    ),
+                )
+            ]
         return []
 
     # -- status decision ---------------------------------------------------
@@ -263,6 +301,7 @@ class EvidenceVerifier:
         return VerifiedReport(
             target_dependency=report.target_dependency,
             source_version_spec=report.source_version_spec,
+            source_version_source=report.source_version_source,
             target_version_spec=report.target_version_spec,
             conclusion=conclusion,
             verified_risks=verified,

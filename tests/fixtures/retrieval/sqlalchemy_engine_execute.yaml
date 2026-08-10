@@ -1,0 +1,8 @@
+case_id: sqlalchemy_engine_execute
+package: sqlalchemy
+source_version: "1.x"
+target_version: "2.0"
+pattern_id: sqla_engine_execute
+code_symbols: [execute]
+expected_chunks:
+  - "engine.execute() → connection.execute()"

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SQLAlchemy 1.x → 2.0 Migration Guide</title>
+  <script>window.__tracking = false;</script>
+</head>
+<body>
+  <nav class="sidebar"><ul><li>Home</li><li>Changelog</li><li>API</li></ul></nav>
+  <header><div class="banner">SQLAlchemy 2.0 released</div></header>
+  <article>
+    <h1>SQLAlchemy 1.x → 2.0 Migration Guide</h1>
+    <p>This is an offline snapshot of the SQLAlchemy 1.x to 2.0 migration guide, used by the UpgradeLens tests. It is a trimmed copy of the public migration guide covering the most common breaking changes when moving from SQLAlchemy 1.x to 2.0.</p>
+
+    <h2>Import relocations</h2>
+    <p>Several imports moved in 2.0; the old <code>sqlalchemy.ext</code> entry points were removed.</p>
+
+    <h3>declarative_base → sqlalchemy.orm</h3>
+    <p>The <code>sqlalchemy.ext.declarative</code> package was removed in 2.0. Import <code>declarative_base</code> and <code>declared_attr</code> from <code>sqlalchemy.orm</code> instead.</p>
+    <pre><code>from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+</code></pre>
+
+    <h3>hybrid_property → sqlalchemy.orm</h3>
+    <p>The <code>sqlalchemy.ext.hybrid</code> package was removed in 2.0. Import <code>hybrid_property</code> and <code>hybrid_method</code> from <code>sqlalchemy.orm</code> instead.</p>
+    <pre><code>from sqlalchemy.orm import hybrid_property, hybrid_method
+</code></pre>
+
+    <h2>Query API</h2>
+    <p>The 1.x <code>Query</code> interface is deprecated in 2.0 style. Prefer <code>select()</code> executed through a <code>Session</code>.</p>
+
+    <h3>session.query() → select()</h3>
+    <p><code>session.query(Model)</code> is deprecated. Use <code>session.execute(select(Model)).scalars()</code>. The return type changes from <code>Query</code> to <code>Result</code>, so call <code>.scalars()</code> or <code>.scalar_one()</code> to obtain objects.</p>
+    <pre><code>stmt = select(User).where(User.id == 1)
+user = session.execute(stmt).scalar_one()
+</code></pre>
+
+    <h3>Query.get() → Session.get()</h3>
+    <p><code>Query.get()</code> was removed in 2.0. Use <code>Session.get(Model, id)</code> to load by primary key. Unlike the old <code>Query.get()</code>, the 2.0 method is a direct <code>Session</code> method.</p>
+    <pre><code>user = session.get(User, 1)
+</code></pre>
+
+    <h2>Engine execution</h2>
+    <p>Executing statements directly on an <code>Engine</code> is no longer supported in 2.0.</p>
+
+    <h3>engine.execute() → connection.execute()</h3>
+    <p><code>Engine.execute()</code> is removed. Obtain a <code>Connection</code> via <code>engine.connect()</code> and call <code>connection.execute()</code>. When passing parameters, use a statement object such as <code>text()</code> and pass parameters as a dictionary rather than positionally.</p>
+    <pre><code>with engine.connect() as conn:
+    conn.execute(text("SELECT * FROM users WHERE id = :id"), {"id": 1})
+</code></pre>
+  </article>
+  <aside class="ads">Sponsored links</aside>
+</body>
+</html>

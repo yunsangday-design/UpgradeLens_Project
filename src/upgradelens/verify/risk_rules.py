@@ -24,13 +24,15 @@ __all__ = ["RiskScoringInput", "score_risk", "is_major_bump"]
 _HIGH_THRESHOLD = 7
 _MEDIUM_THRESHOLD = 4
 
-_PATTERN_SEVERITY_POINTS = {"high": 3, "medium": 2, "low": 1, "info": 0}
 _TRUST_POINTS = {"official": 1, "community": 0, "unverified": 0}
 
-# Wording in a skill's ``risk_hint`` that indicates a hard API break rather
+# Wording in the retrieved documentation that indicates a hard API break rather
 # than a soft behaviour change.
 _BREAKING_WORDS = ("removed", "renamed", "deleted", "no longer", "replaced by", "must be")
 _BEHAVIOUR_WORDS = ("behaviour", "behavior", "default", "changed", "semantics")
+
+#: Symbols shorter than this are too generic to be searched for in prose.
+_MIN_SYMBOL_LEN = 3
 
 _VERSION_RE = re.compile(r"(\d+)(?:\.(\d+))?")
 
@@ -59,7 +61,12 @@ def is_major_bump(source_spec: str, target_spec: str) -> bool:
 
 @dataclass(frozen=True)
 class RiskScoringInput:
-    """Everything the rule engine is allowed to look at."""
+    """Everything the rule engine is allowed to look at.
+
+    Every factor is derived from evidence. ``skill`` is retained only as a
+    fallback for legacy doc evidence that carries no ``trust_level`` meta; a
+    missing Skill Pack never lowers the quality of the scoring.
+    """
 
     status: EvidenceStatus
     code_items: list[EvidenceItem] = field(default_factory=list)
@@ -71,37 +78,64 @@ class RiskScoringInput:
     risk_title: str = ""
 
 
-def _pattern_points(data: RiskScoringInput) -> tuple[int, str]:
-    """Highest severity among skill patterns whose symbol appears in evidence."""
-    if data.skill is None:
-        return 0, "no skill"
+def _cited_symbols(data: RiskScoringInput) -> set[str]:
     symbols = {str(item.meta.get("symbol", "")) for item in data.code_items}
     symbols.discard("")
-    best_points = 0
-    best_label = "no pattern match"
-    for pattern in data.skill.patterns:
-        if pattern.match != "*" and pattern.match not in symbols:
-            continue
-        points = _PATTERN_SEVERITY_POINTS.get(pattern.severity, 0)
-        if points > best_points:
-            best_points = points
-            best_label = f"{pattern.id}={pattern.severity}"
-    return best_points, best_label
+    return {s for s in symbols if len(s) >= _MIN_SYMBOL_LEN}
+
+
+def _doc_text(data: RiskScoringInput) -> str:
+    """All prose of the cited documentation, lower-cased for keyword matching."""
+    return " ".join(f"{item.summary} {item.detail}" for item in data.doc_items).lower()
+
+
+def _doc_grounding_points(data: RiskScoringInput) -> tuple[int, str]:
+    """How firmly the retrieved documentation lands on the API this code uses.
+
+    Documentation that explicitly names the symbol found in the repository is
+    the strongest deterministic signal that the upgrade really touches this
+    code; retrieved-but-unrelated documentation is much weaker; no documentation
+    scores nothing. This replaces the old skill-pattern severity lookup, which
+    was unavailable for dependencies without a dedicated Skill Pack.
+    """
+    if not data.doc_items:
+        return 0, "no doc evidence"
+    haystack = _doc_text(data)
+    grounded = sorted(s for s in _cited_symbols(data) if s.lower() in haystack)
+    if grounded:
+        return 3, "docs name " + ", ".join(grounded[:3])
+    return 1, "docs retrieved, no symbol overlap"
 
 
 def _api_change_points(data: RiskScoringInput) -> tuple[int, str]:
-    """Distinguish a hard API break from a softer behaviour change."""
-    haystack = data.risk_title.lower()
-    if data.skill is not None:
-        symbols = {str(item.meta.get("symbol", "")) for item in data.code_items}
-        for pattern in data.skill.patterns:
-            if pattern.match == "*" or pattern.match in symbols:
-                haystack += " " + pattern.risk_hint.lower()
+    """Distinguish a hard API break from a softer behaviour change.
+
+    The wording is read from the risk title plus the documentation actually
+    cited, rather than from a hand-written ``risk_hint`` on a skill pattern.
+    """
+    haystack = data.risk_title.lower() + " " + _doc_text(data)
     if any(word in haystack for word in _BREAKING_WORDS):
         return 2, "api removed/renamed"
     if any(word in haystack for word in _BEHAVIOUR_WORDS):
         return 1, "behaviour/config change"
     return 0, "no explicit break wording"
+
+
+def _doc_trust(data: RiskScoringInput) -> tuple[int, str]:
+    """Trust level of the cited documentation, taken from the evidence itself.
+
+    The shared corpus stamps every chunk with its ``trust_level``; the Skill
+    lookup only covers legacy evidence that predates that meta field.
+    """
+    if not data.doc_items:
+        return 0, "no doc evidence"
+    levels = [str(item.meta.get("trust_level", "") or "") for item in data.doc_items]
+    levels = [level for level in levels if level]
+    if not levels and data.skill is not None:
+        source_ids = {str(item.meta.get("source_id", "")) for item in data.doc_items}
+        levels = [s.trust_level for s in data.skill.sources if s.id in source_ids]
+    label = ("official" if "official" in levels else levels[0]) if levels else "unverified"
+    return _TRUST_POINTS.get(label, 0), label
 
 
 def score_risk(data: RiskScoringInput) -> tuple[int, str, list[RiskFactor]]:
@@ -121,9 +155,9 @@ def score_risk(data: RiskScoringInput) -> tuple[int, str, list[RiskFactor]]:
         )
     )
 
-    pattern_points, pattern_label = _pattern_points(data)
+    grounding_points, grounding_label = _doc_grounding_points(data)
     factors.append(
-        RiskFactor(name="skill_pattern_severity", value=pattern_label, points=pattern_points)
+        RiskFactor(name="doc_symbol_grounding", value=grounding_label, points=grounding_points)
     )
 
     api_points, api_label = _api_change_points(data)
@@ -152,15 +186,7 @@ def score_risk(data: RiskScoringInput) -> tuple[int, str, list[RiskFactor]]:
         )
     )
 
-    trust_points, trust_label = 0, "no doc evidence"
-    if data.doc_items:
-        trust_label = "unverified"
-        if data.skill is not None:
-            source_ids = {str(item.meta.get("source_id", "")) for item in data.doc_items}
-            levels = [s.trust_level for s in data.skill.sources if s.id in source_ids]
-            if levels:
-                trust_label = "official" if "official" in levels else levels[0]
-        trust_points = _TRUST_POINTS.get(trust_label, 0)
+    trust_points, trust_label = _doc_trust(data)
     factors.append(RiskFactor(name="doc_trust", value=trust_label, points=trust_points))
 
     dynamic = [item for item in data.code_items if item.kind == "dynamic_import"]

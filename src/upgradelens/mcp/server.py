@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from upgradelens.analyzers import scan_code_evidence
 from upgradelens.analyzers import scan_dependency as scan_dependency_fn
+from upgradelens.capabilities import CapabilityRegistry, TransformationPack
 from upgradelens.config import Settings
 from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.docs import ingest_skill, retrieve
@@ -86,6 +87,7 @@ def _build_gateway(
         model=model or settings.model_name,
         api_key=resolved_key,
         max_total_tokens=budget_tokens or settings.model_max_total_tokens,
+        disable_thinking=settings.model_disable_thinking,
     )
     return ModelGateway(config, recording_dir=recording_dir)
 
@@ -176,6 +178,46 @@ def resolve_skill(
 
 
 @mcp.tool()
+def list_capabilities() -> dict[str, Any]:
+    """B5: list the optional Capability Packs (transformations) derived from the corpus.
+
+    This is the skill-independent surface: each built-in skill becomes a
+    transformation capability. Prefer this over ``list_skills`` for capability
+    discovery.
+    """
+    registry = CapabilityRegistry.from_skills(builtin_registry().all())
+    return {"capabilities": registry.catalog()}
+
+
+@mcp.tool()
+def resolve_capability(
+    dependency: str,
+    target_version: str,
+    source_version: str | None = None,
+) -> dict[str, Any]:
+    """B5: pick the transformation capability for a dependency + target version.
+
+    Args:
+        dependency: Dependency name (any casing).
+        target_version: Target PEP 440 version.
+        source_version: Optional source PEP 440 version to narrow the match.
+    """
+    selection = builtin_registry().select_skill(dependency, target_version, source_version)
+    if selection is None:
+        return {"dependency": dependency, "capability_id": None}
+    resolved = builtin_registry().get(selection.skill_id)
+    if resolved is None:
+        return {"dependency": dependency, "capability_id": None}
+    pack = TransformationPack.from_skill(resolved)
+    return {
+        "dependency": dependency,
+        "capability_id": pack.id,
+        "allow_patch_draft": pack.allow_patch_draft(),
+        "patch_rules": [r.id for r in pack.patch_rules()],
+    }
+
+
+@mcp.tool()
 def ingest_docs(db: str, skill: str = "pydantic_v1_to_v2") -> dict[str, Any]:
     """Stage 4: load a built-in documentation snapshot into the SQLite evidence store.
 
@@ -223,6 +265,7 @@ def assess(
     target_version: str | None = None,
     db: str | None = None,
     source_id: str | None = None,
+    source_version: str | None = None,
     mode: str | None = None,
     model: str | None = None,
     api_key: str | None = None,
@@ -245,6 +288,8 @@ def assess(
         target_version: Target version spec (defaults to the resolved skill's target).
         db: Optional SQLite database with ingested docs for documentation evidence.
         source_id: Optional documentation source id to scope retrieval.
+        source_version: Optional from-version the repo is being upgraded FROM
+            (defaults to manifest inference via scan_dependency).
         mode: Model gateway mode (fake | replay | live).
         model: Model name (live mode).
         api_key: API key (live mode, overrides env).
@@ -259,6 +304,7 @@ def assess(
         repo=repo,
         dependency=dependency,
         target_version=target_version,
+        source_version=source_version,
         db=Path(db) if db is not None else None,
         source_id=source_id,
         ref=ref,
@@ -279,13 +325,14 @@ def _draft_patch(
 ) -> dict[str, Any]:
     """Write a Unified Diff draft for ``outcome``, or explain why there is none."""
     skill = outcome.skill
-    if skill is None or not skill.allow_patch_draft:
-        return {"patch_warning": "skill does not allow patch drafts; nothing written"}
+    capability = TransformationPack.from_skill(skill) if skill is not None else None
+    if capability is None or not capability.allow_patch_draft():
+        return {"patch_warning": "capability pack does not permit patch drafts; nothing written"}
 
     draft = generate_patch_draft(
         outcome.repo_path,
         outcome.verified.verified_risks,
-        skill,
+        capability,
         outcome.bundle,
         quality_model_available=allow_quality_patch,
     )

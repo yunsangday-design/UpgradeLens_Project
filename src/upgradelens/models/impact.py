@@ -23,6 +23,31 @@ from upgradelens.domain.skill import SkillPackage
 Severity = Literal["high", "medium", "low"]
 Confidence = Literal["high", "low"]
 
+
+@dataclass(frozen=True)
+class SourceVersion:
+    """Version the repository is being upgraded *from*.
+
+    ``spec`` is the specifier/version found in the manifest (or supplied by the
+    user). ``origin`` records where it came from and ``status`` records how
+    confidently it can anchor the assessment to a concrete from-version.
+    """
+
+    spec: str | None
+    origin: Literal["declared", "inferred", "user"]
+    status: Literal["declared", "inferred", "unknown", "conflict"]
+
+    @property
+    def label(self) -> str:
+        if self.status == "unknown":
+            return "unknown (no declared version found)"
+        if self.status == "conflict":
+            return "conflicting declarations"
+        if self.origin == "user":
+            return f"user-provided ({self.spec})"
+        kind = "declared" if self.status == "declared" else "inferred"
+        return f"{kind} ({self.spec})"
+
 _CODE_KINDS = ("code_usage", "parse_error", "dynamic_import")
 
 
@@ -153,6 +178,7 @@ class ImpactReport(BaseModel):
     schema_version: str = "impact-report/1"
     target_dependency: str = ""
     source_version_spec: str = ""
+    source_version_source: str = ""
     target_version_spec: str = ""
     generated_at: str = Field(default_factory=lambda: _dt.datetime.now(_dt.UTC).isoformat())
     risks: list[RiskItem] = Field(default_factory=list)
@@ -221,19 +247,27 @@ def build_bundle(
     for run in doc_runs or []:
         for chunk_id, de in zip(run.matched_chunk_ids, run.top_doc_evidence, strict=False):
             heading = "/".join(de.heading_path)
+            evidence_id = de.evidence_id or f"doc:{de.source_id}:{chunk_id}"
             bundle.add(
                 EvidenceItem(
-                    evidence_id=f"doc:{de.source_id}:{chunk_id}",
+                    evidence_id=evidence_id,
                     kind="doc_chunk",
                     summary=f"{de.source_id} chunk {chunk_id} ({heading})",
                     detail=de.snippet,
                     meta={
                         "source_id": de.source_id,
                         "chunk_id": chunk_id,
+                        "evidence_id": de.evidence_id,
+                        "chunk_title": de.chunk_title,
                         "heading_path": heading,
                         "url": de.url,
                         "title": de.title,
                         "snapshot_hash": de.snapshot_hash,
+                        "package_name": de.package_name,
+                        "source_version_spec": de.source_version_spec,
+                        "target_version_spec": de.target_version_spec,
+                        "trust_level": de.trust_level,
+                        "chunk_content_hash": de.chunk_content_hash,
                         "score": de.score,
                     },
                 )
@@ -247,6 +281,7 @@ def build_static_report(
     *,
     dependency: str = "",
     source_version_spec: str = "",
+    source_version_source: str = "",
     target_version_spec: str = "",
     notes: str = "",
 ) -> ImpactReport:

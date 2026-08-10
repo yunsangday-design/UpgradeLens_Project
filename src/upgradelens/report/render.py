@@ -108,6 +108,7 @@ def render_markdown(report: VerifiedReport, max_chars: int | None = None) -> str
         "",
         f"- **Target version:** `{report.target_version_spec or 'n/a'}`",
         f"- **Declared version:** `{report.source_version_spec or 'n/a'}`",
+        f"- **Version source:** {report.source_version_source or 'n/a'}",
         f"- **Generated:** {report.generated_at}",
         f"- **Analysis mode:** {'static fallback' if report.static else 'model-assisted'}",
         "",

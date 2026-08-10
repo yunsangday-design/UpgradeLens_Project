@@ -1,0 +1,8 @@
+case_id: pydantic_orm_mode
+package: pydantic
+source_version: "1.x"
+target_version: "2.x"
+pattern_id: pydantic_orm_mode
+code_symbols: [orm_mode, from_attributes]
+expected_chunks:
+  - "Config.orm_mode → from_attributes"

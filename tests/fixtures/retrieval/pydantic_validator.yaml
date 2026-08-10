@@ -1,0 +1,8 @@
+case_id: pydantic_validator
+package: pydantic
+source_version: "1.x"
+target_version: "2.x"
+pattern_id: pydantic_validator
+code_symbols: [validator, "@validator", field_validator]
+expected_chunks:
+  - "@validator → @field_validator"

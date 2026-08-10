@@ -36,12 +36,22 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from upgradelens.db.vector import EmbeddingBackend
+from upgradelens.docs.retrieval import retrieve_for_package
+from upgradelens.domain import DependencyScanResult, IssueCode, ResolutionStatus
 from upgradelens.domain.code_evidence import CodeEvidenceReport
+from upgradelens.domain.doc_evidence import RetrievalRun
 from upgradelens.domain.skill import SkillPackage
-from upgradelens.graph.main import retrieve_skill_evidence, run_assessment
+from upgradelens.graph.main import run_assessment
 from upgradelens.graph.state import AssessmentSpec
-from upgradelens.llm.gateway import ModelGateway
-from upgradelens.models.impact import EvidenceBundle, ImpactReport, build_bundle
+from upgradelens.llm.gateway import ModelGateway, ModelMode
+from upgradelens.models.impact import (
+    EvidenceBundle,
+    EvidenceItem,
+    ImpactReport,
+    SourceVersion,
+    build_bundle,
+)
 from upgradelens.skills import builtin_registry
 from upgradelens.tools.live_repo import is_repo_url
 from upgradelens.tools.registry import ToolContext, ToolRegistry, default_registry
@@ -66,9 +76,10 @@ NO_CODE_EVIDENCE = (
 )
 
 
-def no_skill_match(dependency: str) -> str:
-    """Degradation used when no Skill Pack serves ``dependency``."""
-    return f"No Skill Pack matched '{dependency}'; severity rules fall back to generic scoring."
+# Note: the absence of a Skill Pack is deliberately *not* a degradation. Since
+# stage B2/B3 retrieval, planning, scoring and verification all run off shared
+# corpus evidence, so a missing pack costs no capability and must not make the
+# report speak more quietly. Only genuinely missing evidence degrades a run.
 
 
 # --------------------------------------------------------------------------- #
@@ -83,6 +94,10 @@ class AssessmentRequest:
     repo: str
     dependency: str
     target_version: str | None = None
+    #: Optional version the repository is being upgraded *from*. When omitted the
+    #: pipeline infers it from the manifest via ``scan_dependency``; when supplied
+    #: it is treated as a user-declared from-version (origin="user").
+    source_version: str | None = None
     #: SQLite evidence store with ingested docs. Without it, no risk can be
     #: verified -- doc evidence is what promotes a risk beyond "suspected".
     db: Path | None = None
@@ -90,6 +105,10 @@ class AssessmentRequest:
     source_id: str | None = None
     #: Branch or tag, only meaningful when ``repo`` is a GitHub URL.
     ref: str | None = None
+    #: Free-text description of what the upgrade is for. When empty the
+    #: retrieval path falls back to the code symbols discovered by the scan
+    #: (stage B2: the main retrieval no longer depends on a dedicated Skill).
+    user_intent: str = ""
 
 
 @dataclass
@@ -109,6 +128,10 @@ class EvidenceCollection:
     skill: SkillPackage | None
     bundle: EvidenceBundle
     degradations: list[str] = field(default_factory=list)
+    #: Resolved from-version (declared/inferred from the manifest, or user-supplied).
+    source_version: SourceVersion | None = None
+    #: Raw ``scan_dependency`` result, retained for trace/debug and reporting.
+    dependency_scan: DependencyScanResult | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +149,68 @@ class AssessmentOutcome:
     bundle: EvidenceBundle
     code_report: CodeEvidenceReport
     degradations: tuple[str, ...]
+    #: Resolved from-version (declared/inferred from the manifest, or user-supplied).
+    source_version: SourceVersion | None = None
+    #: Raw ``scan_dependency`` result, retained for trace/debug and reporting.
+    dependency_scan: DependencyScanResult | None = None
+
+
+def _resolve_source_version(
+    request: AssessmentRequest, scan_result: DependencyScanResult | None
+) -> SourceVersion:
+    """Turn the optional user override and the manifest scan into a SourceVersion."""
+    if request.source_version is not None:
+        return SourceVersion(spec=request.source_version, origin="user", status="declared")
+    if scan_result is None:
+        return SourceVersion(spec=None, origin="declared", status="unknown")
+    if any(
+        issue.code == IssueCode.CONFLICTING_DECLARATIONS
+        for issue in (*scan_result.warnings, *scan_result.errors)
+    ):
+        return SourceVersion(spec=None, origin="declared", status="conflict")
+    if scan_result.status == ResolutionStatus.RESOLVED:
+        spec = scan_result.current_specifier or scan_result.current_version or None
+        return SourceVersion(spec=spec, origin="declared", status="declared")
+    if scan_result.status == ResolutionStatus.AMBIGUOUS:
+        return SourceVersion(
+            spec=scan_result.current_specifier or None,
+            origin="declared",
+            status="inferred",
+        )
+    return SourceVersion(spec=None, origin="declared", status="unknown")
+
+
+def _add_declaration_evidence(
+    bundle: EvidenceBundle,
+    request: AssessmentRequest,
+    source_version: SourceVersion,
+    scan_result: DependencyScanResult | None,
+) -> None:
+    """Record the resolved from-version as a citable evidence item."""
+    if scan_result is not None and scan_result.declarations:
+        decl = scan_result.declarations[0]
+        summary = f"Declared as {decl.specifier} in {decl.manifest_type} ({decl.path})"
+        detail = scan_result.model_dump_json()
+    elif request.source_version:
+        summary = f"User-provided source version: {request.source_version}"
+        detail = ""
+    else:
+        summary = "No declared source version found in any manifest."
+        detail = ""
+    bundle.add(
+        EvidenceItem(
+            evidence_id="dep_decl",
+            kind="dependency_declaration",
+            summary=summary,
+            detail=detail,
+            meta={
+                "dependency": request.dependency,
+                "source_version_spec": source_version.spec or "",
+                "source_version_origin": source_version.origin,
+                "source_version_status": source_version.status,
+            },
+        )
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -138,6 +223,9 @@ def collect_evidence(
     ctx: ToolContext,
     *,
     registry: ToolRegistry | None = None,
+    gateway: ModelGateway | None = None,
+    mode: ModelMode | str = ModelMode.FAKE,
+    embedding: EmbeddingBackend | None = None,
 ) -> EvidenceCollection:
     """Gather every citable fact about ``request``, without asking a model.
 
@@ -156,16 +244,61 @@ def collect_evidence(
     )
     skill = _resolve_skill(request, ctx, tools)
 
+    target_version = _target_spec(request, skill)
+    scan_result: DependencyScanResult | None = None
+    if target_version:
+        try:
+            scan_result = DependencyScanResult.model_validate(
+                tools.run(
+                    "scan_dependency",
+                    {
+                        "repo": str(repo_path),
+                        "dependency": request.dependency,
+                        "target_version": target_version,
+                    },
+                    ctx,
+                )
+            )
+        except Exception:
+            scan_result = None
+    source_version = _resolve_source_version(request, scan_result)
+
     degradations: list[str] = []
     if request.db is None:
         degradations.append(NO_DOC_INDEX)
-    if skill is None:
-        degradations.append(no_skill_match(request.dependency))
 
     session = ctx.session(request.db) if request.db is not None else None
-    doc_runs = retrieve_skill_evidence(session, skill, source_id=request.source_id)
+    # Shared-corpus retrieval (stage B2): the main path no longer depends on a
+    # dedicated Skill Pack. A skill, when present, only contributes curated
+    # boost queries -- it can never block doc evidence from being collected.
+    doc_runs: list[RetrievalRun] = []
+    if session is not None:
+        doc_runs = retrieve_for_package(
+            session,
+            package=request.dependency,
+            source_version=source_version.spec or "",
+            target_version=_target_spec(request, skill),
+            user_intent=request.user_intent,
+            code_symbols=sorted({usage.symbol for usage in code_report.usages}),
+            source_id=request.source_id,
+            curated_queries=(
+                [query for pattern in skill.patterns for query in pattern.retrieval_queries]
+                if skill is not None
+                else []
+            ),
+            gateway=gateway,
+            mode=mode,
+            embedding=embedding,
+        )
 
     bundle = build_bundle(code_report, doc_runs, dependency=request.dependency)
+    _add_declaration_evidence(bundle, request, source_version, scan_result)
+    if source_version.status in ("unknown", "conflict"):
+        degradations.append(
+            "Source version could not be determined from the manifests "
+            f"(status={source_version.status}); the assessment is not anchored "
+            "to a specific from-version."
+        )
     if not bundle.items:
         degradations.append(NO_CODE_EVIDENCE)
 
@@ -176,12 +309,15 @@ def collect_evidence(
             repo=str(repo_path),
             dependency=request.dependency,
             target_version_spec=_target_spec(request, skill),
-            source_version_spec=getattr(code_report, "version", "") or "",
+            source_version_spec=source_version.spec or "",
+            source_version=source_version,
         ),
         code_report=code_report,
         skill=skill,
         bundle=bundle,
         degradations=degradations,
+        source_version=source_version,
+        dependency_scan=scan_result,
     )
 
 
@@ -263,6 +399,8 @@ def analyse(
         bundle=collection.bundle,
         code_report=collection.code_report,
         degradations=tuple(collection.degradations),
+        source_version=collection.source_version,
+        dependency_scan=collection.dependency_scan,
     )
 
 
@@ -272,6 +410,7 @@ def run_pipeline(
     ctx: ToolContext,
     *,
     registry: ToolRegistry | None = None,
+    embedding: EmbeddingBackend | None = None,
 ) -> AssessmentOutcome:
     """Collect, analyse and verify in one call.
 
@@ -280,7 +419,14 @@ def run_pipeline(
     :attr:`AssessmentOutcome.repo_path` may point into a temporary checkout.
     """
     tools = registry or default_registry()
-    collection = collect_evidence(request, ctx, registry=tools)
+    collection = collect_evidence(
+        request,
+        ctx,
+        registry=tools,
+        gateway=gateway,
+        mode=gateway.mode if gateway is not None else ModelMode.FAKE,
+        embedding=embedding,
+    )
     return analyse(collection, gateway, ctx, registry=tools)
 
 
@@ -292,6 +438,5 @@ __all__ = [
     "EvidenceCollection",
     "analyse",
     "collect_evidence",
-    "no_skill_match",
     "run_pipeline",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from upgradelens.capabilities import TransformationPack
 from upgradelens.models.impact import EvidenceBundle, EvidenceItem
 from upgradelens.patch import generate_patch_draft
 from upgradelens.skills import SkillRegistry, builtin_registry
@@ -84,7 +85,7 @@ def _risk() -> VerifiedRisk:
 def test_patch_draft_applies_low_risk_only_without_quality_model(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     skill = builtin_registry().get("pydantic_v1_to_v2")
-    draft = generate_patch_draft(repo, [_risk()], skill, _bundle())
+    draft = generate_patch_draft(repo, [_risk()], TransformationPack.from_skill(skill), _bundle())
     assert not draft.is_empty
     diff = draft.to_unified_diff()
     # The low-risk .dict() -> .model_dump() rewrite is applied automatically.
@@ -98,7 +99,13 @@ def test_patch_draft_applies_low_risk_only_without_quality_model(tmp_path: Path)
 def test_patch_draft_applies_quality_model_rule_when_allowed(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     skill = builtin_registry().get("pydantic_v1_to_v2")
-    draft = generate_patch_draft(repo, [_risk()], skill, _bundle(), quality_model_available=True)
+    draft = generate_patch_draft(
+        repo,
+        [_risk()],
+        TransformationPack.from_skill(skill),
+        _bundle(),
+        quality_model_available=True,
+    )
     diff = draft.to_unified_diff()
     assert "@field_validator('name')" in diff
     assert ".model_dump(" in diff
@@ -111,7 +118,7 @@ def test_patch_draft_skips_when_disallowed(tmp_path: Path) -> None:
     registry: SkillRegistry = builtin_registry()
     skill = registry.get("pydantic_v1_to_v2")
     skill.allow_patch_draft = False
-    draft = generate_patch_draft(repo, [_risk()], skill, _bundle())
+    draft = generate_patch_draft(repo, [_risk()], TransformationPack.from_skill(skill), _bundle())
     assert draft.is_empty
     assert "does not permit" in draft.notes
     assert draft.to_unified_diff() == ""
@@ -128,14 +135,14 @@ def test_patch_draft_ignores_unverified_risks(tmp_path: Path) -> None:
         model_severity="medium",
         code_evidence_ids=["e1", "e2"],
     )
-    draft = generate_patch_draft(repo, [risk], skill, _bundle())
+    draft = generate_patch_draft(repo, [risk], TransformationPack.from_skill(skill), _bundle())
     assert draft.is_empty
 
 
 def test_patch_draft_emits_valid_unified_diff_shape(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     skill = builtin_registry().get("pydantic_v1_to_v2")
-    draft = generate_patch_draft(repo, [_risk()], skill, _bundle())
+    draft = generate_patch_draft(repo, [_risk()], TransformationPack.from_skill(skill), _bundle())
     text = draft.to_unified_diff()
     assert text.startswith("--- a/src/models.py\n")
     assert "@@ -" in text
@@ -211,7 +218,9 @@ def _sqla_risk() -> VerifiedRisk:
 def test_sqlalchemy_patch_relocates_imports(tmp_path: Path) -> None:
     repo = _sqla_repo(tmp_path)
     skill = builtin_registry().get("sqlalchemy_v1_to_v2")
-    draft = generate_patch_draft(repo, [_sqla_risk()], skill, _sqla_bundle())
+    draft = generate_patch_draft(
+        repo, [_sqla_risk()], TransformationPack.from_skill(skill), _sqla_bundle()
+    )
     diff = draft.to_unified_diff()
     assert not draft.is_empty
     # Both import relocations are applied (auto-safe, no quality model needed).
@@ -260,7 +269,9 @@ def test_sqlalchemy_query_rewrite_not_autopatched(tmp_path: Path) -> None:
         code_evidence_ids=["qe1"],
     )
     skill = builtin_registry().get("sqlalchemy_v1_to_v2")
-    draft = generate_patch_draft(repo, [risk], skill, bundle, quality_model_available=True)
+    draft = generate_patch_draft(
+        repo, [risk], TransformationPack.from_skill(skill), bundle, quality_model_available=True
+    )
     assert draft.is_empty
     assert draft.to_unified_diff() == ""
 
@@ -270,6 +281,8 @@ def test_sqlalchemy_patch_skips_when_disallowed(tmp_path: Path) -> None:
     registry: SkillRegistry = builtin_registry()
     skill = registry.get("sqlalchemy_v1_to_v2")
     skill.allow_patch_draft = False
-    draft = generate_patch_draft(repo, [_sqla_risk()], skill, _sqla_bundle())
+    draft = generate_patch_draft(
+        repo, [_sqla_risk()], TransformationPack.from_skill(skill), _sqla_bundle()
+    )
     assert draft.is_empty
     assert "does not permit" in draft.notes

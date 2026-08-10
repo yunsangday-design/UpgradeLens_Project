@@ -65,9 +65,15 @@ def test_record_then_replay_reproduces_report(tmp_path: Path) -> None:
     spec = AssessmentSpec(repo=str(repo), dependency=dep, target_version_spec=f"=={tv}")
 
     # 1) Record a (fake) run to disk.
+    #
+    # The budget is deliberately explicit rather than the 20k default: it is a
+    # tripwire for prompt bloat. Exceeding it does not fail loudly -- the graph
+    # degrades to a static report -- so the assertions below would report a
+    # confusing "missing recording" instead. Headroom is ~2x the current cost of
+    # the three nodes (the few-shot examples account for ~600 tokens of it).
     rec_dir = tmp_path / "rec"
     gw_rec = ModelGateway(
-        ModelConfig(mode=ModelMode.FAKE, max_total_tokens=2000),
+        ModelConfig(mode=ModelMode.FAKE, max_total_tokens=4000),
         fake_responses=_build_fakes(code_id),
         recording_dir=str(rec_dir),
     )
@@ -84,7 +90,7 @@ def test_record_then_replay_reproduces_report(tmp_path: Path) -> None:
 
     # 2) Replay the recording fully offline.
     gw_replay = ModelGateway(
-        ModelConfig(mode=ModelMode.REPLAY, max_total_tokens=2000), replay_dir=str(rec_dir)
+        ModelConfig(mode=ModelMode.REPLAY, max_total_tokens=4000), replay_dir=str(rec_dir)
     )
     replayed = run_assessment(spec, bundle, gw_replay, skill=skill)
 

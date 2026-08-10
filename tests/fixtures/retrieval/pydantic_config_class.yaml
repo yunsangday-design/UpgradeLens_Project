@@ -1,0 +1,8 @@
+case_id: pydantic_config_class
+package: pydantic
+source_version: "1.x"
+target_version: "2.x"
+pattern_id: pydantic_config_class
+code_symbols: [Config, model_config]
+expected_chunks:
+  - "Config"

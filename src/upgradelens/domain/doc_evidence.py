@@ -55,6 +55,8 @@ class DocSourceRecord(BaseModel):
     title: str
     snapshot_hash: str
     target_version_spec: str = ""
+    package_name: str = ""
+    source_version_spec: str = ""
     chunk_count: int = 0
 
 
@@ -68,6 +70,7 @@ class DocEvidence(BaseModel):
 
     model_config = _frozen()
 
+    evidence_id: str = ""
     source_id: str
     url: str
     title: str
@@ -77,6 +80,11 @@ class DocEvidence(BaseModel):
     snippet: str
     score: float
     matched_query: str
+    package_name: str = ""
+    source_version_spec: str = ""
+    target_version_spec: str = ""
+    trust_level: str = ""
+    chunk_content_hash: str = ""
 
 
 class RetrievalRun(BaseModel):

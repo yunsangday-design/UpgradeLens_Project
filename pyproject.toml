@@ -13,6 +13,7 @@ dependencies = [
   "alembic>=1.13",
   "langgraph>=1.2.10",
   "langchain-openai>=1.4.1",
+  "sqlite-vec>=0.1.9",
 ]
 
 [project.scripts]
@@ -71,6 +72,12 @@ select = ["E", "F", "I", "W", "UP", "B"]
 python_version = "3.12"
 strict = true
 files = ["src"]
+
+# sqlite-vec ships without type stubs; it is only ever touched through the
+# isolated abstraction in upgradelens.db.vector, so skipping its stubs is safe.
+[[tool.mypy.overrides]]
+module = "sqlite_vec"
+ignore_missing_imports = true
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]

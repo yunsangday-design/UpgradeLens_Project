@@ -6,10 +6,14 @@ Tables
 * ``doc_sources``    – ingested documentation snapshots (with content hash)
 * ``doc_chunks``     – heading-aware slices of a source
 * ``retrieval_runs`` – recorded keyword retrieval runs
+* ``embedding_meta`` – singleton describing the *optional* vector index model
 
 The FTS5 virtual table ``doc_chunks_fts`` is created via raw DDL in
 :func:`upgradelens.db.database.init_db` (it cannot be expressed in the ORM
-metadata); its ``rowid`` aliases ``doc_chunks.id``.
+metadata); its ``rowid`` aliases ``doc_chunks.id``. The vector index
+(``sqlite-vec``) is likewise created outside the ORM and is entirely optional:
+when no embedding backend is configured the index is empty and retrieval falls
+back to FTS5-only.
 """
 
 from __future__ import annotations
@@ -54,11 +58,13 @@ class DocSourceRow(Base):
     __tablename__ = "doc_sources"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    package_name: Mapped[str] = mapped_column(String, default="", index=True)
     url: Mapped[str] = mapped_column(String)
     source_type: Mapped[str] = mapped_column(String, default="official_doc")
     trust_level: Mapped[str] = mapped_column(String, default="official")
     title: Mapped[str] = mapped_column(String, default="")
     target_version_spec: Mapped[str] = mapped_column(String, default="")
+    source_version_spec: Mapped[str] = mapped_column(String, default="")
     snapshot_path: Mapped[str] = mapped_column(String, default="")
     snapshot_hash: Mapped[str] = mapped_column(String, default="")
     fetched_at: Mapped[str] = mapped_column(String, default=_utc_now)
@@ -110,3 +116,22 @@ class RetrievalRunRow(Base):
     @matched_chunk_ids_list.setter
     def matched_chunk_ids_list(self, value: list[int]) -> None:
         self.matched_chunk_ids = json.dumps(value, ensure_ascii=False)
+
+
+class EmbeddingMeta(Base):
+    """Singleton describing the embedding model that built the vector index.
+
+    The vector store is optional. When no embedding backend is wired up the
+    index is empty and retrieval falls back to FTS5-only, so this row simply
+    records *which* model/dimension built whatever vectors exist. A model or
+    dimension mismatch is what triggers a clean :meth:`VectorIndex.rebuild`
+    instead of silently mixing vectors from different models.
+    """
+
+    __tablename__ = "embedding_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    model: Mapped[str] = mapped_column(String, default="")
+    dimension: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[str] = mapped_column(String, default=_utc_now)

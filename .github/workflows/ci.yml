@@ -28,6 +28,12 @@ jobs:
       - name: Sync (locked)
         run: uv sync --all-groups --locked
 
+      - name: Verify sqlite-vec loads (3-platform)
+        # B4 pins sqlite-vec and runs hybrid retrieval through it. This step
+        # fails loudly on any platform whose wheel cannot be imported/loaded,
+        # so a missing extension surfaces in CI instead of at runtime.
+        run: uv run python -c "import sqlite_vec; print('sqlite-vec', sqlite_vec.__version__)"
+
       - name: Tests
         run: uv run pytest
 

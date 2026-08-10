@@ -6,6 +6,8 @@ OpenAI-compatible endpoint (e.g. 阿里云百炼) can be reached by environment
 configuration alone -- no secret is needed to assert the wiring.
 """
 
+from pathlib import Path
+
 import pytest
 
 from upgradelens.config import Settings
@@ -28,7 +30,11 @@ def test_settings_reads_live_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.model_api_key.get_secret_value() == "sk-test-not-real"
 
 
-def test_settings_default_is_fake_and_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_default_is_fake_and_offline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Isolate from a developer .env that may set UPGRADELENS_MODEL_MODE=live.
+    monkeypatch.chdir(tmp_path)
     # Ensure no stray live-mode env leaks into the offline default.
     for name in (
         "UPGRADELENS_MODEL_MODE",

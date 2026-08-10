@@ -13,15 +13,29 @@ Subcommands:
 - ``list-skills`` (stage 3) — list the built-in Skill Packs;
 - ``resolve-skill`` (stage 3) — pick the best Skill Pack for a dependency +
   target version (generic fallback when nothing matches);
+- ``list-capabilities`` (stage 5 / B5) — list the optional Capability Packs
+  (transformations) derived from the corpus; the skill-independent surface;
+- ``resolve-capability`` (stage 5 / B5) — pick the transformation capability for
+  a dependency + target version.
+- ``gate`` (stage 6 / 6.1) — CI gate: read a verified report (``assess --format
+  json`` artifact) and exit non-zero when a VERIFIED risk is at/above the
+  blocking severity.
 - ``ingest-docs`` (stage 4) — load built-in documentation snapshots into the
   SQLite + FTS5 index;
 - ``retrieve-docs`` (stage 4) — run keyword RAG over an ingested documentation
   source and return citable evidence.
+- ``retrieval-baseline`` (step 4, B0) — record the FTS5-only curated retrieval
+  baseline (recall@k / MRR / top-k hit) as a reproducible regression guard before
+  the shared RAG path replaces the curated queries.
 - ``fetch-docs`` (stage 7) — fetch a dependency's documentation live from the
   web (PyPI + skill-declared sources), cache-first, and ingest it into the
   SQLite evidence store. Every fetch is recorded in a Tool Trace.
 - ``assess --repo <url>`` (stage 7) — pass a GitHub URL instead of a local path
   to clone it, analyse it, and clean up the temp checkout.
+- ``agent "<text>"`` (Step 2) — natural-language entry: route the request with
+  the Step-1 router, run the shared assessment, and write a self-contained run
+  directory (intent/plan/trace/report/RUN.md) under ``--out`` (default
+  ``runs/<run_id>/``).
 
 Exit codes:
 
@@ -38,17 +52,24 @@ enters the JSON document.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
 import sys
+import tempfile
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel, ValidationError
 
+from upgradelens.agent.loop import run_agent
+from upgradelens.agent.planner import build_agent_plan
 from upgradelens.analyzers import scan_code_evidence, scan_dependency
+from upgradelens.capabilities import CapabilityRegistry, TransformationPack
 from upgradelens.config import Settings
 from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
 from upgradelens.db.repository import persist_code_report
@@ -61,11 +82,29 @@ from upgradelens.domain import (
     ResolutionStatus,
 )
 from upgradelens.domain.skill import SkillPackage
-from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
+from upgradelens.eval import (
+    BASELINES,
+    compare_runs,
+    render_summary_markdown,
+    run_evaluation,
+)
+from upgradelens.eval.retrieval_baseline import (
+    load_retrieval_cases,
+    render_retrieval_baseline_markdown,
+    run_baseline,
+)
+from upgradelens.gate import gate_report
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
+from upgradelens.llm.health import check_model
 from upgradelens.models.impact import EvidenceBundle
 from upgradelens.patch import PatchDraft, generate_patch_draft
-from upgradelens.pipeline import AssessmentOutcome, AssessmentRequest, run_pipeline
+from upgradelens.pipeline import (
+    AssessmentOutcome,
+    AssessmentRequest,
+    analyse,
+    collect_evidence,
+    run_pipeline,
+)
 from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 from upgradelens.tools.cache import DocCache
@@ -74,7 +113,7 @@ from upgradelens.tools.fetcher import RestrictedFetcher
 from upgradelens.tools.github import GitHubClient
 from upgradelens.tools.ingest_live import ingest_live_source, ingest_pypi_changelog
 from upgradelens.tools.pypi import PyPIClient
-from upgradelens.tools.registry import ToolContext, resolve_skill_package
+from upgradelens.tools.registry import ToolContext, default_registry, resolve_skill_package
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify.models import VerifiedReport
 
@@ -84,11 +123,15 @@ EXIT_OK = 0
 EXIT_INVALID_REQUEST = 1
 EXIT_USAGE = 2
 EXIT_RUNTIME = 3
+EXIT_GATE_BLOCKED = 4
 
 _SCAN_COMMAND = "scan-dependency"
 _SCAN_CODE_COMMAND = "scan-code"
 _LIST_SKILLS_COMMAND = "list-skills"
 _RESOLVE_SKILL_COMMAND = "resolve-skill"
+_LIST_CAPABILITIES_COMMAND = "list-capabilities"
+_RESOLVE_CAPABILITY_COMMAND = "resolve-capability"
+_GATE_COMMAND = "gate"
 _INGEST_DOCS_COMMAND = "ingest-docs"
 _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 _ASSESS_COMMAND = "assess"
@@ -96,19 +139,32 @@ _EVAL_COMMAND = "eval"
 _FETCH_DOCS_COMMAND = "fetch-docs"
 _MCP_COMMAND = "mcp"
 _COMMENT_PR_COMMAND = "comment-pr"
+_AGENT_COMMAND = "agent"
+_SEED_REPLAY_COMMAND = "seed-replay"
+_RETRIEVAL_BASELINE_COMMAND = "retrieval-baseline"
+_LLM_CHECK_COMMAND = "llm-check"
 
 #: Shipped Core fixtures, resolved relative to the installed package so the
 #: command works from any working directory.
 DEFAULT_CASES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "eval"
 
+#: Shipped retrieval evaluation cases (ROADMAP Step 4, B0), resolved like above.
+DEFAULT_RETRIEVAL_CASES_DIR = (
+    Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "retrieval"
+)
+
 #: Default on-disk cache for fetched documents (stage 7 cache-first strategy).
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "upgradelens"
 
 
-def _add_assess_pipeline_args(p: argparse.ArgumentParser) -> None:
-    """Arguments shared by ``assess`` and ``comment-pr`` (the analysis pipeline)."""
-    p.add_argument("--repo", required=True, type=Path, help="Repository root (path or URL).")
-    p.add_argument("--dependency", required=True, metavar="NAME", help="Dependency to assess.")
+def _add_assess_pipeline_args(p: argparse.ArgumentParser, *, require: bool = True) -> None:
+    """Arguments shared by ``assess`` and ``comment-pr`` (the analysis pipeline).
+
+    ``require=False`` is used by the ``agent`` command where ``--repo`` and
+    ``--dependency`` are optional overrides on top of the routed intent.
+    """
+    p.add_argument("--repo", required=require, type=Path, help="Repository root (path or URL).")
+    p.add_argument("--dependency", required=require, metavar="NAME", help="Dependency to assess.")
     p.add_argument(
         "--target-version",
         default=None,
@@ -126,6 +182,12 @@ def _add_assess_pipeline_args(p: argparse.ArgumentParser) -> None:
         help="Optional documentation source id to scope retrieval (defaults to the skill id).",
     )
     p.add_argument(
+        "--source-version",
+        default=None,
+        help="Optional from-version the repo is being upgraded FROM. When omitted, "
+        "UpgradeLens infers it from the manifest (scan_dependency).",
+    )
+    p.add_argument(
         "--mode",
         default=None,
         choices=["fake", "replay", "live"],
@@ -140,6 +202,14 @@ def _add_assess_pipeline_args(p: argparse.ArgumentParser) -> None:
         default=None,
         help="Record every node response to DIR (use with --mode live). Replay mode "
         "later reads from the same DIR to reproduce the run fully offline.",
+    )
+    p.add_argument(
+        "--replay-dir",
+        metavar="DIR",
+        default=None,
+        help="Replay recorded node responses from DIR (use with --mode replay). "
+        "Populate it via 'seed-replay' (canned, offline) or "
+        "'assess --mode live --record-replay DIR' (real capture).",
     )
     p.add_argument(
         "--budget-tokens",
@@ -253,6 +323,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional source PEP 440 version to narrow the match.",
     )
 
+    # B5: the capability catalog is the new, skill-independent surface. The
+    # list-skills / resolve-skill commands above remain as compatibility shims.
+    list_caps = subparsers.add_parser(
+        _LIST_CAPABILITIES_COMMAND,
+        help="(B5) List the optional Capability Packs (transformations) built from the corpus.",
+    )
+    list_caps.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help="Optional dir of Skill Packs to derive capabilities from (defaults to built-in).",
+    )
+
+    resolve_cap = subparsers.add_parser(
+        _RESOLVE_CAPABILITY_COMMAND,
+        help="(B5) Resolve the transformation capability for a dependency + target version.",
+    )
+    resolve_cap.add_argument("--dependency", required=True, help="Dependency name (any casing).")
+    resolve_cap.add_argument("--target-version", required=True, help="Target PEP 440 version.")
+    resolve_cap.add_argument(
+        "--source-version",
+        default=None,
+        help="Optional source PEP 440 version to narrow the match.",
+    )
+
+    # 6.1: CI gate consumes the assess artifact and blocks on verified high risk.
+    gate = subparsers.add_parser(
+        _GATE_COMMAND,
+        help="(6.1) Gate a verified report; exit non-zero on a VERIFIED blocking risk.",
+    )
+    gate.add_argument(
+        "--report",
+        type=Path,
+        required=True,
+        help="Verified report JSON (output of `assess --format json`, or `assess --raw`).",
+    )
+    gate.add_argument(
+        "--block-on",
+        default="high,critical",
+        help="Comma-separated severities that block (default: high,critical).",
+    )
+    gate.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format (default: text).",
+    )
+
     assess = subparsers.add_parser(
         _ASSESS_COMMAND,
         help="Run the model-backed upgrade impact assessment (stage 5).",
@@ -279,6 +397,92 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-quality-patch",
         action="store_true",
         help="Also draft patches whose rules require a quality model (use with care).",
+    )
+
+    agent = subparsers.add_parser(
+        _AGENT_COMMAND,
+        help="Natural-language entry: route the request, run the assessment, write run artifacts.",
+    )
+    agent.add_argument(
+        "text",
+        help="Natural-language request, e.g. 'upgrade pydantic in owner/repo to 2.0'.",
+    )
+    _add_assess_pipeline_args(agent, require=False)
+    agent.add_argument(
+        "--out",
+        type=Path,
+        default=Path("runs"),
+        help="Base directory for run artifacts; the run lands in <out>/<run_id>/.",
+    )
+
+    seed_replay = subparsers.add_parser(
+        _SEED_REPLAY_COMMAND,
+        help="Record demo canned (evidence-anchored) model responses for offline --mode replay.",
+    )
+    seed_replay.add_argument(
+        "--repo", required=True, type=Path, help="Repository root path or URL."
+    )
+    seed_replay.add_argument(
+        "--dependency", required=True, metavar="NAME", help="Dependency to assess."
+    )
+    seed_replay.add_argument("--target-version", default=None, help="Target version spec.")
+    seed_replay.add_argument(
+        "--db", type=Path, default=None, help="Optional SQLite database with ingested docs."
+    )
+    seed_replay.add_argument("--source-id", default=None, help="Optional documentation source id.")
+    seed_replay.add_argument(
+        "--source-version",
+        default=None,
+        help="Optional from-version the repo is being upgraded FROM.",
+    )
+    seed_replay.add_argument(
+        "--model", default=None, help="Model name (metadata only)."
+    )
+    seed_replay.add_argument(
+        "--out",
+        type=Path,
+        default=Path("replay"),
+        help="Directory to write replay JSON files (consumed by --mode replay).",
+    )
+
+    llm_check = subparsers.add_parser(
+        _LLM_CHECK_COMMAND,
+        help="Probe the configured model endpoint with one tiny structured call.",
+    )
+    llm_check.add_argument(
+        "--mode",
+        default=None,
+        choices=["fake", "replay", "live"],
+        help="Model gateway mode (defaults to UPGRADELENS_MODEL_MODE, then 'fake'). "
+        "Only 'live' talks to a real endpoint.",
+    )
+    llm_check.add_argument("--model", default=None, help="Model name (live mode).")
+    llm_check.add_argument("--api-key", default=None, help="API key (live mode, overrides env).")
+    llm_check.add_argument(
+        "--base-url", default=None, help="OpenAI-compatible base url (live mode)."
+    )
+    llm_check.add_argument(
+        "--replay-dir",
+        metavar="DIR",
+        default=None,
+        help="Directory of recorded responses (use with --mode replay).",
+    )
+    llm_check.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Request timeout in seconds for the probe call (live mode).",
+    )
+    agent.add_argument(
+        "--format",
+        default="json",
+        choices=["json", "md"],
+        help="Stdout output format: machine JSON (default) or a Markdown report.",
+    )
+    agent.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Route the request and write intent/plan only; do not run the pipeline.",
     )
 
     comment_pr = subparsers.add_parser(
@@ -391,6 +595,60 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Exit non-zero if the hybrid baseline pass rate is below this value (0..1).",
     )
+    evaluate.add_argument(
+        "--compare",
+        type=Path,
+        default=None,
+        help="Path to a previous `eval --format json` output; prints an A/B delta "
+        "table attributing metric changes to the prompt version difference.",
+    )
+    evaluate.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Write the JSON result (including any comparison) to this path for "
+        "later use with --compare.",
+    )
+    evaluate.add_argument(
+        "--retrieval-cases",
+        type=Path,
+        default=None,
+        help="Directory of retrieval cases for the strategy table "
+        f"(default: {DEFAULT_RETRIEVAL_CASES_DIR}; skipped on error).",
+    )
+
+    retrieval_baseline = subparsers.add_parser(
+        _RETRIEVAL_BASELINE_COMMAND,
+        help="Record the FTS5-only curated retrieval baseline (Step 4, B0).",
+    )
+    retrieval_baseline.add_argument(
+        "--db",
+        default=None,
+        help="SQLite database to build/use (default: a temporary file, removed after).",
+    )
+    retrieval_baseline.add_argument(
+        "--cases-dir",
+        type=Path,
+        default=None,
+        help=f"Directory of retrieval cases (default: {DEFAULT_RETRIEVAL_CASES_DIR}).",
+    )
+    retrieval_baseline.add_argument(
+        "--out",
+        default=None,
+        help="Write the JSON baseline report to this path.",
+    )
+    retrieval_baseline.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Per-query top-k used by the curated retrieval path (default: 5).",
+    )
+    retrieval_baseline.add_argument(
+        "--format",
+        default="md",
+        choices=["json", "md"],
+        help="Output format (default: Markdown summary).",
+    )
     return parser
 
 
@@ -454,7 +712,57 @@ def _build_model_config(args: argparse.Namespace, settings: Settings) -> ModelCo
         model=getattr(args, "model", None) or settings.model_name,
         api_key=api_key,
         max_total_tokens=getattr(args, "budget_tokens", None) or settings.model_max_total_tokens,
+        disable_thinking=settings.model_disable_thinking,
     )
+
+
+def _report_model_usage(
+    config: ModelConfig, gateway: ModelGateway, outcome: AssessmentOutcome
+) -> None:
+    """Make live model usage visible on stderr (stdout stays machine-readable).
+
+    Without this, a live run whose calls all failed is indistinguishable from a
+    successful one: the graph degrades to the static report on purpose, so the
+    only signal would be a quieter report.
+    """
+    if config.mode != ModelMode.LIVE:
+        return
+    ledger = gateway.ledger
+    sys.stderr.write(
+        f"upgradelens: llm live model={config.model} calls={len(ledger)} "
+        f"tokens={sum(r.total_tokens for r in ledger)} "
+        f"latency={sum(r.latency_ms for r in ledger)}ms "
+        f"cost=${sum(r.cost_usd for r in ledger):.4f}\n"
+    )
+    if getattr(outcome.report, "static", False):
+        sys.stderr.write(
+            "upgradelens: WARNING the live model was unavailable; the report fell back "
+            "to static analysis (static=true). Diagnose with 'upgradelens llm-check "
+            "--mode live'.\n"
+        )
+
+
+def _llm_check_command(args: argparse.Namespace) -> int:
+    """Probe the configured endpoint and print the outcome as JSON."""
+    config = _build_model_config(args, Settings())
+    if args.timeout is not None:
+        config = replace(config, request_timeout_seconds=args.timeout)
+    if config.mode == ModelMode.REPLAY and not args.replay_dir:
+        sys.stderr.write(
+            "upgradelens: --mode replay requires --replay-dir (recorded responses).\n"
+        )
+        return EXIT_INVALID_REQUEST
+
+    health = check_model(config, replay_dir=args.replay_dir)
+    _emit(health)
+    if not health.ok:
+        sys.stderr.write(f"upgradelens: model check failed: {health.error}\n")
+        return EXIT_RUNTIME
+    if not health.called_real_api:
+        sys.stderr.write(
+            f"upgradelens: no real API call was made ({health.note}).\n"
+        )
+    return EXIT_OK
 
 
 def _assess_repo(args: argparse.Namespace, ctx: ToolContext) -> AssessmentOutcome:
@@ -468,20 +776,30 @@ def _assess_repo(args: argparse.Namespace, ctx: ToolContext) -> AssessmentOutcom
     ``ctx`` must stay open while the caller uses the result: for a live repo the
     returned ``repo_path`` is a temp checkout that the context owns.
     """
+    config = _build_model_config(args, Settings())
+    if config.mode == ModelMode.REPLAY and not getattr(args, "replay_dir", None):
+        sys.stderr.write(
+            "upgradelens: --mode replay requires --replay-dir (recorded responses).\n"
+        )
+        raise SystemExit(EXIT_INVALID_REQUEST)
     request = AssessmentRequest(
         repo=str(args.repo),
         dependency=args.dependency,
         target_version=args.target_version,
+        source_version=args.source_version,
         db=args.db,
         source_id=args.source_id,
         ref=getattr(args, "ref", None),
     )
     gateway = ModelGateway(
-        _build_model_config(args, Settings()),
+        config,
         recording_dir=getattr(args, "record_replay", None),
+        replay_dir=getattr(args, "replay_dir", None),
     )
     try:
-        return run_pipeline(request, gateway, ctx)
+        outcome = run_pipeline(request, gateway, ctx)
+        _report_model_usage(config, gateway, outcome)
+        return outcome
     except ToolExecutionError:
         # Our own code broke; that is a runtime fault, not a bad request.
         raise
@@ -516,6 +834,66 @@ def _assess_command(args: argparse.Namespace) -> int:
 
         if args.emit_patch is not None:
             _emit_patch_draft(args, result.verified, result.repo_path, result.skill, result.bundle)
+    return EXIT_OK
+
+
+def _seed_replay_command(args: argparse.Namespace) -> int:
+    """Record demo canned (evidence-anchored) model responses so the closed loop
+    can run fully offline via ``--mode replay``.
+
+    This is a *placeholder* for a real capture (``assess --mode live
+    --record-replay <dir>``); the recorded responses are illustrative fixtures,
+    not genuine model reasoning. They are anchored to the real code-usage
+    evidence discovered in the target repo so the verifier can still promote
+    them to VERIFIED and the loop is exercisable without an API key.
+    """
+    from upgradelens.llm.fixtures import build_fake_responses
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    request = AssessmentRequest(
+        repo=str(args.repo),
+        dependency=args.dependency,
+        target_version=args.target_version,
+        source_version=args.source_version,
+        db=args.db,
+        source_id=args.source_id,
+        ref=None,
+    )
+    config = ModelConfig(
+        mode=ModelMode.FAKE,
+        model=args.model or "qwen-plus",
+        api_key="",
+        base_url="",
+    )
+    with ToolContext() as ctx:
+        collection = collect_evidence(request, ctx)
+        responses, _injected = build_fake_responses(
+            collection.bundle, args.dependency, collection.skill
+        )
+        gateway = ModelGateway(
+            config,
+            fake_responses=responses or None,
+            recording_dir=str(out_dir),
+        )
+        analyse(collection, gateway, ctx)
+
+    written = sorted(p.name for p in out_dir.glob("*.json"))
+    if not written:
+        sys.stderr.write(
+            "upgradelens: seed-replay recorded nothing; the target repo may have "
+            "no code-usage evidence for this dependency.\n"
+        )
+        return EXIT_INVALID_REQUEST
+    _emit({
+        "replay_dir": str(out_dir),
+        "recorded_nodes": written,
+        "note": (
+            "These are demo canned (evidence-anchored) responses, not real model "
+            "outputs. Replace with a real capture: upgradelens assess --mode live "
+            "--record-replay <dir> --repo <repo> --dependency <dep> ..."
+        ),
+    })
     return EXIT_OK
 
 
@@ -557,6 +935,117 @@ def _comment_pr_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _derive_agent_run_id(text: str, repo: object, dependency: object, target: object) -> str:
+    """Stable, secret-free run id derived from the request (not the clock).
+
+    Identical natural-language input yields the same id so a second run
+    overwrites the first, making ``plan.json`` / ``trace.jsonl`` trivially
+    diffable for the Step-2 acceptance check.
+    """
+    seed = f"{text}|{repo}|{dependency}|{target}"
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8]
+    return f"run-{digest}"
+
+
+def _agent_command(args: argparse.Namespace) -> int:
+    """Natural-language entry point (ROADMAP Step 2).
+
+    Routes the free-text request through the Step-1 router, then -- when the
+    intent is an ``upgrade_task`` -- runs the shared analysis pipeline and
+    writes a self-contained run directory (intent/plan/trace/report/RUN.md)
+    under ``--out``. Non-upgrade intents are still written (auditable) but do
+    not trigger the pipeline.
+    """
+    from upgradelens.agent.router import Router
+    from upgradelens.agent.run_store import RunStore
+
+    settings = Settings()
+    config = _build_model_config(args, settings)
+    if config.mode == ModelMode.REPLAY and not getattr(args, "replay_dir", None):
+        sys.stderr.write(
+            "upgradelens: --mode replay requires --replay-dir (recorded responses).\n"
+        )
+        raise SystemExit(EXIT_INVALID_REQUEST)
+    gateway = ModelGateway(
+        config,
+        recording_dir=getattr(args, "record_replay", None),
+        replay_dir=getattr(args, "replay_dir", None),
+    )
+    registry = default_registry()
+    run_id = _derive_agent_run_id(args.text, args.repo, args.dependency, args.target_version)
+    store = RunStore.create(args.out, run_id)
+
+    intent = Router().route(args.text)
+    intent_dict = intent.model_dump(mode="json")
+    store.write_intent(intent_dict)
+    if intent.kind != "upgrade_task":
+        # No assessment to plan for non-upgrade intents.
+        store.write_plan(mode=config.mode.value, intent=intent_dict)
+    else:
+        plan = build_agent_plan(
+            gateway=gateway,
+            registry=registry,
+            repo=str(args.repo) if args.repo is not None else (intent.repo or ""),
+            dependency=args.dependency or (intent.dependency or ""),
+            target_version=args.target_version or (intent.target_version or ""),
+            source_version=intent.source_version,
+        )
+        store.write_plan(mode=config.mode.value, intent=intent_dict, plan=plan)
+
+    if args.dry_run:
+        _emit(intent_dict)
+        sys.stderr.write(f"upgradelens: --dry-run; wrote {store.run_dir}\n")
+        return EXIT_OK
+
+    if intent.kind != "upgrade_task":
+        store.write_run_md(
+            intent=intent_dict, mode=config.mode.value, verified=None, degradations=()
+        )
+        message = intent.clarification or (
+            "The request was not recognised as a dependency upgrade task."
+        )
+        sys.stdout.write(message + "\n")
+        if intent.kind == "invalid_url":
+            return EXIT_INVALID_REQUEST
+        return EXIT_OK
+
+    repo = str(args.repo) if args.repo is not None else intent.repo
+    dependency = args.dependency or intent.dependency
+    target_version = args.target_version or intent.target_version
+    if not repo or not dependency:
+        sys.stderr.write("upgradelens: repo and dependency are required for assessment.\n")
+        return EXIT_INVALID_REQUEST
+    request = AssessmentRequest(
+        repo=repo,
+        dependency=dependency,
+        target_version=target_version,
+        source_version=args.source_version or intent.source_version,
+        db=args.db,
+        source_id=args.source_id,
+        ref=getattr(args, "ref", None),
+    )
+    with ToolContext() as ctx:
+        try:
+            result = run_agent(request, gateway, ctx, registry=registry)
+        except ToolError as exc:
+            sys.stderr.write(f"upgradelens: cannot analyse repository: {exc}\n")
+            return EXIT_INVALID_REQUEST
+        store.write_trace(ctx.trace)
+        store.write_report(result.verified)
+        store.write_run_md(
+            intent=intent_dict,
+            mode=config.mode.value,
+            verified=result.verified,
+            degradations=tuple(result.degradations),
+        )
+        if args.format == "md":
+            _emit_text(render_markdown(result.verified))
+        else:
+            _emit(result.verified)
+    sys.stderr.write(f"upgradelens: wrote run artifacts to {store.run_dir}\n")
+    return EXIT_OK
+
+
 def _emit_patch_draft(
     args: argparse.Namespace,
     verified: VerifiedReport,
@@ -566,16 +1055,21 @@ def _emit_patch_draft(
 ) -> None:
     """Generate a Unified Diff patch draft and write it (stage 8).
 
-    Never writes to the analysed tree; only to ``--emit-patch``. When the skill
-    disallows drafts, or no verified rewrite is eligible, nothing is written.
+    Never writes to the analysed tree; only to ``--emit-patch``. When no
+    capability pack permits drafts, or no verified rewrite is eligible, nothing
+    is written. The skill is only read to derive its (optional) transformation
+    capability; the patch logic itself no longer depends on the Skill Pack.
     """
-    if skill is None or not skill.allow_patch_draft:
-        sys.stderr.write("upgradelens: skill does not allow patch drafts; nothing written.\n")
+    capability = TransformationPack.from_skill(skill) if skill is not None else None
+    if capability is None or not capability.allow_patch_draft():
+        sys.stderr.write(
+            "upgradelens: capability pack does not permit patch drafts; nothing written.\n"
+        )
         return
     draft: PatchDraft = generate_patch_draft(
         repo_path,
         verified.verified_risks,
-        skill,
+        capability,
         bundle,
         quality_model_available=args.allow_quality_patch,
     )
@@ -670,18 +1164,90 @@ def _fetch_docs_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _retrieval_strategy_section(
+    cases_dir: Path | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Best-effort retrieval-strategy comparison for the eval summary.
+
+    Surfaced so a single ``eval`` run shows both the model-quality baselines and
+    the retrieval strategy (FTS5-only) that feeds them. The standard retrieval
+    fixtures are evaluated every time; any problem (missing dir, broken fixture)
+    is swallowed so it can never hide a model-quality regression.
+    """
+    try:
+        target = cases_dir or DEFAULT_RETRIEVAL_CASES_DIR
+        cases = load_retrieval_cases(target)
+    except (ValueError, FileNotFoundError) as _exc:
+        sys.stderr.write(f"upgradelens: retrieval section skipped: {_exc!r}\n")
+        return None
+
+    db_path = tempfile.NamedTemporaryFile(suffix=".db", delete=False).name
+    engine = engine_for(db_path)
+    init_db(engine)
+    session = session_for(engine)()
+    try:
+        skills = builtin_registry().all()
+        report = run_baseline(session, skills, cases, top_k=5)
+    except Exception as _exc:  # noqa: BLE001 - best-effort; never hide a regression
+        sys.stderr.write(f"upgradelens: retrieval section skipped: {_exc!r}\n")
+        return None
+    finally:
+        session.close()
+        try:
+            os.remove(db_path)
+        except OSError:
+            pass
+    return render_retrieval_baseline_markdown(report), report.model_dump()
+
+
 def _eval_command(args: argparse.Namespace) -> int:
-    """Run the offline evaluation and print the baseline comparison."""
+    """Run the offline evaluation and print the baseline + retrieval comparison.
+
+    The command is the fixed point of the prompt-iteration loop: edit a prompt,
+    re-run, and pass the previous JSON back with ``--compare`` to read an A/B
+    delta. ``--out`` writes the current JSON so the next edit has something to
+    diff against.
+    """
     try:
         result = run_evaluation(args.cases, baselines=args.baseline)
     except (ValueError, FileNotFoundError) as exc:
         sys.stderr.write(f"upgradelens: {exc}\n")
         return EXIT_INVALID_REQUEST
 
+    # Build the whole payload (comparison + retrieval) up front so the file
+    # written by --out and the JSON printed to stdout are identical.
+    comparison = None
+    if args.compare is not None:
+        try:
+            previous = json.loads(Path(args.compare).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"upgradelens: cannot read --compare file: {exc}\n")
+            return EXIT_INVALID_REQUEST
+        comparison = compare_runs(result, previous)
+
+    section = _retrieval_strategy_section(args.retrieval_cases)
+    retrieval_md = section[0] if section is not None else None
+    retrieval_json = section[1] if section is not None else None
+
+    payload = result.to_dict()
+    if comparison is not None:
+        payload["comparison"] = comparison.to_dict()
+    if retrieval_json is not None:
+        payload["retrieval"] = retrieval_json
+
+    if args.out is not None:
+        Path(args.out).write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        sys.stderr.write(f"upgradelens: wrote eval result to {args.out}\n")
+
     if args.format == "md":
-        _emit_text(render_summary_markdown(result))
+        text = render_summary_markdown(result, comparison=comparison)
+        if retrieval_md is not None:
+            text = text.rstrip() + "\n\n" + retrieval_md
+        _emit_text(text)
     else:
-        _emit(result.to_dict())
+        _emit(payload)
 
     if args.fail_under is not None:
         hybrid = next((s for s in result.summaries if s.baseline == "hybrid"), None)
@@ -692,6 +1258,76 @@ def _eval_command(args: argparse.Namespace) -> int:
             )
             return EXIT_INVALID_REQUEST
     return EXIT_OK
+
+
+def _retrieval_baseline_command(args: argparse.Namespace) -> int:
+    """Build the SQLite index from built-in fixtures and record the baseline."""
+    try:
+        cases_dir = Path(args.cases_dir) if args.cases_dir else DEFAULT_RETRIEVAL_CASES_DIR
+        cases = load_retrieval_cases(cases_dir)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.stderr.write(f"upgradelens: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    db_path = args.db or tempfile.NamedTemporaryFile(suffix=".db", delete=False).name
+    engine = engine_for(db_path)
+    init_db(engine)
+    session = session_for(engine)()
+    try:
+        skills = builtin_registry().all()
+        report = run_baseline(session, skills, cases, top_k=args.top_k)
+    finally:
+        session.close()
+        if not args.db:
+            try:
+                os.remove(db_path)
+            except OSError:
+                pass
+
+    if args.out:
+        Path(args.out).write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        sys.stderr.write(f"upgradelens: wrote retrieval baseline to {args.out}\n")
+
+    if args.format == "md":
+        _emit_text(render_retrieval_baseline_markdown(report))
+    else:
+        _emit(report.model_dump())
+    return EXIT_OK
+
+
+def _gate_command(args: argparse.Namespace) -> int:
+    """Apply the CI gate to a verified report (ROADMAP 6.1).
+
+    Reads the artifact produced by ``assess --format json`` (or ``assess --raw``)
+    and exits non-zero when a ``VERIFIED`` risk meets or exceeds the blocking
+    severity. Degraded / unverified findings never block.
+    """
+    path: Path = args.report
+    if not path.is_file():
+        sys.stderr.write(f"upgradelens: report not found: {path}\n")
+        return EXIT_INVALID_REQUEST
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"upgradelens: cannot read report {path}: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    if isinstance(raw, dict) and "verified" in raw:
+        raw = raw["verified"]
+    try:
+        report = VerifiedReport.model_validate(raw)
+    except ValidationError as exc:
+        sys.stderr.write(f"upgradelens: invalid verified report: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    block_on = [s for s in args.block_on.split(",") if s] if args.block_on else None
+    result = gate_report(report, block_on=block_on)
+
+    if args.format == "json":
+        _emit(result.to_dict())
+    else:
+        sys.stdout.write(result.summary + "\n")
+    return EXIT_GATE_BLOCKED if result.block else EXIT_OK
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -726,6 +1362,51 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.stderr.write("upgradelens: invalid request\n")
             return EXIT_INVALID_REQUEST
         _emit(selection)
+        return EXIT_OK
+
+    if args.command == _LIST_CAPABILITIES_COMMAND:
+        if args.base_dir is not None:
+            registry = SkillRegistry.from_directory(args.base_dir)
+        else:
+            registry = builtin_registry()
+        caps = CapabilityRegistry.from_skills(registry.all())
+        _emit({"capabilities": caps.catalog()})
+        return EXIT_OK
+
+    if args.command == _RESOLVE_CAPABILITY_COMMAND:
+        try:
+            selection = builtin_registry().select_skill(
+                args.dependency, args.target_version, args.source_version
+            )
+        except SkillParseError as exc:
+            errors = [ParseIssue(code=IssueCode.INVALID_REQUEST, message=str(exc))]
+            _emit(
+                DependencyScanResult(
+                    requested_name=args.dependency,
+                    dependency_name=canonicalize_name(args.dependency.strip()),
+                    status=ResolutionStatus.INVALID,
+                    target_version=args.target_version,
+                    errors=errors,
+                )
+            )
+            sys.stderr.write("upgradelens: invalid request\n")
+            return EXIT_INVALID_REQUEST
+        if selection is None:
+            _emit({"dependency": args.dependency, "capability_id": None})
+            return EXIT_OK
+        resolved = builtin_registry().get(selection.skill_id)
+        if resolved is None:
+            _emit({"dependency": args.dependency, "capability_id": None})
+            return EXIT_OK
+        pack = TransformationPack.from_skill(resolved)
+        _emit(
+            {
+                "dependency": args.dependency,
+                "capability_id": pack.id,
+                "allow_patch_draft": pack.allow_patch_draft(),
+                "patch_rules": [r.id for r in pack.patch_rules()],
+            }
+        )
         return EXIT_OK
 
     if args.command == _SCAN_CODE_COMMAND:
@@ -768,11 +1449,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             session.close()
         return EXIT_OK
 
+    if args.command == _GATE_COMMAND:
+        return _gate_command(args)
+
     if args.command == _ASSESS_COMMAND:
         return _assess_command(args)
 
     if args.command == _COMMENT_PR_COMMAND:
         return _comment_pr_command(args)
+
+    if args.command == _AGENT_COMMAND:
+        return _agent_command(args)
+
+    if args.command == _SEED_REPLAY_COMMAND:
+        return _seed_replay_command(args)
+
+    if args.command == _LLM_CHECK_COMMAND:
+        return _llm_check_command(args)
 
     if args.command == _FETCH_DOCS_COMMAND:
         return _fetch_docs_command(args)
@@ -785,6 +1478,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _EVAL_COMMAND:
         return _eval_command(args)
+
+    if args.command == _RETRIEVAL_BASELINE_COMMAND:
+        return _retrieval_baseline_command(args)
 
     try:
         request = DependencyAnalysisRequest(

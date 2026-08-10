@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     model_max_total_tokens: int = 20000
     # Secret API key used only in live mode. Not required for fake/replay.
     model_api_key: SecretStr | None = Field(default=None)
+    # Reasoning models (qwen3.7-plus, etc.) reject function_calling's
+    # tool_choice and waste time "thinking". Set true for such models so the
+    # gateway disables thinking for structured extraction.
+    model_disable_thinking: bool = Field(default=False)
 
     def require_secret(self, name: str = "api_key") -> SecretStr:
         """Return a secret or raise a clear, non-leaking error.

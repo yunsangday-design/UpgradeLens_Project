@@ -1,0 +1,8 @@
+case_id: sqlalchemy_hybrid_import
+package: sqlalchemy
+source_version: "1.x"
+target_version: "2.0"
+pattern_id: sqla_ext_hybrid_import
+code_symbols: [hybrid_property]
+expected_chunks:
+  - "hybrid_property → sqlalchemy.orm"

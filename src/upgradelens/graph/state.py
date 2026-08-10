@@ -12,6 +12,7 @@ from upgradelens.models.impact import (
     EvidenceBundle,
     ImpactReport,
     Plan,
+    SourceVersion,
 )
 
 
@@ -21,6 +22,7 @@ class AssessmentSpec:
     dependency: str
     target_version_spec: str
     source_version_spec: str = ""
+    source_version: SourceVersion | None = None
 
 
 class GraphState(TypedDict, total=False):

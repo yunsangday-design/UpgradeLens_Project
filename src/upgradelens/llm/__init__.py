@@ -14,7 +14,9 @@ from upgradelens.llm.gateway import (
     StructuredOutputError,
     TokenBudget,
     estimate_tokens,
+    usage_from_message,
 )
+from upgradelens.llm.health import ModelHealth, ProbeAnswer, check_model
 
 __all__ = [
     "BudgetExceededError",
@@ -24,10 +26,14 @@ __all__ = [
     "FakeBackend",
     "ModelConfig",
     "ModelGateway",
+    "ModelHealth",
     "ModelMode",
     "ModelUnavailableError",
+    "ProbeAnswer",
     "ReplayBackend",
     "StructuredOutputError",
     "TokenBudget",
+    "check_model",
     "estimate_tokens",
+    "usage_from_message",
 ]

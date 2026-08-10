@@ -60,6 +60,22 @@ uv run upgradelens scan-dependency \
   --target-version 2.0.0
 ```
 
+### Source version inference
+
+The `assess`, `comment-pr`, and `agent` commands run the same dependency scan
+**first** and infer the *from-version* from the manifest rather than guessing:
+
+- **declared** — an exact pin (e.g. `pydantic==1.10.13`) is used verbatim;
+- **inferred** — a range (e.g. `pydantic>=1.10`) is reported as a range and is
+  never upgraded into a fabricated exact version;
+- **conflict** — conflicting declarations are flagged instead of guessed;
+- **unknown** — when nothing is declared, the assessment is explicitly marked
+  *not anchored to a specific from-version* and degrades honestly.
+
+The resolved from-version and its provenance (`version_source`) flow into the
+RAG query, the planner/impact prompts, and the rendered report. Pass
+`--source-version` to override the inferred value (treated as `user`-provided).
+
 ### Posting the assessment to a GitHub PR
 
 `comment-pr` runs the same assessment as `assess` and posts the rendered report

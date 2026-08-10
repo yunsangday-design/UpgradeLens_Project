@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from upgradelens.eval import BASELINES, load_cases, run_evaluation
+from upgradelens.eval import BASELINES, EvaluationResult, compare_runs, load_cases, run_evaluation
+from upgradelens.llm.prompts import PROMPTS
 
 CASES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "eval"
 
@@ -91,3 +92,119 @@ def test_result_serialises_to_plain_json_types(result) -> None:
 def test_unknown_baseline_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown baseline"):
         run_evaluation(CASES_DIR, baselines=["nope"])
+
+
+# --- C4: prompt-version tagging + A/B comparison -------------------------
+#
+# The eval harness is offline (synthetic model reports), so a prompt edit does
+# not change the output here. What it changes is the *label*: every result now
+# records which prompt template versions produced it, and two runs can be
+# diffed to attribute metric movement to the prompt. These tests pin that loop.
+
+
+def test_result_records_current_prompt_versions(result) -> None:
+    # The eval that C3 tuned must be tagged with the v2 few-shot prompts.
+    assert result.prompt_versions["breaking_change"] == PROMPTS["breaking_change"].version
+    assert result.prompt_versions["impact_report"] == PROMPTS["impact_report"].version
+    # Every registered prompt is captured, so nothing can silently go untracked.
+    assert set(result.prompt_versions) == set(PROMPTS)
+
+
+def test_prompt_versions_round_trip_through_json(result) -> None:
+    restored = EvaluationResult.from_dict(result.to_dict())
+    assert restored.prompt_versions == result.prompt_versions
+
+
+def _result_dict(
+    pass_rate: float,
+    citation: float,
+    hallucinated: int,
+    versions: dict[str, str] | None = None,
+) -> dict:
+    """A minimal ``to_dict`` blob with one hybrid baseline row."""
+    return {
+        "schema_version": "eval-result/1",
+        "prompt_versions": versions
+        or {
+            "breaking_change": "v1",
+            "impact_report": "v1",
+            "planner": "v2",
+            "router": "v1",
+            "query_rewriter": "v1",
+        },
+        "cases": ["c1"],
+        "baselines": [
+            {
+                "baseline": "hybrid",
+                "cases": 8,
+                "passed_cases": round(pass_rate * 8),
+                "cited_total": 10,
+                "cited_existing": round(citation * 10),
+                "pass_rate": pass_rate,
+                "citation_existence_rate": citation,
+                "hallucinated_verified": hallucinated,
+                "failed_checks": {},
+            }
+        ],
+        "details": [],
+    }
+
+
+def _compare(prev: dict, curr: dict) -> str:
+    return compare_runs(EvaluationResult.from_dict(curr), prev).overall_verdict()
+
+
+def test_compare_flags_no_change_as_unchanged() -> None:
+    blob = _result_dict(1.0, 1.0, 0)
+    assert _compare(blob, blob) == "unchanged"
+
+
+def test_compare_flags_improvement() -> None:
+    prev = _result_dict(0.5, 0.8, 2)
+    curr = _result_dict(1.0, 1.0, 0)
+    assert _compare(prev, curr) == "improved"
+
+
+def test_compare_flags_regression_on_pass_rate() -> None:
+    prev = _result_dict(1.0, 1.0, 0)
+    curr = _result_dict(0.5, 1.0, 0)
+    assert _compare(prev, curr) == "regressed"
+
+
+def test_compare_flags_regression_when_hallucination_increases() -> None:
+    """A single extra fabricated citation is a regression even if pass holds."""
+    prev = _result_dict(1.0, 1.0, 0)
+    curr = _result_dict(1.0, 1.0, 1)
+    assert _compare(prev, curr) == "regressed"
+
+
+def test_compare_flags_mixed_when_some_metrics_move_both_ways() -> None:
+    # Pass rate up but citation down: simultaneous improvement and regression.
+    prev = _result_dict(0.5, 0.5, 0)
+    curr = _result_dict(1.0, 0.2, 0)
+    assert _compare(prev, curr) == "mixed"
+
+
+def test_compare_reports_prompt_version_change_in_markdown() -> None:
+    from upgradelens.eval import render_compare_markdown
+
+    prev = _result_dict(1.0, 1.0, 0)
+    curr = _result_dict(
+        0.5,
+        1.0,
+        1,
+        versions={
+            "breaking_change": "v2",  # C3 bump: few-shot examples added
+            "impact_report": "v2",
+            "planner": "v2",
+            "router": "v1",
+            "query_rewriter": "v1",
+        },
+    )
+    comparison = compare_runs(EvaluationResult.from_dict(curr), prev)
+    md = render_compare_markdown(comparison)
+    assert "Prompt A/B comparison" in md
+    assert "breaking_change=v1" in md  # previous versions line
+    assert "breaking_change=v2" in md  # current versions line (C3 bump)
+    assert "Overall verdict" in md
+    assert comparison.overall_verdict() == "regressed"

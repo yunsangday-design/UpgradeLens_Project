@@ -19,7 +19,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from upgradelens.domain.skill import PatchRule, SkillPackage
+from upgradelens.capabilities import TransformationPack
+from upgradelens.domain.skill import PatchRule
 from upgradelens.models.impact import EvidenceBundle
 from upgradelens.patch.models import PatchDraft, PatchFileDiff, PatchHunk
 from upgradelens.verify.models import VerifiedRisk
@@ -37,7 +38,7 @@ def _apply_rule(rule: PatchRule, line: str) -> str:
 def _matches_for_file(
     repo_root: Path,
     risks: list[VerifiedRisk],
-    skill: SkillPackage,
+    capability: TransformationPack,
     bundle: EvidenceBundle,
     *,
     quality_model_available: bool,
@@ -67,7 +68,7 @@ def _matches_for_file(
             target = max(0, int(line) - 1)  # 1-based -> 0-based
             lo = max(0, target - 4)
             hi = min(len(lines), target + 5)
-            for rule in skill.patch_rules:
+            for rule in capability.patch_rules():
                 if (path, rule.id) in applied:
                     continue
                 if rule.requires_quality_model and not quality_model_available:
@@ -131,37 +132,51 @@ def _build_file_diff(
 def generate_patch_draft(
     repo_root: Path,
     verified_risks: list[VerifiedRisk],
-    skill: SkillPackage,
+    capability: TransformationPack | None,
     bundle: EvidenceBundle,
     *,
     quality_model_available: bool = False,
 ) -> PatchDraft:
-    """Build a review-ready patch draft from verified evidence + skill rules.
+    """Build a review-ready patch draft from verified evidence + capability rules.
 
     The function is pure: it reads the working tree to locate matches but never
     mutates it. Returns an (often empty) :class:`PatchDraft`.
+
+    ``capability`` is optional by design -- when ``None`` or when it does not
+    permit drafting, an empty draft is returned. The main assessment path never
+    requires a capability pack to be present.
     """
+    if capability is None:
+        return PatchDraft(
+            dependency="",
+            target_version_spec="",
+            skill_id="",
+            allow_patch_draft=False,
+            quality_model_available=quality_model_available,
+            notes="No capability pack available; no patch draft generated.",
+        )
+
     draft = PatchDraft(
-        dependency=next(iter(skill.package_names), ""),
-        target_version_spec=skill.target_version_spec or "",
-        skill_id=skill.skill_id,
-        allow_patch_draft=skill.allow_patch_draft,
+        dependency=next(iter(capability.package_names), ""),
+        target_version_spec=capability.target_version_spec,
+        skill_id=capability.id,
+        allow_patch_draft=capability.allow_patch_draft(),
         quality_model_available=quality_model_available,
     )
-    if not skill.allow_patch_draft:
-        draft.notes = "Skill does not permit patch drafts; none generated."
+    if not capability.allow_patch_draft():
+        draft.notes = "The capability pack does not permit a patch draft for this dependency."
         return draft
 
     by_file = _matches_for_file(
         Path(repo_root),
         verified_risks,
-        skill,
+        capability,
         bundle,
         quality_model_available=quality_model_available,
     )
     applied: set[str] = set()
     skipped: set[str] = set()
-    for rule in skill.patch_rules:
+    for rule in capability.patch_rules():
         eligible = not (
             (rule.requires_quality_model and not quality_model_available)
             or (rule.patch_risk_level == "high" and not quality_model_available)

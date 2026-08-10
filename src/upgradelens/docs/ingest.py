@@ -6,13 +6,15 @@ import hashlib
 import json
 from pathlib import Path
 
+from packaging.utils import canonicalize_name
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from upgradelens.db import models
+from upgradelens.db.vector import EmbeddingBackend, SqliteVecIndex, VectorIndexUnavailable
 from upgradelens.docs.chunking import chunk_markdown
 from upgradelens.docs.cleaning import clean_document
-from upgradelens.domain.doc_evidence import DocSourceRecord
+from upgradelens.domain.doc_evidence import DocChunk, DocSourceRecord
 from upgradelens.domain.skill import DocSource, SkillPackage, TrustLevel
 from upgradelens.skills.loader import SkillParseError
 
@@ -40,6 +42,9 @@ def persist_source_text(
     *,
     trust_level: TrustLevel | None = None,
     title: str | None = None,
+    package_name: str = "",
+    source_version_spec: str = "",
+    embedding: EmbeddingBackend | None = None,
 ) -> DocSourceRecord:
     """Clean, chunk and persist one documentation source's text.
 
@@ -71,10 +76,13 @@ def persist_source_text(
     source_row.title = source.id
     target_spec = source.target_version_spec or ""
     source_row.target_version_spec = target_spec
+    source_row.package_name = package_name
+    source_row.source_version_spec = source_version_spec
     source_row.snapshot_path = snapshot_path
     source_row.snapshot_hash = snapshot_hash
     session.flush()
 
+    new_chunks: list[models.DocChunkRow] = []
     for chunk in chunks:
         crow = models.DocChunkRow(
             source_id=source.id,
@@ -85,6 +93,7 @@ def persist_source_text(
         crow.heading_path_list = chunk.heading_path
         session.add(crow)
         session.flush()
+        new_chunks.append(crow)
         session.execute(
             text(
                 "INSERT INTO doc_chunks_fts(rowid, content, source_id, title, heading_path) "
@@ -99,30 +108,107 @@ def persist_source_text(
             },
         )
     session.commit()
+
+    if embedding is not None and embedding.available() and new_chunks:
+        _embed_and_index(session, embedding, chunks, new_chunks)
+
     return DocSourceRecord(
         id=source.id,
         url=source.url,
         title=source.id,
         snapshot_hash=snapshot_hash,
         target_version_spec=target_spec,
+        package_name=package_name,
+        source_version_spec=source_version_spec,
         chunk_count=len(chunks),
     )
 
 
+def _embed_and_index(
+    session: Session,
+    embedding: EmbeddingBackend,
+    chunks: list[DocChunk],
+    new_chunks: list[models.DocChunkRow],
+) -> None:
+    """Embed freshly persisted chunks and upsert them into the vector index.
+
+    Best-effort: a missing sqlite-vec extension or an embedding failure simply
+    skips the vector index for this source, leaving retrieval on FTS5-only.
+    """
+    try:
+        vec_index = SqliteVecIndex(session, embedding.dimension)
+    except VectorIndexUnavailable:
+        return
+    texts = [f"{chunk.title}\n{chunk.content}" for chunk in chunks]
+    vectors = embedding.embed(texts)
+    if not vectors:
+        return
+    for crow, vec in zip(new_chunks, vectors, strict=False):
+        vec_index.upsert(crow.id, vec)
+
+
 def ingest_skill_source(
-    session: Session, skill: SkillPackage, source: DocSource
+    session: Session,
+    skill: SkillPackage,
+    source: DocSource,
+    embedding: EmbeddingBackend | None = None,
 ) -> DocSourceRecord:
-    """Clean, chunk and persist one documentation source for a skill."""
+    """Clean, chunk and persist one documentation source for a skill.
+
+    The source is tagged with the skill's dependency package name (canonicalised)
+    and source/target version specifiers so it becomes part of the shared corpus
+    retrievable by package alone — independent of any usage pattern.
+    """
     fixture = _resolve_fixture(skill, source)
     raw = fixture.read_text(encoding="utf-8")
-    return persist_source_text(session, source, raw, str(fixture))
+    package_name = canonicalize_name(skill.package_names[0]) if skill.package_names else ""
+    source_version_spec = skill.source_version_spec or ""
+    return persist_source_text(
+        session,
+        source,
+        raw,
+        str(fixture),
+        package_name=package_name,
+        source_version_spec=source_version_spec,
+        embedding=embedding,
+    )
 
 
-def ingest_skill(session: Session, skill: SkillPackage) -> list[DocSourceRecord]:
+def iter_sources_for_package(session: Session, package_name: str) -> list[DocSourceRecord]:
+    """Return every ingested source tagged with ``package_name``.
+
+    This is the shared-corpus entry point: retrieval can be driven by the
+    dependency package alone, without reading any Skill's usage patterns.
+    """
+    rows = (
+        session.execute(
+            select(models.DocSourceRow).where(models.DocSourceRow.package_name == package_name)
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        DocSourceRecord(
+            id=r.id,
+            url=r.url,
+            title=r.title,
+            snapshot_hash=r.snapshot_hash,
+            target_version_spec=r.target_version_spec,
+            package_name=r.package_name,
+            source_version_spec=r.source_version_spec,
+            chunk_count=0,
+        )
+        for r in rows
+    ]
+
+
+def ingest_skill(
+    session: Session, skill: SkillPackage, embedding: EmbeddingBackend | None = None
+) -> list[DocSourceRecord]:
     """Ingest every source of ``skill`` that has an offline fixture snapshot."""
     records: list[DocSourceRecord] = []
     for source in skill.sources:
         if not source.fixture_snapshot:
             continue
-        records.append(ingest_skill_source(session, skill, source))
+        records.append(ingest_skill_source(session, skill, source, embedding=embedding))
     return records

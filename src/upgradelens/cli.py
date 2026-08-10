@@ -980,17 +980,25 @@ def _agent_command(args: argparse.Namespace) -> int:
     store.write_intent(intent_dict)
     if intent.kind != "upgrade_task":
         # No assessment to plan for non-upgrade intents.
-        store.write_plan(mode=config.mode.value, intent=intent_dict)
+        store.write_plan(intent=intent_dict)
     else:
+        from upgradelens.tools.live_repo import is_repo_url
+
+        plan_repo = str(args.repo) if args.repo is not None else (intent.repo or "")
+        plan_dep = args.dependency or (intent.dependency or "")
+        plan_tgt = args.target_version or (intent.target_version or "")
+        plan_src = intent.source_version
         plan = build_agent_plan(
             gateway=gateway,
             registry=registry,
-            repo=str(args.repo) if args.repo is not None else (intent.repo or ""),
-            dependency=args.dependency or (intent.dependency or ""),
-            target_version=args.target_version or (intent.target_version or ""),
-            source_version=intent.source_version,
+            repo=plan_repo,
+            dependency=plan_dep,
+            target_version=plan_tgt,
+            source_version=plan_src,
+            request_id=run_id,
+            repo_is_url=is_repo_url(plan_repo) if plan_repo else True,
         )
-        store.write_plan(mode=config.mode.value, intent=intent_dict, plan=plan)
+        store.write_plan(intent=intent_dict, plan=plan)
 
     if args.dry_run:
         _emit(intent_dict)
@@ -1026,7 +1034,14 @@ def _agent_command(args: argparse.Namespace) -> int:
     )
     with ToolContext() as ctx:
         try:
-            result = run_agent(request, gateway, ctx, registry=registry)
+            result = run_agent(
+                request,
+                gateway,
+                ctx,
+                registry=registry,
+                plan=plan,
+                plan_writer=lambda p: store.write_plan(intent=intent_dict, plan=p),
+            )
         except ToolError as exc:
             sys.stderr.write(f"upgradelens: cannot analyse repository: {exc}\n")
             return EXIT_INVALID_REQUEST

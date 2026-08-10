@@ -11,10 +11,12 @@ import tempfile
 from pathlib import Path
 
 from upgradelens.agent.loop import ToolCallDecision, _Accumulator, _build_args, run_agent
+from upgradelens.agent.plan import AgentPlan
 from upgradelens.agent.planner import build_agent_plan
 from upgradelens.agent.run_store import DEFAULT_PLAN_STEPS
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.pipeline import AssessmentOutcome, AssessmentRequest
+from upgradelens.tools.live_repo import is_repo_url
 from upgradelens.tools.registry import ToolContext, default_registry
 from upgradelens.verify.models import VerifiedReport
 
@@ -32,7 +34,8 @@ def test_build_agent_plan_fake_returns_default() -> None:
         dependency="pydantic",
         target_version="2.0",
     )
-    assert [step["tool"] for step in plan["steps"]] == [s["tool"] for s in DEFAULT_PLAN_STEPS]
+    assert isinstance(plan, AgentPlan)
+    assert [step.tool for step in plan.steps] == [s["tool"] for s in DEFAULT_PLAN_STEPS]
 
 
 def test_tool_call_decision_defaults() -> None:
@@ -83,19 +86,44 @@ def test_build_args_injects_known_values() -> None:
         pass
 
 
-def test_run_agent_fake_delegates_to_pipeline() -> None:
+def test_run_agent_fake_drives_plan() -> None:
+    """Fake mode now drives the same plan-backed state machine (no run_pipeline shortcut)."""
     repo_dir = Path(tempfile.mkdtemp())
     (repo_dir / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["pydantic>=1.10"]\n'
     )
     gateway = _fake_gateway()
     request = AssessmentRequest(repo=str(repo_dir), dependency="pydantic", target_version="2.0")
+    plan = build_agent_plan(
+        gateway=gateway,
+        registry=default_registry(),
+        repo=str(repo_dir),
+        dependency="pydantic",
+        target_version="2.0",
+        repo_is_url=is_repo_url(str(repo_dir)),
+    )
+    written: list[AgentPlan] = []
     ctx = ToolContext()
-    result = run_agent(request, gateway, ctx, registry=default_registry())
+    result = run_agent(
+        request, gateway, ctx, registry=default_registry(), plan=plan,
+        plan_writer=lambda p: written.append(p),
+    )
+    # The driven loop produced a verified outcome and recorded trace events.
     assert isinstance(result, AssessmentOutcome)
     assert isinstance(result.verified, VerifiedReport)
-    # Fake pipeline should have recorded tool calls in the trace.
-    assert ctx.trace.to_dict()
+    assert ctx.trace.events
+
+    # clone_repo was dropped for a local path; the remaining steps are resolved.
+    assert [s.tool for s in plan.steps] == ["scan_dependency", "scan_code", "retrieve_for_package"]
+    assert plan.is_resolved()
+    assert plan.steps[0].status == "succeeded"  # scan_dependency
+    assert plan.steps[1].status == "succeeded"  # scan_code
+    # No doc store -> retrieve_for_package is recorded as skipped, not failed.
+    assert plan.steps[2].status == "skipped"
+    # The plan was written back at least once during execution.
+    assert written
+    # Trace events carry the owning plan step id.
+    assert all(e.plan_step_id for e in ctx.trace.events)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from upgradelens.agent.plan import AgentPlan
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify.models import VerifiedReport
 
@@ -34,40 +35,35 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 REDACTED = "***"
 
-#: The fixed, deterministic plan used when the planner cannot run (fake mode or
-#: a planning failure). Once the ReAct loop lands (Step 3) the LLM may produce a
-#: per-run plan; otherwise this linear plan is written so structure stays stable
-#: and diffable.
+#: The fixed, deterministic collection plan used when the planner cannot run
+#: (fake mode or a planning failure). It mirrors the tools the ReAct loop drives
+#: in live mode; ``clone_repo`` is dropped for local paths at plan-build time.
+#: The model analysis itself (the harness's closing step) is intentionally not a
+#: plan step -- it is the loop's terminal action, not a collected evidence tool.
 DEFAULT_PLAN_STEPS: tuple[dict[str, Any], ...] = (
     {
         "order": 1,
         "tool": "clone_repo",
         "phase": "collect",
-        "purpose": "Resolve repo to a local dir (clone if URL).",
+        "purpose": "Resolve repo to a local dir (clone if URL; skipped for a local path).",
     },
     {
         "order": 2,
+        "tool": "scan_dependency",
+        "phase": "collect",
+        "purpose": "Scan the dependency manifest(s) for the current version.",
+    },
+    {
+        "order": 3,
         "tool": "scan_code",
         "phase": "collect",
         "purpose": "Collect AST code evidence for the dependency.",
     },
     {
-        "order": 3,
-        "tool": "resolve_skill",
-        "phase": "collect",
-        "purpose": "Resolve the serving Skill Pack (generic fallback).",
-    },
-    {
         "order": 4,
-        "tool": "retrieve_docs",
+        "tool": "retrieve_for_package",
         "phase": "collect",
-        "purpose": "Retrieve doc evidence from the ingested store.",
-    },
-    {
-        "order": 5,
-        "tool": "verify_report",
-        "phase": "analyse",
-        "purpose": "Run the model analysis and verify it against evidence.",
+        "purpose": "Retrieve doc evidence from the ingested store (skipped if no db).",
     },
 )
 
@@ -118,22 +114,28 @@ class RunStore:
         self._write_json("intent.json", intent)
 
     def write_plan(
-        self, *, mode: str, intent: dict[str, Any], plan: dict[str, Any] | None = None
+        self,
+        *,
+        intent: dict[str, Any],
+        plan: AgentPlan | None = None,
+        mode: str = "",
     ) -> None:
+        """Persist the (live) plan atomically.
+
+        ``plan`` may be ``None`` (e.g. a non-upgrade intent); we then write an
+        empty plan so the artifact shape stays stable and diffable.
+        """
         if plan is None:
-            plan = {
-                "run_id": self.run_id,
-                "mode": mode,
-                "kind": intent.get("kind"),
-                "request": {
-                    "repo": intent.get("repo"),
-                    "dependency": intent.get("dependency"),
-                    "target_version": intent.get("target_version"),
-                    "source_version": intent.get("source_version"),
-                },
-                "steps": [dict(step) for step in DEFAULT_PLAN_STEPS],
-            }
-        self._write_json("plan.json", plan)
+            plan = AgentPlan(request_id=self.run_id, mode=mode, steps=[])
+        payload = plan.to_dict()
+        payload["kind"] = intent.get("kind")
+        payload["request"] = {
+            "repo": intent.get("repo"),
+            "dependency": intent.get("dependency"),
+            "target_version": intent.get("target_version"),
+            "source_version": intent.get("source_version"),
+        }
+        self._write_json("plan.json", payload)
 
     def write_trace(self, trace: ToolTrace) -> None:
         events = _redact_value(trace.to_dict())

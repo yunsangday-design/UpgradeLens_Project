@@ -28,6 +28,10 @@ class ToolCallEvent:
     error: str | None = None
     timestamp: str = ""
     params: dict[str, Any] = field(default_factory=dict)
+    # --- plan linkage (ROADMAP Step 3) ----------------------------------- #
+    plan_step_id: str = ""
+    attempt: int = 0
+    evidence_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -41,6 +45,9 @@ class ToolCallEvent:
             "error": self.error,
             "timestamp": self.timestamp,
             "params": self.params,
+            "plan_step_id": self.plan_step_id,
+            "attempt": self.attempt,
+            "evidence_ids": self.evidence_ids,
         }
 
 
@@ -62,6 +69,9 @@ class ToolTrace:
         cache_hit: bool = False,
         error: str | None = None,
         params: dict[str, Any] | None = None,
+        plan_step_id: str = "",
+        attempt: int = 0,
+        evidence_ids: list[str] | None = None,
     ) -> ToolCallEvent:
         event = ToolCallEvent(
             tool=tool,
@@ -74,6 +84,9 @@ class ToolTrace:
             error=error,
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             params=params or {},
+            plan_step_id=plan_step_id,
+            attempt=attempt,
+            evidence_ids=evidence_ids or [],
         )
         self.events.append(event)
         return event

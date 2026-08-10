@@ -70,6 +70,11 @@ class ToolContext:
     workdir: Path | None = None
     gateway: ModelGateway | None = None
     embedding: EmbeddingBackend | None = None
+    # --- plan linkage (ROADMAP Step 3) ----------------------------------- #
+    # Set by the agent loop before each tool run so the recorded event carries
+    # the owning plan step id and attempt counter.
+    active_plan_step_id: str = ""
+    active_attempt: int = 0
     _clones: list[LiveRepoHandle] = field(default_factory=list, repr=False)
     _sessions: dict[str, Session] = field(default_factory=dict, repr=False)
 
@@ -193,6 +198,8 @@ class Tool:
             latency_ms=(time.monotonic() - started) * 1000.0,
             error=str(error) if error else None,
             params=params,
+            plan_step_id=ctx.active_plan_step_id,
+            attempt=ctx.active_attempt,
         )
 
 

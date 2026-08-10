@@ -15,7 +15,10 @@ from pathlib import Path
 
 import pytest
 
+from upgradelens.agent.planner import build_agent_plan
 from upgradelens.agent.run_store import RunStore, redact_text
+from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
+from upgradelens.tools.registry import default_registry
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify.models import Conclusion, VerifiedReport
 
@@ -45,19 +48,35 @@ def _report() -> VerifiedReport:
 
 def test_plan_is_structurally_stable(tmp_path: object) -> None:
     base = Path(str(tmp_path))
+    intent = _intent()
+    gateway = ModelGateway(ModelConfig(model="fake", mode=ModelMode.FAKE, api_key="", base_url=""))
+    plan = build_agent_plan(
+        gateway=gateway,
+        registry=default_registry(),
+        repo=intent["repo"],
+        dependency=intent["dependency"],
+        target_version=intent["target_version"],
+        source_version=intent.get("source_version"),
+        repo_is_url=True,
+    )
     a = RunStore.create(base, "run-stable")
     b = RunStore.create(base, "run-stable")
-    intent = _intent()
-    a.write_plan(mode="fake", intent=intent)
-    b.write_plan(mode="fake", intent=intent)
+    a.write_plan(intent=intent, plan=plan)
+    b.write_plan(intent=intent, plan=plan)
     assert (a.run_dir / "plan.json").read_text() == (b.run_dir / "plan.json").read_text()
 
-    plan = json.loads((a.run_dir / "plan.json").read_text())
-    assert plan["mode"] == "fake"
-    assert plan["kind"] == "upgrade_task"
-    assert plan["request"]["dependency"] == "pydantic"
-    assert [step["order"] for step in plan["steps"]] == [1, 2, 3, 4, 5]
-    assert all("tool" in step and "purpose" in step for step in plan["steps"])
+    data = json.loads((a.run_dir / "plan.json").read_text())
+    assert data["mode"] == "fake"
+    assert data["kind"] == "upgrade_task"
+    assert data["request"]["dependency"] == "pydantic"
+    assert [s["tool"] for s in data["steps"]] == [
+        "clone_repo",
+        "scan_dependency",
+        "scan_code",
+        "retrieve_for_package",
+    ]
+    for step in data["steps"]:
+        assert {"id", "tool", "seq", "status", "phase", "reason"} <= set(step)
 
 
 def test_trace_jsonl_is_one_event_per_line_with_required_fields(tmp_path: object) -> None:
@@ -67,7 +86,11 @@ def test_trace_jsonl_is_one_event_per_line_with_required_fields(tmp_path: object
         tool="scan_code", target="mod.py", params={"repo": "owner/repo"}, status="ok", latency_ms=12
     )
     trace.record(
-        tool="retrieve_docs", target="pydantic", params={"top_k": 5}, status="ok", latency_ms=7
+        tool="retrieve_for_package",
+        target="pydantic",
+        params={"top_k": 5},
+        status="ok",
+        latency_ms=7,
     )
     store.write_trace(trace)
 
@@ -76,7 +99,7 @@ def test_trace_jsonl_is_one_event_per_line_with_required_fields(tmp_path: object
     for line in lines:
         event = json.loads(line)
         assert {"tool", "status", "latency_ms", "timestamp"} <= set(event)
-        assert event["tool"] in {"scan_code", "retrieve_docs"}
+        assert event["tool"] in {"scan_code", "retrieve_for_package"}
 
 
 def test_no_secret_reaches_disk(tmp_path: object) -> None:

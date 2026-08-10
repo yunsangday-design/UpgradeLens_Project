@@ -108,6 +108,7 @@ def test_fake_run_writes_plan_back_and_records_step_ids() -> None:
         "scan_dependency": "succeeded",
         "scan_code": "succeeded",
         "retrieve_for_package": "skipped",
+        "supplement_retrieval": "skipped",
     }
     # The loop wrote the plan back at least once during execution.
     assert written

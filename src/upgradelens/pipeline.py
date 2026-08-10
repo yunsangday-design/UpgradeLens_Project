@@ -70,6 +70,11 @@ NO_DOC_INDEX = (
     "risks cannot reach 'verified' without doc evidence."
 )
 
+COVERAGE_INSUFFICIENT = (
+    "Doc evidence does not fully cover the dependency symbols used in code; "
+    "supplementary retrieval could not close every gap (Step 4 coverage shortfall)."
+)
+
 NO_CODE_EVIDENCE = (
     "No usage of the dependency was found in the code; "
     "the assessment cannot be specific to this repository."
@@ -460,6 +465,7 @@ def run_pipeline(
 __all__ = [
     "NO_CODE_EVIDENCE",
     "NO_DOC_INDEX",
+    "COVERAGE_INSUFFICIENT",
     "AssessmentOutcome",
     "AssessmentRequest",
     "EvidenceCollection",

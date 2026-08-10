@@ -310,6 +310,11 @@ class RetrieveForPackageInput(BaseModel):
     code_symbols: list[str] = Field(default_factory=list, description="Symbols discovered in code.")
     source_id: str | None = Field(default=None, description="Restrict to one doc source id.")
     top_k: int = Field(default=5, ge=1, le=50, description="Max chunks per query.")
+    curated_queries: list[str] | None = Field(
+        default=None,
+        description="Extra focused queries (e.g. S4 supplementary retrieval). Appended "
+        "to the generated queries; ignored when empty.",
+    )
 
 
 class VerifyReportInput(BaseModel):
@@ -400,6 +405,7 @@ def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext
         user_intent=args.user_intent,
         code_symbols=list(args.code_symbols),
         source_id=args.source_id,
+        curated_queries=list(args.curated_queries) if args.curated_queries else None,
         top_k=args.top_k,
         gateway=ctx.gateway,
         mode=mode,

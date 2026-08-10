@@ -25,10 +25,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from upgradelens.agent.coverage import compute_coverage, gap_query, summarize
 from upgradelens.agent.plan import (
+    FAILED,
     PENDING,
     RUNNING,
     SKIPPED,
+    SUCCEEDED,
     AgentPlan,
     AgentPlanStep,
 )
@@ -37,7 +40,9 @@ from upgradelens.domain.code_evidence import CodeEvidenceReport
 from upgradelens.domain.dependency import DependencyScanResult, ResolutionStatus
 from upgradelens.domain.doc_evidence import RetrievalRun
 from upgradelens.llm.gateway import ModelGateway, ModelMode
+from upgradelens.llm.query_rewrite import rewrite_query
 from upgradelens.pipeline import (
+    COVERAGE_INSUFFICIENT,
     NO_DOC_INDEX,
     AssessmentOutcome,
     EvidenceCollection,
@@ -56,6 +61,10 @@ from upgradelens.tools.registry import (
 logger = logging.getLogger(__name__)
 
 _COLLECTION_TOOLS = ("clone_repo", "scan_dependency", "scan_code", "retrieve_for_package")
+
+# ROADMAP Step 4: cap focused supplementary retrievals per run so the loop always
+# terminates even when the doc store cannot cover some symbols.
+_MAX_SUPPLEMENTARY = 2
 
 
 class ToolCallDecision(BaseModel):
@@ -78,6 +87,7 @@ class _Accumulator:
     source_version_spec: str = ""
     target_version_spec: str = ""
     skill: Any = None
+    coverage_insufficient: bool = False
 
 
 def _collected_specs(acc: _Accumulator, request: Any) -> tuple[str, str]:
@@ -236,6 +246,8 @@ def _build_collection(acc: _Accumulator, request: Any) -> EvidenceCollection:
         degradations.append("unknown/conflict source version")
     if request.db is None:
         degradations.append(NO_DOC_INDEX)
+    if acc.coverage_insufficient:
+        degradations.append(COVERAGE_INSUFFICIENT)
     return build_evidence_collection(
         request=request,
         repo_path=acc.repo_path or Path(request.repo),
@@ -286,6 +298,11 @@ def _evaluate_step(tool: str, acc: _Accumulator, request: Any, repo_is_url: bool
         if request.db is None:
             return SKIPPED
         return "run" if acc.repo_path is not None else "wait"
+    if tool == "supplement_retrieval":
+        # ROADMAP Step 4: run as a post-collection phase in ``_run_driven`` (works
+        # for both fake and live). The plan-driven policy must not try to execute
+        # it as a registry tool (it is not one), so it stays pending here.
+        return "wait"
     return "run"
 
 
@@ -362,6 +379,159 @@ def _select_policy(
     return _PlanDrivenPolicy(request, repo_is_url, plan_writer)
 
 
+# --- ROADMAP Step 4: coverage assessment + supplementary retrieval ------------- #
+
+
+def _build_supplementary_query(
+    gap: Any, *, acc: _Accumulator, request: Any, gateway: ModelGateway
+) -> str:
+    """Phrase the focused supplementary query for one gap.
+
+    ``fake`` mode uses the deterministic :func:`gap_query` template. ``live`` mode
+    asks the LLM to rewrite a focused query (reusing ``gateway.complete_structured``
+    + the shared ``rewrite_query`` path); we fall back to the template on any error
+    or empty result.
+    """
+    if gateway is not None and gateway.mode == ModelMode.LIVE:
+        try:
+            queries = rewrite_query(
+                gateway,
+                package=request.dependency,
+                code_symbols=[gap.symbol],
+                user_intent=request.target_version or request.source_version or "",
+                source_version=acc.source_version_spec,
+                target_version=acc.target_version_spec,
+            )
+            if queries:
+                return queries[0]
+        except Exception:  # noqa: BLE001 - fall back to the deterministic template
+            pass
+    return gap_query(
+        gap,
+        package=request.dependency,
+        source_version=acc.source_version_spec,
+        target_version=acc.target_version_spec,
+        user_intent=request.target_version or request.source_version or "",
+    )
+
+
+def _run_supplement(
+    plan: AgentPlan,
+    step: AgentPlanStep,
+    acc: _Accumulator,
+    request: Any,
+    registry: ToolRegistry,
+    ctx: ToolContext,
+    gateway: ModelGateway,
+    plan_writer: Any,
+    max_supplementary: int,
+) -> str:
+    """Run focused supplementary retrievals until coverage is closed or capped.
+
+    Each iteration picks the highest-priority *un-attempted* gap (by usage count,
+    then symbol), performs one focused ``retrieve_for_package`` call, re-checks
+    coverage, and records the new trace events under the ``supplement_retrieval``
+    plan step. When gaps remain after ``max_supplementary`` attempts the run is
+    flagged ``acc.coverage_insufficient`` so the final report degrades and the
+    plan notes the shortfall (``needs_human``).
+    """
+    assert acc.code_report is not None
+    coverage = compute_coverage(acc.code_report, acc.doc_runs)
+    supplementary_count = 0
+    attempted: set[str] = set()
+
+    while coverage.gaps and supplementary_count < max_supplementary:
+        candidates = [g for g in coverage.gaps if g.symbol not in attempted]
+        if not candidates:
+            break
+        candidates.sort(key=lambda g: (-g.usage_count, g.symbol))
+        gap = candidates[0]
+
+        args = {
+            "db": str(request.db),
+            "package": request.dependency,
+            "source_version": acc.source_version_spec,
+            "target_version": acc.target_version_spec,
+            "user_intent": request.target_version or request.source_version or "",
+            "code_symbols": [gap.symbol],
+            "source_id": request.source_id or None,
+            "top_k": 5,
+            "curated_queries": [
+                _build_supplementary_query(gap, acc=acc, request=request, gateway=gateway)
+            ],
+        }
+
+        ctx.active_plan_step_id = step.id
+        ctx.active_attempt = step.attempt
+        n0 = len(acc.doc_runs)
+        e0 = len(ctx.trace.events)
+        try:
+            result = registry.run("retrieve_for_package", args, ctx)
+            _absorb("retrieve_for_package", result, acc, request)
+        except Exception as exc:  # noqa: BLE001 - record the failure, keep going
+            logger.warning("supplementary retrieval for %s failed: %s", gap.symbol, exc)
+        new_runs = acc.doc_runs[n0:]
+        for ev in ctx.trace.events[e0:]:
+            ev.plan_step_id = step.id
+            ev.evidence_ids = [r.run_id for r in new_runs]
+
+        attempted.add(gap.symbol)
+        supplementary_count += 1
+        coverage = compute_coverage(acc.code_report, acc.doc_runs)
+        _sync_plan(plan_writer, plan)
+
+    summary = summarize(coverage, supplementary_count)
+    plan.coverage = summary
+    if coverage.gaps:
+        acc.coverage_insufficient = True
+        plan.notes.append(
+            f"evidence coverage insufficient: {coverage.uncovered_symbols}/"
+            f"{coverage.total_symbols} symbols uncovered after {supplementary_count} "
+            f"supplementary retrieval(s)"
+        )
+
+    observation = (
+        f"coverage {summary.coverage_rate:.0%} over {summary.total_symbols} code symbols; "
+        f"{supplementary_count} supplementary retrieval(s); "
+        f"{coverage.uncovered_symbols} gap(s) remaining"
+    )
+    _sync_plan(plan_writer, plan)
+    return observation
+
+
+def _run_supplement_phase(
+    plan: AgentPlan,
+    acc: _Accumulator,
+    request: Any,
+    registry: ToolRegistry,
+    ctx: ToolContext,
+    gateway: ModelGateway,
+    plan_writer: Any,
+    max_supplementary: int,
+) -> None:
+    """Post-collection coverage phase, shared by fake and live modes."""
+    step = next((s for s in plan.steps if s.tool == "supplement_retrieval"), None)
+    if step is None:
+        return
+    if step.status in (SUCCEEDED, FAILED):
+        return
+    if request.db is None:
+        step.mark_skipped(_skip_reason("retrieve_for_package", request))
+        _sync_plan(plan_writer, plan)
+        return
+    if acc.code_report is None or acc.repo_path is None:
+        step.mark_skipped("no code evidence collected; nothing to cover")
+        _sync_plan(plan_writer, plan)
+        return
+    step.mark_running()
+    _sync_plan(plan_writer, plan)
+    observation = _run_supplement(
+        plan, step, acc, request, registry, ctx, gateway, plan_writer, max_supplementary
+    )
+    step.mark_outcome(True, observation)
+    _sync_plan(plan_writer, plan)
+
+
 def _run_driven(
     request: Any,
     gateway: ModelGateway,
@@ -408,6 +578,14 @@ def _run_driven(
 
         if not ok:
             plan.notes.append(f"step {step.id} ({decision.tool}) failed: {observation}")
+
+    # ROADMAP Step 4: coverage assessment + autonomous supplementary retrieval.
+    # Runs as a post-collection phase so both the fake plan-driven walk and the
+    # live ReAct model converge on the same behaviour (the model is never offered
+    # ``supplement_retrieval`` as a registry tool).
+    _run_supplement_phase(
+        plan, acc, request, registry, ctx, gateway, plan_writer, _MAX_SUPPLEMENTARY
+    )
 
     if acc.repo_path is None or acc.code_report is None:
         plan.degrade_to_pipeline = True

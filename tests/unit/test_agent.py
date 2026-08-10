@@ -114,7 +114,12 @@ def test_run_agent_fake_drives_plan() -> None:
     assert ctx.trace.events
 
     # clone_repo was dropped for a local path; the remaining steps are resolved.
-    assert [s.tool for s in plan.steps] == ["scan_dependency", "scan_code", "retrieve_for_package"]
+    assert [s.tool for s in plan.steps] == [
+        "scan_dependency",
+        "scan_code",
+        "retrieve_for_package",
+        "supplement_retrieval",
+    ]
     assert plan.is_resolved()
     assert plan.steps[0].status == "succeeded"  # scan_dependency
     assert plan.steps[1].status == "succeeded"  # scan_code

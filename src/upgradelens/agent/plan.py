@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from upgradelens.agent.coverage import CoverageSummary
+
 # Step lifecycle. A plan is fully resolved when every step is in a terminal
 # state (succeeded/failed/skipped); only ``pending``/``running`` steps are
 # eligible to be picked by the loop.
@@ -76,6 +78,11 @@ class AgentPlan(BaseModel):
     steps: list[AgentPlanStep] = Field(default_factory=list)
     degrade_to_pipeline: bool = Field(
         default=False, description="Driven loop could not collect; fell back."
+    )
+    coverage: CoverageSummary | None = Field(
+        default=None,
+        description="ROADMAP Step 4: doc-evidence coverage of code symbols + "
+        "supplementary-retrieval summary, set after collection.",
     )
     notes: list[str] = Field(default_factory=list)
 

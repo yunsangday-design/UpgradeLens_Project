@@ -65,6 +65,13 @@ DEFAULT_PLAN_STEPS: tuple[dict[str, Any], ...] = (
         "phase": "collect",
         "purpose": "Retrieve doc evidence from the ingested store (skipped if no db).",
     },
+    {
+        "order": 5,
+        "tool": "supplement_retrieval",
+        "phase": "collect",
+        "purpose": "ROADMAP Step 4: assess doc-evidence coverage of code symbols and "
+        "run focused supplementary retrieval for any gaps (skipped if no db / no code).",
+    },
 )
 
 

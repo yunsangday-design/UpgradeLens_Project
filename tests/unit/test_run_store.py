@@ -74,6 +74,7 @@ def test_plan_is_structurally_stable(tmp_path: object) -> None:
         "scan_dependency",
         "scan_code",
         "retrieve_for_package",
+        "supplement_retrieval",
     ]
     for step in data["steps"]:
         assert {"id", "tool", "seq", "status", "phase", "reason"} <= set(step)

@@ -1,0 +1,17 @@
+case_id: pydantic_config_class
+dependency: pydantic
+source_version: "1.10"
+target_version: "2.0"
+skill_id: pydantic_v1_to_v2
+with_docs: true
+description: >
+  Pydantic v1 -> v2: inner `class Config` with `orm_mode` is replaced by the
+  `ConfigDict(orm_mode=...)` / `from_attributes` model configuration.
+expect:
+  conclusion: impacted
+  must_cite_paths:
+    - src/models.py
+  must_flag_symbols:
+    - Config
+    - BaseModel
+  max_severity: high

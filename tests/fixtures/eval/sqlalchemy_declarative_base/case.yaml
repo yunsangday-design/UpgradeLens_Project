@@ -1,0 +1,16 @@
+case_id: sqlalchemy_declarative_base
+dependency: sqlalchemy
+source_version: "1.4"
+target_version: "2.0"
+skill_id: sqlalchemy_v1_to_v2
+with_docs: true
+description: >
+  SQLAlchemy 1.4 -> 2.0: `declarative_base` moved from
+  `sqlalchemy.ext.declarative` to `sqlalchemy.orm`.
+expect:
+  conclusion: impacted
+  must_cite_paths:
+    - src/db.py
+  must_flag_symbols:
+    - declarative_base
+  max_severity: high

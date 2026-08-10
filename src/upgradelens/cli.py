@@ -88,7 +88,9 @@ from upgradelens.eval import (
     compare_runs,
     load_cases,
     render_summary_markdown,
+    run_ablation,
     run_comparison,
+    run_comparison_replay,
     run_evaluation,
 )
 from upgradelens.eval.retrieval_baseline import (
@@ -141,6 +143,8 @@ _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 _ASSESS_COMMAND = "assess"
 _EVAL_COMMAND = "eval"
 _EVAL_COMPARE_COMMAND = "eval-compare"
+_EVAL_ABLATE_COMMAND = "eval-ablate"
+_EVAL_REPLAY_COMMAND = "eval-replay"
 _FETCH_DOCS_COMMAND = "fetch-docs"
 _MCP_COMMAND = "mcp"
 _COMMENT_PR_COMMAND = "comment-pr"
@@ -459,9 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional from-version the repo is being upgraded FROM.",
     )
-    seed_replay.add_argument(
-        "--model", default=None, help="Model name (metadata only)."
-    )
+    seed_replay.add_argument("--model", default=None, help="Model name (metadata only).")
     seed_replay.add_argument(
         "--out",
         type=Path,
@@ -671,6 +673,66 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write the JSON comparison report (per-case + aggregate) to this path.",
     )
 
+    eval_ablate = subparsers.add_parser(
+        _EVAL_ABLATE_COMMAND,
+        help="S8 ablation: isolate verifier / supplement / agent value (offline FAKE).",
+    )
+    eval_ablate.add_argument(
+        "--cases",
+        type=Path,
+        default=DEFAULT_CASES_DIR,
+        help=f"Directory of evaluation cases (default: {DEFAULT_CASES_DIR}).",
+    )
+    eval_ablate.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Write the Markdown ablation report to this path.",
+    )
+    eval_ablate.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Write the JSON ablation report (per-case + aggregate) to this path.",
+    )
+
+    eval_replay = subparsers.add_parser(
+        _EVAL_REPLAY_COMMAND,
+        help="S8 replay comparison: run against recorded live model responses.",
+    )
+    eval_replay.add_argument(
+        "--cases",
+        type=Path,
+        default=DEFAULT_CASES_DIR,
+        help=f"Directory of evaluation cases (default: {DEFAULT_CASES_DIR}).",
+    )
+    eval_replay.add_argument(
+        "--replay-dir",
+        type=Path,
+        required=True,
+        help="Root directory containing per-case recorded model responses "
+        "({replay_dir}/{case_id}/*.json).",
+    )
+    eval_replay.add_argument(
+        "--systems",
+        action="append",
+        default=None,
+        choices=list(SYSTEMS),
+        help="Architecture to compare; repeat to select several (default: all three).",
+    )
+    eval_replay.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Write the Markdown comparison report to this path.",
+    )
+    eval_replay.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Write the JSON comparison report (per-case + aggregate) to this path.",
+    )
+
     retrieval_baseline = subparsers.add_parser(
         _RETRIEVAL_BASELINE_COMMAND,
         help="Record the FTS5-only curated retrieval baseline (Step 4, B0).",
@@ -802,9 +864,7 @@ def _llm_check_command(args: argparse.Namespace) -> int:
     if args.timeout is not None:
         config = replace(config, request_timeout_seconds=args.timeout)
     if config.mode == ModelMode.REPLAY and not args.replay_dir:
-        sys.stderr.write(
-            "upgradelens: --mode replay requires --replay-dir (recorded responses).\n"
-        )
+        sys.stderr.write("upgradelens: --mode replay requires --replay-dir (recorded responses).\n")
         return EXIT_INVALID_REQUEST
 
     health = check_model(config, replay_dir=args.replay_dir)
@@ -813,9 +873,7 @@ def _llm_check_command(args: argparse.Namespace) -> int:
         sys.stderr.write(f"upgradelens: model check failed: {health.error}\n")
         return EXIT_RUNTIME
     if not health.called_real_api:
-        sys.stderr.write(
-            f"upgradelens: no real API call was made ({health.note}).\n"
-        )
+        sys.stderr.write(f"upgradelens: no real API call was made ({health.note}).\n")
     return EXIT_OK
 
 
@@ -832,9 +890,7 @@ def _assess_repo(args: argparse.Namespace, ctx: ToolContext) -> AssessmentOutcom
     """
     config = _build_model_config(args, Settings())
     if config.mode == ModelMode.REPLAY and not getattr(args, "replay_dir", None):
-        sys.stderr.write(
-            "upgradelens: --mode replay requires --replay-dir (recorded responses).\n"
-        )
+        sys.stderr.write("upgradelens: --mode replay requires --replay-dir (recorded responses).\n")
         raise SystemExit(EXIT_INVALID_REQUEST)
     request = AssessmentRequest(
         repo=str(args.repo),
@@ -951,15 +1007,17 @@ def _seed_replay_command(args: argparse.Namespace) -> int:
             "no code-usage evidence for this dependency.\n"
         )
         return EXIT_INVALID_REQUEST
-    _emit({
-        "replay_dir": str(out_dir),
-        "recorded_nodes": written,
-        "note": (
-            "These are demo canned (evidence-anchored) responses, not real model "
-            "outputs. Replace with a real capture: upgradelens assess --mode live "
-            "--record-replay <dir> --repo <repo> --dependency <dep> ..."
-        ),
-    })
+    _emit(
+        {
+            "replay_dir": str(out_dir),
+            "recorded_nodes": written,
+            "note": (
+                "These are demo canned (evidence-anchored) responses, not real model "
+                "outputs. Replace with a real capture: upgradelens assess --mode live "
+                "--record-replay <dir> --repo <repo> --dependency <dep> ..."
+            ),
+        }
+    )
     return EXIT_OK
 
 
@@ -1028,9 +1086,7 @@ def _agent_command(args: argparse.Namespace) -> int:
     settings = Settings()
     config = _build_model_config(args, settings)
     if config.mode == ModelMode.REPLAY and not getattr(args, "replay_dir", None):
-        sys.stderr.write(
-            "upgradelens: --mode replay requires --replay-dir (recorded responses).\n"
-        )
+        sys.stderr.write("upgradelens: --mode replay requires --replay-dir (recorded responses).\n")
         raise SystemExit(EXIT_INVALID_REQUEST)
     gateway = ModelGateway(
         config,
@@ -1377,6 +1433,55 @@ def _eval_compare_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _eval_ablate_command(args: argparse.Namespace) -> int:
+    """S8 ablation: isolate verifier / supplement / agent value (offline FAKE)."""
+    try:
+        cases = load_cases(Path(args.cases))
+        report = run_ablation(cases)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.stderr.write(f"upgradelens: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    markdown = report.to_markdown()
+    _emit_text(markdown)
+
+    if args.out is not None:
+        Path(args.out).write_text(markdown, encoding="utf-8")
+        sys.stderr.write(f"upgradelens: wrote S8 ablation report to {args.out}\n")
+    if args.json is not None:
+        Path(args.json).write_text(
+            json.dumps(report.to_json(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        sys.stderr.write(f"upgradelens: wrote S8 ablation JSON to {args.json}\n")
+    return EXIT_OK
+
+
+def _eval_replay_command(args: argparse.Namespace) -> int:
+    """S8 replay comparison: run against recorded live model responses."""
+    systems = tuple(args.systems) if args.systems else SYSTEMS
+    try:
+        cases = load_cases(Path(args.cases))
+        report = run_comparison_replay(cases, Path(args.replay_dir), systems=systems)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.stderr.write(f"upgradelens: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    markdown = report.to_markdown()
+    _emit_text(markdown)
+
+    if args.out is not None:
+        Path(args.out).write_text(markdown, encoding="utf-8")
+        sys.stderr.write(f"upgradelens: wrote S8 replay report to {args.out}\n")
+    if args.json is not None:
+        Path(args.json).write_text(
+            json.dumps(report.to_json(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        sys.stderr.write(f"upgradelens: wrote S8 replay JSON to {args.json}\n")
+    return EXIT_OK
+
+
 def _retrieval_baseline_command(args: argparse.Namespace) -> int:
     """Build the SQLite index from built-in fixtures and record the baseline."""
     try:
@@ -1628,6 +1733,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _EVAL_COMPARE_COMMAND:
         return _eval_compare_command(args)
+
+    if args.command == _EVAL_ABLATE_COMMAND:
+        return _eval_ablate_command(args)
+
+    if args.command == _EVAL_REPLAY_COMMAND:
+        return _eval_replay_command(args)
 
     if args.command == _RETRIEVAL_BASELINE_COMMAND:
         return _retrieval_baseline_command(args)

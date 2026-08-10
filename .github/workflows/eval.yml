@@ -1,0 +1,49 @@
+name: S8 Eval Gate
+
+# Dedicated workflow for the S8 architecture-comparison gate.
+# Runs the CI gate tests (no-hallucination assertions) and the full
+# offline comparison + ablation to surface metric regressions explicitly.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/upgradelens/eval/**"
+      - "src/upgradelens/agent/**"
+      - "src/upgradelens/verify/**"
+      - "tests/fixtures/eval/**"
+      - "tests/unit/test_s8_*.py"
+      - "tests/unit/test_eval_harness.py"
+      - ".github/workflows/eval.yml"
+
+jobs:
+  eval-gate:
+    name: S8 Eval Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (locked)
+        run: uv sync --all-groups --locked
+
+      - name: S8 CI gate (no-hallucination assertions)
+        run: uv run pytest tests/unit/test_s8_ci_gate.py -v
+
+      - name: S8 architecture comparison (offline FAKE)
+        run: uv run pytest tests/unit/test_s8_comparison.py tests/unit/test_s8_ablation.py -v
+
+      - name: Full hybrid evaluation suite
+        run: uv run pytest tests/unit/test_eval_harness.py -v
+
+      - name: CLI smoke test (eval-compare)
+        run: uv run upgradelens eval-compare --cases tests/fixtures/eval --json /tmp/s8_compare.json
+
+      - name: CLI smoke test (eval-ablate)
+        run: uv run upgradelens eval-ablate --cases tests/fixtures/eval --json /tmp/s8_ablate.json

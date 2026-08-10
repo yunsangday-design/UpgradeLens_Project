@@ -384,9 +384,7 @@ class _PlanDrivenPolicy:
         )
 
 
-def _select_policy(
-    gateway: ModelGateway, request: Any, repo_is_url: bool, plan_writer: Any
-) -> Any:
+def _select_policy(gateway: ModelGateway, request: Any, repo_is_url: bool, plan_writer: Any) -> Any:
     if gateway.mode == ModelMode.LIVE:
         return _ReactPolicy(gateway, request)
     return _PlanDrivenPolicy(request, repo_is_url, plan_writer)
@@ -619,14 +617,29 @@ def _run_remediation(
     repo_is_url = is_repo_url(request.repo)
     if RemediationKind.RESCAN in kinds:
         _append_remediation_step(
-            plan, acc, request, registry, ctx, gateway, plan_writer, "scan_code",
+            plan,
+            acc,
+            request,
+            registry,
+            ctx,
+            gateway,
+            plan_writer,
+            "scan_code",
             repo_is_url=repo_is_url,
         )
     if RemediationKind.SUPPLEMENT in kinds:
         queries = _remediation_queries(acc, request, issues)
         _append_remediation_step(
-            plan, acc, request, registry, ctx, gateway, plan_writer,
-            "retrieve_for_package", curated_queries=queries, repo_is_url=repo_is_url,
+            plan,
+            acc,
+            request,
+            registry,
+            ctx,
+            gateway,
+            plan_writer,
+            "retrieve_for_package",
+            curated_queries=queries,
+            repo_is_url=repo_is_url,
         )
     # REANALYSE has nothing to re-collect; the next analyse() re-runs model analysis.
 
@@ -724,6 +737,7 @@ def _run_driven(
     plan_writer: Any,
     repo_is_url: bool,
     max_turns: int,
+    max_supplementary: int = _MAX_SUPPLEMENTARY,
 ) -> AssessmentOutcome:
     acc = _Accumulator()
     ctx.gateway = gateway
@@ -767,7 +781,7 @@ def _run_driven(
     # live ReAct model converge on the same behaviour (the model is never offered
     # ``supplement_retrieval`` as a registry tool).
     _run_supplement_phase(
-        plan, acc, request, registry, ctx, gateway, plan_writer, _MAX_SUPPLEMENTARY
+        plan, acc, request, registry, ctx, gateway, plan_writer, max_supplementary
     )
 
     if acc.repo_path is None or acc.code_report is None:
@@ -790,12 +804,16 @@ def run_agent(
     plan: AgentPlan | None = None,
     plan_writer: Any = None,
     max_turns: int = 24,
+    max_supplementary: int = _MAX_SUPPLEMENTARY,
 ) -> AssessmentOutcome:
     """Run the agent loop for ``request`` driven by a live :class:`AgentPlan`.
 
     The plan is built on demand when ``plan`` is ``None`` (fake mode or a planning
     failure yields the deterministic linear plan). ``plan_writer`` is called after
     every step update so the plan.json artifact stays coherent even on a crash.
+
+    ``max_supplementary`` caps focused supplementary retrievals (S4); set it to
+    ``0`` to disable the coverage phase (used by the S8 ablation harness).
     """
     registry = registry or default_registry()
     repo_is_url = is_repo_url(request.repo)
@@ -809,7 +827,17 @@ def run_agent(
             source_version=request.source_version,
             repo_is_url=repo_is_url,
         )
-    return _run_driven(request, gateway, ctx, registry, plan, plan_writer, repo_is_url, max_turns)
+    return _run_driven(
+        request,
+        gateway,
+        ctx,
+        registry,
+        plan,
+        plan_writer,
+        repo_is_url,
+        max_turns,
+        max_supplementary=max_supplementary,
+    )
 
 
 # Re-export the decision schema for the gateway's record-and-replay layer.

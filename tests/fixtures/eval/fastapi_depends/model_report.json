@@ -1,0 +1,21 @@
+{
+  "target_dependency": "fastapi",
+  "risks": [
+    {
+      "risk_id": "r-fastapi-app",
+      "title": "FastAPI application and route decorator usage detected",
+      "severity": "low",
+      "confidence": "high",
+      "evidence_ids": ["{{code:src/app.py:FastAPI}}"],
+      "recommendation": "No action required; FastAPI() and @app.get are stable across 0.x/1.x."
+    },
+    {
+      "risk_id": "r-fastapi-fake",
+      "title": "FastAPI removed the `echo` argument from APIRoute in 1.0",
+      "severity": "medium",
+      "confidence": "high",
+      "evidence_ids": ["fastapi-echo-removed-in-1.0"],
+      "recommendation": "Remove the echo argument from route definitions."
+    }
+  ]
+}

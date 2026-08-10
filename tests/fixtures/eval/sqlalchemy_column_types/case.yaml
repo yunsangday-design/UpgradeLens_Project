@@ -1,0 +1,17 @@
+case_id: sqlalchemy_column_types
+dependency: sqlalchemy
+source_version: "1.4"
+target_version: "2.0"
+skill_id: sqlalchemy_v1_to_v2
+with_docs: true
+description: >
+  SQLAlchemy 1.4 -> 2.0: mapped columns still use `Column(Integer)` /
+  `Column(String)`; the declarations are detected and kept for migration review.
+expect:
+  conclusion: impacted
+  must_cite_paths:
+    - src/db.py
+  must_flag_symbols:
+    - Column
+    - declarative_base
+  max_severity: high

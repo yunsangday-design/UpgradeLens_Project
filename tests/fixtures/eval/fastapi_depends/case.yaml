@@ -1,0 +1,21 @@
+case_id: fastapi_depends
+dependency: fastapi
+source_version: "0.95"
+target_version: "1.0"
+skill_id: generic_python_dependency
+with_docs: false
+model_report: model_report.json
+description: >
+  FastAPI 0.95 -> 1.0: `Depends(...)` dependency injection is stable, but the
+  case carries a fabricated breaking claim ("echo" removed from APIRoute) that
+  no evidence supports. The verifier must quarantine it; the unverified
+  baseline must leak it.
+expect:
+  conclusion: evidence_insufficient
+  must_cite_paths:
+    - src/app.py
+  must_flag_symbols:
+    - FastAPI
+  must_quarantine_risk_ids:
+    - r-fastapi-fake
+  max_severity: high

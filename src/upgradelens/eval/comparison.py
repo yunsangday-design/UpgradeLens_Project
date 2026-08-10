@@ -48,14 +48,18 @@ from upgradelens.verify.models import EvidenceStatus, VerifiedReport
 
 __all__ = [
     "SYSTEMS",
+    "ABLATION_SYSTEMS",
     "S8Metrics",
     "ComparisonRun",
     "ComparisonReport",
     "run_comparison",
+    "run_ablation",
+    "run_comparison_replay",
     "compute_metrics",
     "run_direct_llm",
     "run_fixed_pipeline",
     "run_agent_system",
+    "run_agent_no_supplement",
 ]
 
 #: The three architectures compared by the S8 harness.
@@ -256,6 +260,190 @@ _RUNNERS: dict[str, Callable[[EvalCase, CaseArtifacts], ComparisonRun]] = {
 
 
 # --------------------------------------------------------------------------- #
+# S8 ablation: agent without supplementary retrieval
+# --------------------------------------------------------------------------- #
+#: The four ablation systems isolate the value of each architecture layer.
+ABLATION_SYSTEMS = ("direct_llm", "fixed_pipeline", "agent_no_supplement", "agent")
+
+
+def run_agent_no_supplement(case: EvalCase, art: CaseArtifacts) -> ComparisonRun:
+    """Agent loop with the S4 coverage / supplementary-retrieval phase disabled.
+
+    Isolates the value added by autonomous supplementary retrieval: the agent
+    still runs its plan-driven collection and verification loop, but receives no
+    coverage-gap-driven focused retrievals.
+    """
+    fakes = _fakes_for_case(art)
+    gateway = _make_gateway(fakes)
+    request = _request_for(case)
+    captured: dict[str, Any] = {}
+    try:
+        with ToolContext() as ctx:
+            outcome = run_agent(
+                request,
+                gateway,
+                ctx,
+                plan_writer=lambda p: captured.update(plan=p),
+                max_supplementary=0,
+            )
+        verified = outcome.verified or VerifiedReport()
+        raw = outcome.report or _model_report(art)
+        bundle = outcome.bundle or art.bundle
+        code_report = outcome.code_report or art.code_report
+        degradations = tuple(outcome.degradations)
+        error = None
+    except Exception as exc:  # pragma: no cover - defensive
+        verified = VerifiedReport()
+        raw = _model_report(art)
+        bundle = art.bundle
+        code_report = art.code_report
+        degradations = tuple(art.degradations) + (f"ERROR: {exc}",)
+        error = str(exc)
+    ledger = list(gateway.ledger)
+    duration = sum(getattr(r, "latency_ms", 0.0) for r in ledger)
+    return ComparisonRun(
+        case_id=case.case_id,
+        system="agent_no_supplement",
+        verified=verified,
+        raw_report=raw,
+        bundle=bundle,
+        code_report=code_report,
+        degradations=degradations,
+        plan=captured.get("plan"),
+        ledger=ledger,
+        duration_ms=duration,
+        error=error,
+    )
+
+
+_ABLATION_RUNNERS: dict[str, Callable[[EvalCase, CaseArtifacts], ComparisonRun]] = {
+    "direct_llm": run_direct_llm,
+    "fixed_pipeline": run_fixed_pipeline,
+    "agent_no_supplement": run_agent_no_supplement,
+    "agent": run_agent_system,
+}
+
+
+def run_ablation(
+    cases: list[EvalCase],
+    systems: tuple[str, ...] = ABLATION_SYSTEMS,
+    *,
+    artifacts: dict[str, CaseArtifacts] | None = None,
+) -> ComparisonReport:
+    """Run the S8 ablation comparison over ``cases``.
+
+    The ablation isolates each layer's contribution:
+
+    - ``direct_llm`` -- no retrieval, no verification (bare LLM baseline);
+    - ``fixed_pipeline`` -- retrieval + verification, no agent loop;
+    - ``agent_no_supplement`` -- agent loop + verification, no supplementary
+      retrieval (S4 coverage phase disabled);
+    - ``agent`` -- the full UpgradeLens Agent (agent + supplement + verification).
+    """
+    arts = artifacts or {c.case_id: build_artifacts(c, None) for c in cases}
+    per_case: dict[str, dict[str, S8Metrics]] = {}
+    for case in cases:
+        art = arts[case.case_id]
+        per_case[case.case_id] = {}
+        for sys in systems:
+            runner = _ABLATION_RUNNERS[sys]
+            run = runner(case, art)
+            per_case[case.case_id][sys] = compute_metrics(run, case)
+    return ComparisonReport(per_case=per_case, systems=systems)
+
+
+# --------------------------------------------------------------------------- #
+# S8 replay: run systems against recorded live model responses
+# --------------------------------------------------------------------------- #
+def _make_replay_gateway(replay_dir: str) -> ModelGateway:
+    """A gateway that replays recorded responses from ``replay_dir``."""
+    return ModelGateway(
+        ModelConfig(mode=ModelMode.REPLAY),
+        replay_dir=replay_dir,
+    )
+
+
+def run_comparison_replay(
+    cases: list[EvalCase],
+    replay_dir: str | Path,
+    systems: tuple[str, ...] = SYSTEMS,
+) -> ComparisonReport:
+    """Run the S8 comparison using REPLAY-mode model responses.
+
+    Each case's recorded responses must live under
+    ``{replay_dir}/{case_id}/``. The pipeline and agent runners are fed the
+    same recorded planner / impact-analyser outputs, so the metrics reflect the
+    real model's behaviour without any network access.
+    """
+    base = Path(replay_dir)
+    arts = {c.case_id: build_artifacts(c, None) for c in cases}
+    per_case: dict[str, dict[str, S8Metrics]] = {}
+    for case in cases:
+        art = arts[case.case_id]
+        case_dir = str(base / case.case_id)
+        per_case[case.case_id] = {}
+        for sys in systems:
+            run = _run_replay_system(sys, case, art, case_dir)
+            per_case[case.case_id][sys] = compute_metrics(run, case)
+    return ComparisonReport(per_case=per_case, systems=systems)
+
+
+def _run_replay_system(
+    system: str,
+    case: EvalCase,
+    art: CaseArtifacts,
+    replay_dir: str,
+) -> ComparisonRun:
+    """Run one system in REPLAY mode using recorded model responses."""
+    if system == "direct_llm":
+        # direct_llm trusts the model report as-is; no gateway needed.
+        return run_direct_llm(case, art)
+
+    gateway = _make_replay_gateway(replay_dir)
+    request = _request_for(case)
+    captured: dict[str, Any] = {}
+    try:
+        with ToolContext() as ctx:
+            if system == "fixed_pipeline":
+                outcome = run_pipeline(request, gateway, ctx)
+            else:
+                outcome = run_agent(
+                    request,
+                    gateway,
+                    ctx,
+                    plan_writer=lambda p: captured.update(plan=p),
+                )
+        verified = outcome.verified or VerifiedReport()
+        raw = outcome.report or _model_report(art)
+        bundle = outcome.bundle or art.bundle
+        code_report = outcome.code_report or art.code_report
+        degradations = tuple(outcome.degradations)
+        error = None
+    except Exception as exc:  # pragma: no cover - defensive
+        verified = VerifiedReport()
+        raw = _model_report(art)
+        bundle = art.bundle
+        code_report = art.code_report
+        degradations = tuple(art.degradations) + (f"ERROR: {exc}",)
+        error = str(exc)
+    ledger = list(gateway.ledger)
+    duration = sum(getattr(r, "latency_ms", 0.0) for r in ledger)
+    return ComparisonRun(
+        case_id=case.case_id,
+        system=system,
+        verified=verified,
+        raw_report=raw,
+        bundle=bundle,
+        code_report=code_report,
+        degradations=degradations,
+        plan=captured.get("plan"),
+        ledger=ledger,
+        duration_ms=duration,
+        error=error,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Metric computation
 # --------------------------------------------------------------------------- #
 def _bundle_code_symbols(bundle: EvidenceBundle) -> set[str]:
@@ -333,11 +521,7 @@ def compute_metrics(run: ComparisonRun, case: EvalCase) -> S8Metrics:
     # code or doc evidence at all.
     all_risks = run.verified.all_risks
     if all_risks:
-        empties = sum(
-            1
-            for r in all_risks
-            if not r.code_evidence_ids and not r.doc_evidence_ids
-        )
+        empties = sum(1 for r in all_risks if not r.code_evidence_ids and not r.doc_evidence_ids)
         no_evidence = empties / len(all_risks)
     else:
         no_evidence = 0.0
@@ -370,8 +554,7 @@ def compute_metrics(run: ComparisonRun, case: EvalCase) -> S8Metrics:
 
     ledger = run.ledger
     total_tokens = sum(
-        getattr(r, "prompt_tokens", 0) + getattr(r, "completion_tokens", 0)
-        for r in ledger
+        getattr(r, "prompt_tokens", 0) + getattr(r, "completion_tokens", 0) for r in ledger
     )
 
     return S8Metrics(
@@ -485,8 +668,7 @@ class ComparisonReport:
             lines.append(f"### {case}")
             lines.append("")
             lines.append(
-                "| system | breaking_recall | code_recall | verifier_det | "
-                "tokens | calls |"
+                "| system | breaking_recall | code_recall | verifier_det | tokens | calls |"
             )
             lines.append("| --- | --- | --- | --- | --- | --- |")
             for sys in self.systems:

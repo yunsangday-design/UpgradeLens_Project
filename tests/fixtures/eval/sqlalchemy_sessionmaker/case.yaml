@@ -1,0 +1,17 @@
+case_id: sqlalchemy_sessionmaker
+dependency: sqlalchemy
+source_version: "1.4"
+target_version: "2.0"
+skill_id: sqlalchemy_v1_to_v2
+with_docs: true
+description: >
+  SQLAlchemy 1.4 -> 2.0: `sessionmaker(bind=engine)` usage is detected; the
+  session-creation path is reviewed for 2.0-style engine configuration.
+expect:
+  conclusion: impacted
+  must_cite_paths:
+    - src/db.py
+  must_flag_symbols:
+    - sessionmaker
+    - create_engine
+  max_severity: high

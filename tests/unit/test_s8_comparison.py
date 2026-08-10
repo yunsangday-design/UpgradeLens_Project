@@ -15,9 +15,9 @@ from upgradelens.eval.cases import load_cases
 
 CASES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "eval"
 
-# Subset small enough to keep the suite fast; includes the hallucination case
-# (model_report.json + must_quarantine_risk_ids) and a static-fallback case.
-SELECTED = ["hallucinated_citation", "alias_import"]
+# Subset small enough to keep the suite fast; includes two hallucination cases
+# (with model_report.json + must_quarantine_risk_ids) and a static-fallback case.
+SELECTED = ["hallucinated_citation", "fastapi_depends", "alias_import"]
 
 # Compute the 10x factor once to avoid accidental drift between the two guards.
 

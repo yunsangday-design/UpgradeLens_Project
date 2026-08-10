@@ -1,0 +1,18 @@
+case_id: pydantic_field_alias
+dependency: pydantic
+source_version: "1.10"
+target_version: "2.0"
+skill_id: pydantic_v1_to_v2
+with_docs: true
+description: >
+  Pydantic v1 -> v2: `Field(..., alias=...)` population-by-alias requires
+  `populate_by_name` / `model_config` changes; plain `alias` is stable but the
+  surrounding config semantics shift.
+expect:
+  conclusion: impacted
+  must_cite_paths:
+    - src/models.py
+  must_flag_symbols:
+    - Field
+    - BaseModel
+  max_severity: high

@@ -3,14 +3,18 @@
 from upgradelens.eval.baselines import BASELINES, build_artifacts, run_baseline
 from upgradelens.eval.cases import EvalCase, Expectation, load_case, load_cases
 from upgradelens.eval.comparison import (
+    ABLATION_SYSTEMS,
     SYSTEMS,
     ComparisonReport,
     ComparisonRun,
     S8Metrics,
     compute_metrics,
+    run_ablation,
+    run_agent_no_supplement,
     run_agent_system,
     run_comparison,
     run_comparison_from_dir,
+    run_comparison_replay,
     run_direct_llm,
     run_fixed_pipeline,
 )
@@ -27,6 +31,7 @@ from upgradelens.eval.scorer import BaselineSummary, CaseScore, score_case, summ
 
 __all__ = [
     "BASELINES",
+    "ABLATION_SYSTEMS",
     "BaselineDelta",
     "BaselineSummary",
     "CaseScore",
@@ -45,10 +50,13 @@ __all__ = [
     "load_cases",
     "render_compare_markdown",
     "render_summary_markdown",
+    "run_ablation",
+    "run_agent_no_supplement",
     "run_agent_system",
     "run_baseline",
     "run_comparison",
     "run_comparison_from_dir",
+    "run_comparison_replay",
     "run_direct_llm",
     "run_evaluation",
     "run_fixed_pipeline",

@@ -12,11 +12,13 @@ every tool ran.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from upgradelens.agent.coverage import CoverageSummary
+from upgradelens.verify.models import VerificationIssue
 
 # Step lifecycle. A plan is fully resolved when every step is in a terminal
 # state (succeeded/failed/skipped); only ``pending``/``running`` steps are
@@ -28,6 +30,18 @@ FAILED = "failed"
 SKIPPED = "skipped"
 
 TERMINAL_STATUSES = (SUCCEEDED, FAILED, SKIPPED)
+
+
+class PlanStatus(StrEnum):
+    """Terminal/lifecycle status for a whole run (ROADMAP Step 5)."""
+
+    PLANNING = "planning"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    COMPLETED_WITH_DEGRADATION = "completed_with_degradation"
+    NEEDS_HUMAN = "needs_human"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    FAILED = "failed"
 
 
 class AgentPlanStep(BaseModel):
@@ -85,6 +99,19 @@ class AgentPlan(BaseModel):
         "supplementary-retrieval summary, set after collection.",
     )
     notes: list[str] = Field(default_factory=list)
+    status: str = Field(
+        default=PlanStatus.RUNNING.value,
+        description="lifecycle status: running|completed|completed_with_degradation|"
+        "needs_human|budget_exhausted|failed (ROADMAP Step 5).",
+    )
+    unresolved_risks: list[VerificationIssue] = Field(
+        default_factory=list,
+        description="ROADMAP Step 5: verifier issues written back from the last "
+        "verification round for traceability.",
+    )
+    replan_count: int = Field(
+        default=0, description="How many verification/remediation rounds ran."
+    )
 
     def pending(self) -> list[AgentPlanStep]:
         return [s for s in self.steps if s.status in (PENDING, RUNNING)]

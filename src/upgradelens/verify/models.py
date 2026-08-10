@@ -23,6 +23,9 @@ __all__ = [
     "VerifiedRisk",
     "VerifiedReport",
     "BLOCKING_ISSUES",
+    "RemediationKind",
+    "REMEDIATION_FOR_ISSUE",
+    "classify_issue",
 ]
 
 
@@ -74,6 +77,45 @@ BLOCKING_ISSUES: frozenset[IssueCode] = frozenset(
         IssueCode.DYNAMIC_ONLY_EVIDENCE,
     }
 )
+
+
+class RemediationKind(StrEnum):
+    """How an auto-remediating verifier should try to close an issue (S5).
+
+    The feedback loop (``agent/loop.py``) only attempts the first three; anything
+    mapped to :attr:`HUMAN` is left for a person and ends the run as
+    ``needs_human``.
+    """
+
+    SUPPLEMENT = "supplement"  # 可补检索：缺文档 / 版本冲突 / 来源不可信
+    RESCAN = "rescan"  # 需重新扫描：文件 / 行号 / hash 失效
+    REANALYSE = "reanalyse"  # 可补分析：缺证据 id / 未知证据 id / symbol 不落地
+    HUMAN = "human"  # 需人工 / 终止性：无代码证据、仅动态证据等
+
+
+#: Maps each :class:`IssueCode` to the remediation a feedback loop may attempt.
+REMEDIATION_FOR_ISSUE: dict[IssueCode, RemediationKind] = {
+    IssueCode.NO_DOC_EVIDENCE: RemediationKind.SUPPLEMENT,
+    IssueCode.DOC_VERSION_CONFLICT: RemediationKind.SUPPLEMENT,
+    IssueCode.DOC_SOURCE_UNTRUSTED: RemediationKind.SUPPLEMENT,
+    IssueCode.FILE_NOT_FOUND: RemediationKind.RESCAN,
+    IssueCode.LINE_OUT_OF_RANGE: RemediationKind.RESCAN,
+    IssueCode.CONTENT_HASH_CHANGED: RemediationKind.RESCAN,
+    IssueCode.NO_EVIDENCE_IDS: RemediationKind.REANALYSE,
+    IssueCode.UNKNOWN_EVIDENCE_ID: RemediationKind.REANALYSE,
+    IssueCode.SYMBOL_NOT_IN_EVIDENCE: RemediationKind.REANALYSE,
+    IssueCode.NO_CODE_EVIDENCE: RemediationKind.HUMAN,
+    IssueCode.DYNAMIC_ONLY_EVIDENCE: RemediationKind.HUMAN,
+    IssueCode.UNKNOWN_TEST_PATH: RemediationKind.HUMAN,
+}
+
+
+def classify_issue(code: IssueCode) -> RemediationKind:
+    """Return the remediation kind a feedback loop should attempt for ``code``.
+
+    Unmapped codes fall back to :attr:`RemediationKind.HUMAN` (no auto-fix).
+    """
+    return REMEDIATION_FOR_ISSUE.get(code, RemediationKind.HUMAN)
 
 
 class Conclusion(StrEnum):

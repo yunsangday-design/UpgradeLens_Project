@@ -34,6 +34,7 @@ from upgradelens.agent.plan import (
     SUCCEEDED,
     AgentPlan,
     AgentPlanStep,
+    PlanStatus,
 )
 from upgradelens.agent.planner import build_agent_plan
 from upgradelens.domain.code_evidence import CodeEvidenceReport
@@ -57,6 +58,7 @@ from upgradelens.tools.registry import (
     default_registry,
     resolve_skill_package,
 )
+from upgradelens.verify.models import RemediationKind, classify_issue
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,10 @@ _COLLECTION_TOOLS = ("clone_repo", "scan_dependency", "scan_code", "retrieve_for
 # ROADMAP Step 4: cap focused supplementary retrievals per run so the loop always
 # terminates even when the doc store cannot cover some symbols.
 _MAX_SUPPLEMENTARY = 2
+
+# ROADMAP Step 5: cap verification/remediation rounds so the feedback loop always
+# terminates even when the verifier keeps finding remediable issues.
+_MAX_REPLANS = 3
 
 
 class ToolCallDecision(BaseModel):
@@ -170,7 +176,7 @@ def _build_args(
         symbols: list[str] = []
         if acc.code_report is not None:
             symbols = [u.symbol for u in acc.code_report.usages]
-        return {
+        out = {
             "db": str(request.db),
             "package": request.dependency,
             "source_version": acc.source_version_spec,
@@ -180,6 +186,13 @@ def _build_args(
             "source_id": request.source_id or None,
             "top_k": 5,
         }
+        if isinstance(decision, ToolCallDecision):
+            curated = decision.arguments.get("curated_queries")
+        else:
+            curated = decision.get("curated_queries") if isinstance(decision, dict) else None
+        if curated:
+            out["curated_queries"] = curated
+        return out
     raise ValueError(f"unknown tool: {tool}")
 
 
@@ -532,6 +545,176 @@ def _run_supplement_phase(
     _sync_plan(plan_writer, plan)
 
 
+def _remediation_queries(acc: _Accumulator, request: Any, issues: list[Any]) -> list[str]:
+    """Build focused retrieval queries from the SUPPLEMENT-class verifier issues."""
+    dep = request.dependency or (acc.scan_result.dependency_name if acc.scan_result else "")
+    queries: list[str] = []
+    for issue in issues:
+        if classify_issue(issue.code) is not RemediationKind.SUPPLEMENT:
+            continue
+        parts = [p for p in (dep, issue.evidence_id, issue.detail) if p]
+        if parts:
+            queries.append(" ".join(parts))
+    # de-dup while preserving order
+    unique: list[str] = []
+    for q in queries:
+        if q not in unique:
+            unique.append(q)
+    return unique[:_MAX_SUPPLEMENTARY]
+
+
+def _append_remediation_step(
+    plan: AgentPlan,
+    acc: _Accumulator,
+    request: Any,
+    registry: ToolRegistry,
+    ctx: ToolContext,
+    gateway: ModelGateway,
+    plan_writer: Any,
+    tool: str,
+    *,
+    curated_queries: list[str] | None = None,
+    repo_is_url: bool = False,
+) -> AgentPlanStep:
+    """Append and execute one remediation step; return the step for inspection."""
+    step = AgentPlanStep(
+        id=f"r{plan.replan_count}-{tool}",
+        tool=tool,
+        seq=len(plan.steps) + 1,
+        status=PENDING,
+        phase="remediate",
+        reason=f"auto-remediation for verifier feedback ({tool})",
+    )
+    plan.steps.append(step)
+    if _evaluate_step(tool, acc, request, repo_is_url) == SKIPPED:
+        step.mark_skipped(_skip_reason(tool, request))
+        _sync_plan(plan_writer, plan)
+        return step
+    step.mark_running()
+    _sync_plan(plan_writer, plan)
+    decision = ToolCallDecision(
+        tool=tool,
+        arguments={"curated_queries": curated_queries} if curated_queries else {},
+    )
+    ok, observation = _execute(registry, decision, acc, request, ctx)
+    step.mark_outcome(ok, observation)
+    if ok and ctx.trace.events:
+        ctx.trace.events[-1].evidence_ids = _evidence_ids(tool, acc)
+    _sync_plan(plan_writer, plan)
+    return step
+
+
+def _run_remediation(
+    plan: AgentPlan,
+    acc: _Accumulator,
+    request: Any,
+    registry: ToolRegistry,
+    ctx: ToolContext,
+    gateway: ModelGateway,
+    plan_writer: Any,
+    kinds: set[RemediationKind],
+    issues: list[Any],
+) -> None:
+    """Execute the concrete remediation steps for the issue kinds found this round."""
+    repo_is_url = is_repo_url(request.repo)
+    if RemediationKind.RESCAN in kinds:
+        _append_remediation_step(
+            plan, acc, request, registry, ctx, gateway, plan_writer, "scan_code",
+            repo_is_url=repo_is_url,
+        )
+    if RemediationKind.SUPPLEMENT in kinds:
+        queries = _remediation_queries(acc, request, issues)
+        _append_remediation_step(
+            plan, acc, request, registry, ctx, gateway, plan_writer,
+            "retrieve_for_package", curated_queries=queries, repo_is_url=repo_is_url,
+        )
+    # REANALYSE has nothing to re-collect; the next analyse() re-runs model analysis.
+
+
+def _run_verification_loop(
+    plan: AgentPlan,
+    acc: _Accumulator,
+    request: Any,
+    registry: ToolRegistry,
+    ctx: ToolContext,
+    gateway: ModelGateway,
+    plan_writer: Any,
+    max_replans: int,
+    *,
+    analyse_fn: Any = analyse,
+) -> AssessmentOutcome:
+    """ROADMAP Step 5: feed verifier issues back into a bounded re-plan loop.
+
+    After the main collection the run is verified. Any *remediable* issue
+    (supplement / rescan / re-analyse) triggers a remediation step and a fresh
+    verification round, up to ``max_replans`` times. Non-remediable issues and
+    exhausted budgets end the run as ``needs_human`` / ``budget_exhausted`` so the
+    loop always terminates. Every report-producing path runs ``verify_report`` at
+    least once because ``analyse_fn`` already verifies internally.
+    """
+    budget = getattr(gateway, "budget", None)
+    remediable_kinds = {
+        RemediationKind.SUPPLEMENT,
+        RemediationKind.RESCAN,
+        RemediationKind.REANALYSE,
+    }
+    last_collection: EvidenceCollection | None = None
+    last_outcome: AssessmentOutcome | None = None
+    stopped = "settled"  # settled | budget | rounds
+
+    for round_idx in range(max_replans + 1):
+        last_collection = _build_collection(acc, request)
+        outcome = analyse_fn(last_collection, gateway, ctx, registry=registry)
+        last_outcome = outcome
+        issues = [issue for risk in outcome.verified.all_risks for issue in risk.issues]
+        plan.unresolved_risks = issues
+        kinds = {classify_issue(issue.code) for issue in issues}
+        if ctx.trace is not None:
+            ctx.trace.record(
+                tool="verification_round",
+                target=f"round-{round_idx}",
+                status="ok",
+                params={"issue_codes": sorted(i.code.value for i in issues)},
+                plan_step_id=ctx.active_plan_step_id,
+                attempt=ctx.active_attempt,
+            )
+        if not (kinds & remediable_kinds):
+            stopped = "settled"
+            break
+        # Need remediation: stop before spending more if the budget is gone or the
+        # round cap is reached.
+        if budget is not None and budget.remaining_tokens <= 0:
+            stopped = "budget"
+            break
+        if plan.replan_count >= max_replans:
+            stopped = "rounds"
+            break
+        plan.replan_count += 1
+        _run_remediation(plan, acc, request, registry, ctx, gateway, plan_writer, kinds, issues)
+
+    if stopped == "budget":
+        plan.status = PlanStatus.BUDGET_EXHAUSTED.value
+    elif stopped == "rounds":
+        plan.status = PlanStatus.NEEDS_HUMAN.value
+    else:
+        degradations = list(last_collection.degradations) if last_collection else []
+        if last_outcome is not None:
+            degradations = degradations or list(last_outcome.verified.degradations)
+        plan.status = (
+            PlanStatus.COMPLETED_WITH_DEGRADATION.value
+            if degradations
+            else PlanStatus.COMPLETED.value
+        )
+    _sync_plan(plan_writer, plan)
+
+    if last_outcome is None:
+        plan.degrade_to_pipeline = True
+        plan.status = PlanStatus.FAILED.value
+        _sync_plan(plan_writer, plan)
+        return run_pipeline(request, gateway, ctx, registry=registry)
+    return last_outcome
+
+
 def _run_driven(
     request: Any,
     gateway: ModelGateway,
@@ -589,11 +772,13 @@ def _run_driven(
 
     if acc.repo_path is None or acc.code_report is None:
         plan.degrade_to_pipeline = True
+        plan.status = PlanStatus.FAILED.value
         _sync_plan(plan_writer, plan)
         return run_pipeline(request, gateway, ctx, registry=registry)
 
-    collection = _build_collection(acc, request)
-    return analyse(collection, gateway, ctx, registry=registry)
+    return _run_verification_loop(
+        plan, acc, request, registry, ctx, gateway, plan_writer, _MAX_REPLANS
+    )
 
 
 def run_agent(

@@ -59,13 +59,18 @@ def test_build_args_injects_known_values() -> None:
     scan = _build_args("scan_code", {}, acc, req)
     assert scan["repo"] == "/tmp/x" and scan["dependency"] == "pydantic"
 
-    docs = _build_args("retrieve_docs", {"query": "q"}, acc, req)
-    assert docs["db"] == "store.db" and docs["source_id"] == "py" and docs["query"] == "q"
+    docs = _build_args("retrieve_for_package", {}, acc, req)
+    assert docs["db"] == "store.db"
+    assert docs["package"] == "pydantic"
+    assert docs["source_version"] == ""
+    assert docs["target_version"] == ""
+    assert docs["source_id"] == "py"
+    assert docs["top_k"] == 5
 
-    # No doc store configured -> the loop must refuse retrieve_docs.
+    # No doc store configured -> the loop must refuse retrieve_for_package.
     req_no_store = AssessmentRequest(repo="x", dependency="pydantic", target_version="2.0")
     try:
-        _build_args("retrieve_docs", {}, acc, req_no_store)
+        _build_args("retrieve_for_package", {}, acc, req_no_store)
         raise AssertionError("expected ValueError")
     except ValueError:
         pass

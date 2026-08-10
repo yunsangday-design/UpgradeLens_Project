@@ -291,6 +291,34 @@ def collect_evidence(
             embedding=embedding,
         )
 
+    return build_evidence_collection(
+        request=request,
+        repo_path=repo_path,
+        code_report=code_report,
+        doc_runs=doc_runs,
+        scan_result=scan_result,
+        skill=skill,
+        degradations=degradations,
+    )
+
+
+def build_evidence_collection(
+    request: AssessmentRequest,
+    repo_path: Path,
+    code_report: CodeEvidenceReport,
+    doc_runs: list[RetrievalRun],
+    scan_result: DependencyScanResult | None,
+    skill: SkillPackage | None,
+    degradations: list[str] | None = None,
+) -> EvidenceCollection:
+    """Assemble an :class:`EvidenceCollection` from already-collected parts.
+
+    Shared by :func:`collect_evidence` and the model-driven agent loop so the two
+    evidence paths produce identical objects (same source-version resolution,
+    declaration evidence and deprivations).
+    """
+    degradations = list(degradations or [])
+    source_version = _resolve_source_version(request, scan_result)
     bundle = build_bundle(code_report, doc_runs, dependency=request.dependency)
     _add_declaration_evidence(bundle, request, source_version, scan_result)
     if source_version.status in ("unknown", "conflict"):
@@ -301,7 +329,6 @@ def collect_evidence(
         )
     if not bundle.items:
         degradations.append(NO_CODE_EVIDENCE)
-
     return EvidenceCollection(
         request=request,
         repo_path=repo_path,
@@ -437,6 +464,7 @@ __all__ = [
     "AssessmentRequest",
     "EvidenceCollection",
     "analyse",
+    "build_evidence_collection",
     "collect_evidence",
     "run_pipeline",
 ]

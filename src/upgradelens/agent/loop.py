@@ -7,10 +7,12 @@ loop falls back to the deterministic ``run_pipeline`` (A4) so a result is always
 produced.
 
 The loop deliberately exposes only the evidence-collection tools to the model
-(``clone_repo``, ``scan_dependency``, ``scan_code``, ``resolve_skill``,
-``retrieve_docs``). The final analysis step is owned by the harness because it
-requires the evidence bundle and the verify gate -- the model signals "I have
-enough" by returning ``done=true`` (or by hitting the step/budget limit).
+(``clone_repo``, ``scan_dependency``, ``scan_code``, ``retrieve_for_package``).
+A Skill Pack is optional and resolved automatically by the harness. The shared
+``retrieve_for_package`` entry point is the same one the deterministic pipeline
+uses. The final analysis step is owned by the harness because it requires the
+evidence bundle and the verify gate -- the model signals "I have enough" by
+returning ``done=true`` (or by hitting the step/budget limit).
 """
 
 from __future__ import annotations
@@ -21,19 +23,26 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from upgradelens.domain.code_evidence import CodeEvidenceReport, CodeEvidenceSummary
+from upgradelens.domain import DependencyScanResult
+from upgradelens.domain.code_evidence import CodeEvidenceReport
 from upgradelens.domain.doc_evidence import RetrievalRun
-from upgradelens.graph.state import AssessmentSpec
 from upgradelens.llm.gateway import ModelGateway, ModelMode
-from upgradelens.models.impact import build_bundle
-from upgradelens.pipeline import AssessmentOutcome, EvidenceCollection, analyse, run_pipeline
+from upgradelens.pipeline import (
+    NO_DOC_INDEX,
+    AssessmentOutcome,
+    EvidenceCollection,
+    analyse,
+    build_evidence_collection,
+    run_pipeline,
+)
+from upgradelens.tools.live_repo import is_repo_url
 from upgradelens.tools.registry import (
     ToolContext,
     default_registry,
     resolve_skill_package,
 )
 
-_COLLECTION_TOOLS = ("clone_repo", "scan_dependency", "scan_code", "resolve_skill", "retrieve_docs")
+_COLLECTION_TOOLS = ("clone_repo", "scan_dependency", "scan_code", "retrieve_for_package")
 
 
 class ToolCallDecision(BaseModel):
@@ -52,6 +61,9 @@ class _Accumulator:
     ref: str = "main"
     code_report: CodeEvidenceReport | None = None
     skill_id: str | None = None
+    source_version_spec: str = ""
+    target_version_spec: str = ""
+    scan_result: DependencyScanResult | None = None
     doc_runs: list[RetrievalRun] = field(default_factory=list)
     degradations: list[str] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
@@ -72,10 +84,12 @@ def run_agent(
     return _run_react(request, gateway, ctx, registry=registry, max_steps=max_steps)
 
 
-def _collection_tool_specs(registry: Any, request: Any) -> list[dict[str, Any]]:
+def _collection_tool_specs(registry: Any, request: Any, repo_is_url: bool) -> list[dict[str, Any]]:
     allowed = set(_COLLECTION_TOOLS)
-    if not (request.db and request.source_id):
-        allowed.discard("retrieve_docs")
+    if request.db is None:
+        allowed.discard("retrieve_for_package")
+    if not repo_is_url:
+        allowed.discard("clone_repo")
     return [spec for spec in registry.specs() if spec["name"] in allowed]
 
 
@@ -88,7 +102,12 @@ def _run_react(
     max_steps: int,
 ) -> AssessmentOutcome:
     acc = _Accumulator()
-    specs = _collection_tool_specs(registry, request)
+    ctx.gateway = gateway
+    ctx.embedding = getattr(gateway, "embedding", None)
+    repo_is_url = is_repo_url(request.repo)
+    if not repo_is_url:
+        acc.repo_path = Path(request.repo)
+    specs = _collection_tool_specs(registry, request, repo_is_url)
 
     for step in range(1, max_steps + 1):
         budget = getattr(gateway, "budget", None)
@@ -126,8 +145,6 @@ def _decide(
             f"scanned code ({acc.code_report.dependency_name}, "
             f"{acc.code_report.scanned_files} files)"
         )
-    if acc.skill_id:
-        collected.append(f"resolved skill -> {acc.skill_id}")
     if acc.doc_runs:
         chunks = sum(len(run.top_doc_evidence) for run in acc.doc_runs)
         collected.append(f"retrieved docs ({chunks} chunks)")
@@ -153,9 +170,11 @@ def _decide(
         f"{collected_block}\n\n"
         "History:\n"
         f"{history_block}\n\n"
-        "Decide the next tool call. clone_repo must run before scan_code/scan_dependency. "
-        "When you have cloned, scanned code, resolved the skill, and decided on docs "
-        "(or chosen to skip them), set done=true with tool=null. "
+        "Decide the next tool call. clone_repo must run before scan_code/scan_dependency "
+        "(skip it when the repo is already a local path). "
+        "When you have scanned code and decided on docs (or chosen to skip them), "
+        "set done=true with tool=null. A Skill Pack is optional and resolved "
+        "automatically, so do not wait for one. "
         "Respond as JSON: tool (string or null), arguments (object), thought (string), done (bool)."
     )
     decision, _ = gateway.complete_structured(
@@ -176,16 +195,21 @@ def _build_args(tool: str, args: dict[str, Any], acc: _Accumulator, request: Any
         if tool == "scan_dependency":
             base["target_version"] = request.target_version or ""
         return base
-    if tool == "resolve_skill":
-        return {"dependency": request.dependency, "target_version": request.target_version}
-    if tool == "retrieve_docs":
-        if not (request.db and request.source_id):
-            raise ValueError("no doc store configured; skip retrieve_docs")
-        query = args.get("query") or f"{request.dependency} {request.target_version} migration"
+    if tool == "retrieve_for_package":
+        if request.db is None:
+            raise ValueError("no doc store configured; skip retrieve_for_package")
+        if acc.repo_path is None:
+            raise ValueError("clone/prepare the repo before retrieving docs")
         return {
             "db": request.db,
+            "package": request.dependency,
+            "source_version": acc.source_version_spec,
+            "target_version": acc.target_version_spec,
+            "user_intent": request.user_intent,
+            "code_symbols": sorted(
+                {usage.symbol for usage in (acc.code_report.usages if acc.code_report else [])}
+            ),
             "source_id": request.source_id,
-            "query": query,
             "top_k": int(args.get("top_k", 5)),
         }
     raise ValueError(f"unhandled tool: {tool}")
@@ -205,10 +229,10 @@ def _execute(
         result = registry.run(tool, args, ctx)
     except Exception as exc:  # ToolError / validation error -> feed back, let the model retry
         return False, f"{type(exc).__name__}: {exc}"
-    return _absorb(tool, result, acc)
+    return _absorb(tool, result, acc, request)
 
 
-def _absorb(tool: str, result: dict[str, Any], acc: _Accumulator) -> tuple[bool, str]:
+def _absorb(tool: str, result: dict[str, Any], acc: _Accumulator, request: Any) -> tuple[bool, str]:
     if tool == "clone_repo":
         acc.repo_path = Path(result["path"])
         acc.slug = result.get("slug")
@@ -220,41 +244,42 @@ def _absorb(tool: str, result: dict[str, Any], acc: _Accumulator) -> tuple[bool,
             f"scanned code ({acc.code_report.dependency_name}, "
             f"{acc.code_report.scanned_files} files)"
         )
-    if tool == "resolve_skill":
-        acc.skill_id = result.get("skill_id")
-        return True, f"resolved skill -> {acc.skill_id}"
-    if tool == "retrieve_docs":
-        run = RetrievalRun.model_validate(result)
-        acc.doc_runs.append(run)
-        return True, f"retrieved docs: {len(run.top_doc_evidence)} chunks"
     if tool == "scan_dependency":
-        return True, "scanned dependency"
+        scan = DependencyScanResult.model_validate(result)
+        acc.scan_result = scan
+        acc.source_version_spec = (
+            scan.current_specifier or scan.current_version or request.source_version or ""
+        )
+        acc.target_version_spec = request.target_version or ""
+        return True, (
+            f"scanned dependency (status={scan.status.value}, "
+            f"source={acc.source_version_spec or 'unknown'})"
+        )
+    if tool == "retrieve_for_package":
+        runs: list[RetrievalRun] = (
+            [RetrievalRun.model_validate(run) for run in result]
+            if isinstance(result, list)
+            else []
+        )
+        acc.doc_runs.extend(runs)
+        total = sum(len(run.top_doc_evidence) for run in runs)
+        return True, f"retrieved docs: {total} chunks"
     return True, "ok"
 
 
 def _build_collection(acc: _Accumulator, request: Any) -> EvidenceCollection:
-    code_report = acc.code_report or CodeEvidenceReport(
-        dependency_name=request.dependency,
-        scanned_files=0,
-        summary=CodeEvidenceSummary(scanned_files=0, usage_count=0),
-    )
-    repo_path = acc.repo_path
-    assert repo_path is not None
-    bundle = build_bundle(code_report, acc.doc_runs, dependency=request.dependency)
-    skill = (
-        resolve_skill_package(request.dependency, request.target_version) if acc.skill_id else None
-    )
-    spec = AssessmentSpec(
-        repo=str(repo_path),
-        dependency=request.dependency,
-        source_version_spec="",
-        target_version_spec=request.target_version or "",
-    )
-    return EvidenceCollection(
+    if acc.repo_path is None or acc.code_report is None:
+        raise ValueError("incomplete evidence: need a checkout and a code scan")
+    degradations = list(acc.degradations)
+    if request.db is None:
+        degradations.append(NO_DOC_INDEX)
+    skill = resolve_skill_package(request.dependency, request.target_version)
+    return build_evidence_collection(
         request=request,
-        repo_path=repo_path,
-        spec=spec,
-        code_report=code_report,
-        bundle=bundle,
+        repo_path=acc.repo_path,
+        code_report=acc.code_report,
+        doc_runs=acc.doc_runs,
+        scan_result=acc.scan_result,
         skill=skill,
+        degradations=degradations,
     )

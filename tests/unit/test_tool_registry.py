@@ -50,6 +50,7 @@ def test_default_registry_exposes_the_builtin_tools() -> None:
         "clone_repo",
         "resolve_skill",
         "retrieve_docs",
+        "retrieve_for_package",
         "scan_code",
         "scan_dependency",
         "verify_report",

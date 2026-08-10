@@ -33,10 +33,13 @@ from sqlalchemy.orm import Session
 from upgradelens.analyzers import scan_code_evidence
 from upgradelens.analyzers import scan_dependency as _scan_dependency
 from upgradelens.db.database import engine_for, init_db, session_for
+from upgradelens.db.vector import EmbeddingBackend
 from upgradelens.docs import retrieve as _retrieve
+from upgradelens.docs.retrieval import retrieve_for_package as _retrieve_for_package
 from upgradelens.domain import DependencyAnalysisRequest
 from upgradelens.domain.code_evidence import CodeEvidenceReport
 from upgradelens.domain.skill import SkillPackage
+from upgradelens.llm.gateway import ModelGateway, ModelMode
 from upgradelens.models.impact import EvidenceBundle, EvidenceItem, ImpactReport
 from upgradelens.skills import SkillParseError, builtin_registry
 from upgradelens.tools.errors import ToolError, ToolExecutionError, ToolInputError
@@ -65,6 +68,8 @@ class ToolContext:
 
     trace: ToolTrace = field(default_factory=ToolTrace)
     workdir: Path | None = None
+    gateway: ModelGateway | None = None
+    embedding: EmbeddingBackend | None = None
     _clones: list[LiveRepoHandle] = field(default_factory=list, repr=False)
     _sessions: dict[str, Session] = field(default_factory=dict, repr=False)
 
@@ -105,7 +110,7 @@ class ToolContext:
 # Tool
 # --------------------------------------------------------------------------- #
 
-Handler = Callable[[Any, ToolContext], dict[str, Any]]
+Handler = Callable[[Any, ToolContext], Any]
 
 
 @dataclass(frozen=True)
@@ -143,7 +148,7 @@ class Tool:
         self,
         payload: Mapping[str, Any] | BaseModel,
         ctx: ToolContext | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Validate, execute and trace one call.
 
         Raises:
@@ -238,7 +243,7 @@ class ToolRegistry:
         name: str,
         payload: Mapping[str, Any] | BaseModel,
         ctx: ToolContext | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         return self.get(name).run(payload, ctx)
 
     def __contains__(self, name: object) -> bool:
@@ -287,6 +292,17 @@ class RetrieveDocsInput(BaseModel):
     source_id: str = Field(description="Documentation source id to query.")
     query: str = Field(description="Keyword query.")
     top_k: int = Field(default=5, ge=1, le=50, description="Maximum evidence chunks to return.")
+
+
+class RetrieveForPackageInput(BaseModel):
+    db: str = Field(description="SQLite evidence store with ingested docs.")
+    package: str = Field(description="Dependency name (any casing).")
+    source_version: str = Field(default="", description="Resolved from-version spec, if known.")
+    target_version: str = Field(default="", description="Target version spec.")
+    user_intent: str = Field(default="", description="Free-text upgrade intent.")
+    code_symbols: list[str] = Field(default_factory=list, description="Symbols discovered in code.")
+    source_id: str | None = Field(default=None, description="Restrict to one doc source id.")
+    top_k: int = Field(default=5, ge=1, le=50, description="Max chunks per query.")
 
 
 class VerifyReportInput(BaseModel):
@@ -360,10 +376,29 @@ def _handle_resolve_skill(args: ResolveSkillInput, ctx: ToolContext) -> dict[str
     }
 
 
-def _handle_retrieve_docs(args: RetrieveDocsInput, ctx: ToolContext) -> dict[str, Any]:
+def _handle_retrieve_docs(args: RetrieveDocsInput, ctx: ToolContext) -> Any:
     session = ctx.session(Path(args.db))
     run = _retrieve(session, args.source_id, args.query, top_k=args.top_k)
     return run.model_dump(mode="json")
+
+
+def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext) -> Any:
+    session = ctx.session(Path(args.db))
+    mode = ctx.gateway.mode if ctx.gateway is not None else ModelMode.FAKE
+    runs = _retrieve_for_package(
+        session,
+        package=args.package,
+        source_version=args.source_version,
+        target_version=args.target_version,
+        user_intent=args.user_intent,
+        code_symbols=list(args.code_symbols),
+        source_id=args.source_id,
+        top_k=args.top_k,
+        gateway=ctx.gateway,
+        mode=mode,
+        embedding=ctx.embedding,
+    )
+    return [run.model_dump(mode="json") for run in runs]
 
 
 def _evidence_item_from_json(raw: Mapping[str, Any]) -> EvidenceItem:
@@ -451,6 +486,17 @@ BUILTIN_TOOLS: tuple[Tool, ...] = (
         handler=_handle_retrieve_docs,
     ),
     Tool(
+        name="retrieve_for_package",
+        description=(
+            "Stage 4: retrieve documentation chunks for a dependency upgrade from the "
+            "shared corpus (FTS5 + optional vector RRF), returning ranked, citable doc "
+            "evidence. Uses the same retrieval path as the deterministic pipeline -- "
+            "prefer this over the old single-source retrieve_docs."
+        ),
+        input_model=RetrieveForPackageInput,
+        handler=_handle_retrieve_for_package,
+    ),
+    Tool(
         name="verify_report",
         description=(
             "Stage 6: re-check an impact report against the evidence bundle and the "
@@ -472,6 +518,7 @@ __all__ = [
     "CloneRepoInput",
     "ResolveSkillInput",
     "RetrieveDocsInput",
+    "RetrieveForPackageInput",
     "ScanCodeInput",
     "ScanDependencyInput",
     "Tool",

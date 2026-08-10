@@ -84,8 +84,11 @@ from upgradelens.domain import (
 from upgradelens.domain.skill import SkillPackage
 from upgradelens.eval import (
     BASELINES,
+    SYSTEMS,
     compare_runs,
+    load_cases,
     render_summary_markdown,
+    run_comparison,
     run_evaluation,
 )
 from upgradelens.eval.retrieval_baseline import (
@@ -137,6 +140,7 @@ _INGEST_DOCS_COMMAND = "ingest-docs"
 _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
 _ASSESS_COMMAND = "assess"
 _EVAL_COMMAND = "eval"
+_EVAL_COMPARE_COMMAND = "eval-compare"
 _FETCH_DOCS_COMMAND = "fetch-docs"
 _MCP_COMMAND = "mcp"
 _COMMENT_PR_COMMAND = "comment-pr"
@@ -635,6 +639,36 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory of retrieval cases for the strategy table "
         f"(default: {DEFAULT_RETRIEVAL_CASES_DIR}; skipped on error).",
+    )
+
+    eval_compare = subparsers.add_parser(
+        _EVAL_COMPARE_COMMAND,
+        help="S8 architecture comparison: direct LLM vs fixed pipeline vs agent (offline FAKE).",
+    )
+    eval_compare.add_argument(
+        "--cases",
+        type=Path,
+        default=DEFAULT_CASES_DIR,
+        help=f"Directory of evaluation cases (default: {DEFAULT_CASES_DIR}).",
+    )
+    eval_compare.add_argument(
+        "--systems",
+        action="append",
+        default=None,
+        choices=list(SYSTEMS),
+        help="Architecture to compare; repeat to select several (default: all three).",
+    )
+    eval_compare.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Write the Markdown comparison report to this path.",
+    )
+    eval_compare.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Write the JSON comparison report (per-case + aggregate) to this path.",
     )
 
     retrieval_baseline = subparsers.add_parser(
@@ -1314,6 +1348,35 @@ def _eval_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _eval_compare_command(args: argparse.Namespace) -> int:
+    """S8 architecture comparison (direct LLM vs fixed pipeline vs agent).
+
+    Fully off-line: model nodes are satisfied by deterministic fakes derived
+    from each case's ``model_report.json`` and the run executes in FAKE mode.
+    """
+    systems = tuple(args.systems) if args.systems else SYSTEMS
+    try:
+        cases = load_cases(Path(args.cases))
+        report = run_comparison(cases, systems=systems)
+    except (ValueError, FileNotFoundError) as exc:
+        sys.stderr.write(f"upgradelens: {exc}\n")
+        return EXIT_INVALID_REQUEST
+
+    markdown = report.to_markdown()
+    _emit_text(markdown)
+
+    if args.out is not None:
+        Path(args.out).write_text(markdown, encoding="utf-8")
+        sys.stderr.write(f"upgradelens: wrote S8 report to {args.out}\n")
+    if args.json is not None:
+        Path(args.json).write_text(
+            json.dumps(report.to_json(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        sys.stderr.write(f"upgradelens: wrote S8 JSON to {args.json}\n")
+    return EXIT_OK
+
+
 def _retrieval_baseline_command(args: argparse.Namespace) -> int:
     """Build the SQLite index from built-in fixtures and record the baseline."""
     try:
@@ -1562,6 +1625,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _EVAL_COMMAND:
         return _eval_command(args)
+
+    if args.command == _EVAL_COMPARE_COMMAND:
+        return _eval_compare_command(args)
 
     if args.command == _RETRIEVAL_BASELINE_COMMAND:
         return _retrieval_baseline_command(args)

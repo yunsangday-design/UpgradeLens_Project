@@ -4,16 +4,21 @@ Reuses the stage 4 cleaning/chunking/FTS pipeline via
 :func:`upgradelens.docs.ingest.persist_source_text`. The live-specific parts
 are: (1) every source is fetched through the traced, restricted fetcher, and
 (2) each source's trust level is *inferred from its URL* rather than trusting
-the skill's declaration -- a fetched URL can drift from what the skill author
-assumed.
+the declaration -- a fetched URL can drift from what the author assumed.
+
+Since S6 live documents are tagged with their package so they land in the same
+shared corpus as manifest-ingested ones; callers pass the dependency they are
+fetching for.
 """
 
 from __future__ import annotations
 
+from packaging.utils import canonicalize_name
 from sqlalchemy.orm import Session
 
 from upgradelens.docs.ingest import persist_source_text
 from upgradelens.domain.doc_evidence import DocSourceRecord
+from upgradelens.domain.doc_source_spec import DocSourceSpec
 from upgradelens.domain.skill import DocSource
 from upgradelens.tools.errors import ToolError
 from upgradelens.tools.fetcher import RestrictedFetcher
@@ -22,9 +27,15 @@ from upgradelens.tools.trust import infer_trust
 
 
 def ingest_live_source(
-    session: Session, source: DocSource, fetcher: RestrictedFetcher, *, refresh: bool = False
+    session: Session,
+    source: DocSource,
+    fetcher: RestrictedFetcher,
+    *,
+    refresh: bool = False,
+    package_name: str = "",
+    source_version_spec: str = "",
 ) -> DocSourceRecord | None:
-    """Fetch one skill source live and persist it.
+    """Fetch one declared source live and persist it into the shared corpus.
 
     Returns ``None`` (and leaves the trace recording the failure) if the fetch
     fails -- a single dead URL must not abort the whole run.
@@ -36,8 +47,20 @@ def ingest_live_source(
     except ToolError:
         return None
     raw = result.content.decode("utf-8", "replace")
+    spec = DocSourceSpec(
+        id=source.id,
+        package_name=package_name,
+        url=source.url,
+        title=source.id,
+        source_type=source.source_type,
+        trust_level=source.trust_level,
+        source_version_spec=source_version_spec,
+        target_version_spec=source.target_version_spec or "",
+        fetch_strategy=source.fetch_strategy,
+        parse_strategy=source.parse_strategy,
+    )
     trust = infer_trust(source.url)
-    return persist_source_text(session, source, raw, snapshot_path=source.url, trust_level=trust)
+    return persist_source_text(session, spec, raw, snapshot_path=source.url, trust_level=trust)
 
 
 def _format_changelog(dependency: str, entries: list[ChangelogEntry]) -> str:
@@ -58,17 +81,21 @@ def ingest_pypi_changelog(
     entries: list[ChangelogEntry],
     *,
     target_version_spec: str = "",
+    source_version_spec: str = "",
 ) -> DocSourceRecord:
     """Persist a PyPI changelog as an ``official`` changelog doc source."""
-    source_id = f"{dependency}:pypi-changelog"
-    raw = _format_changelog(dependency, entries)
-    source = DocSource(
-        id=source_id,
+    spec = DocSourceSpec(
+        id=f"{dependency}:pypi-changelog",
+        package_name=canonicalize_name(dependency),
         url=f"https://pypi.org/pypi/{dependency}/json",
+        title=f"{dependency} release changelog",
         source_type="changelog",
-        fetch_strategy="html",
+        trust_level="official",
+        source_version_spec=source_version_spec,
         target_version_spec=target_version_spec,
+        fetch_strategy="html",
     )
+    raw = _format_changelog(dependency, entries)
     return persist_source_text(
-        session, source, raw, snapshot_path=source.url, trust_level="official"
+        session, spec, raw, snapshot_path=spec.url, trust_level="official"
     )

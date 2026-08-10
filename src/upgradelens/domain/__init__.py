@@ -27,6 +27,10 @@ from upgradelens.domain.doc_evidence import (
     DocSourceRecord,
     RetrievalRun,
 )
+from upgradelens.domain.doc_source_spec import (
+    DocSourceManifest,
+    DocSourceSpec,
+)
 from upgradelens.domain.skill import (
     DocSource,
     PatchRule,
@@ -39,6 +43,8 @@ from upgradelens.domain.skill import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "DocSourceManifest",
+    "DocSourceSpec",
     "DependencyAnalysisRequest",
     "DependencyDeclaration",
     "DependencyScanResult",

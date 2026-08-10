@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from packaging.utils import canonicalize_name
 from sqlalchemy.orm import Session
 
 from upgradelens.analyzers import scan_code_evidence
@@ -42,7 +43,7 @@ from upgradelens.analyzers import scan_dependency as scan_dependency_fn
 from upgradelens.capabilities import CapabilityRegistry, TransformationPack
 from upgradelens.config import Settings
 from upgradelens.db.database import engine_for, init_db, session_for
-from upgradelens.docs import ingest_skill, retrieve
+from upgradelens.docs import DocSourceManifestError, ingest_corpus, ingest_skill, retrieve
 from upgradelens.domain import DependencyAnalysisRequest
 from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
@@ -218,22 +219,40 @@ def resolve_capability(
 
 
 @mcp.tool()
-def ingest_docs(db: str, skill: str = "pydantic_v1_to_v2") -> dict[str, Any]:
-    """Stage 4: load a built-in documentation snapshot into the SQLite evidence store.
+def ingest_docs(db: str, manifest: str = "", skill: str = "") -> dict[str, Any]:
+    """Stage 4: load documentation snapshots into the shared corpus.
 
     Args:
         db: SQLite database path to ingest into.
-        skill: Skill Pack id whose documentation snapshots should be ingested.
+        manifest: Source manifest file, or a corpus directory scanned for
+            ``manifest.yaml``. Preferred: adding a dependency to the corpus
+            needs no Skill Pack.
+        skill: DEPRECATED. Skill Pack id whose own snapshots should be
+            ingested; use ``manifest`` instead.
     """
-    package = builtin_registry().get(skill)
-    if package is None:
-        return {"error": f"unknown skill '{skill}'"}
+    if bool(manifest) == bool(skill):
+        return {"error": "provide exactly one of 'manifest' (preferred) or 'skill' (deprecated)"}
+
+    package = None
+    if skill:
+        package = builtin_registry().get(skill)
+        if package is None:
+            return {"error": f"unknown skill '{skill}'"}
+
     session = _open_session(Path(db))
     try:
-        records = ingest_skill(session, package)
+        if package is not None:
+            records = ingest_skill(session, package)
+        else:
+            try:
+                records = ingest_corpus(session, Path(manifest))
+            except DocSourceManifestError as exc:
+                return {"error": str(exc)}
         return {
             "db": str(db),
+            "manifest": manifest,
             "skill_id": skill,
+            "deprecated_skill_ingestion": bool(skill),
             "ingested": [rec.model_dump(mode="json") for rec in records],
         }
     finally:
@@ -385,7 +404,14 @@ def fetch_docs(
             for source in skill.sources:
                 if not source.url:
                     continue
-                rec = ingest_live_source(session, source, fetcher, refresh=refresh)
+                rec = ingest_live_source(
+                    session,
+                    source,
+                    fetcher,
+                    refresh=refresh,
+                    package_name=canonicalize_name(dependency),
+                    source_version_spec=skill.source_version_spec or "",
+                )
                 if rec is not None:
                     records.append(rec)
 

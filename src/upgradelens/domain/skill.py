@@ -14,6 +14,8 @@ from typing import Literal
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel, Field
 
+from upgradelens.domain.doc_source_spec import FetchStrategy, SourceType, TrustLevel
+
 # ---------------------------------------------------------------------------
 # Enumerations
 # ---------------------------------------------------------------------------
@@ -29,10 +31,11 @@ PatternKind = Literal[
 ]
 Severity = Literal["info", "low", "medium", "high"]
 Confidence = Literal["high", "low", "uncertain"]
-SourceType = Literal["official_doc", "changelog", "migration_guide"]
-TrustLevel = Literal["official", "community", "unverified"]
-FetchStrategy = Literal["html", "markdown", "static"]
 PatchRiskLevel = Literal["low", "medium", "high"]
+
+# ``SourceType`` / ``TrustLevel`` / ``FetchStrategy`` now live with the
+# Skill-independent corpus model (S6) and are re-exported here so existing
+# importers keep working while the Skill doc-source path is retired.
 
 # Standard lowered-capability statement emitted whenever the generic fallback is
 # selected (plan section 3, line 1711: "Generic 模式明确降低能力声明").
@@ -72,6 +75,15 @@ class UsagePattern(BaseModel):
 
 
 class DocSource(BaseModel):
+    """A Skill-declared documentation source.
+
+    Deprecated since S6: doc sources are corpus facts, not skill capabilities.
+    New corpora declare
+    :class:`~upgradelens.domain.doc_source_spec.DocSourceSpec` entries in a
+    source manifest instead; this model survives only for the built-in Skills
+    and the live-fetch path, via :mod:`upgradelens.skills.compat`.
+    """
+
     id: str
     url: str
     source_type: SourceType = "official_doc"

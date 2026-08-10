@@ -1,4 +1,11 @@
-"""Document ingestion: snapshot -> cleaned text -> chunks -> SQLite + FTS5 (stage 4)."""
+"""Document ingestion: snapshot -> cleaned text -> chunks -> SQLite + FTS5 (stage 4).
+
+Since S6 the primary entry point is a *source manifest*
+(:func:`ingest_manifest_file` / :func:`ingest_corpus`): a package's documents
+enter the shared corpus without any Skill Pack being involved. The
+``ingest_skill*`` functions remain as a thin compatibility layer over the same
+generic path so the built-in Skills keep working while they are migrated.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +13,6 @@ import hashlib
 import json
 from pathlib import Path
 
-from packaging.utils import canonicalize_name
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -14,8 +20,16 @@ from upgradelens.db import models
 from upgradelens.db.vector import EmbeddingBackend, SqliteVecIndex, VectorIndexUnavailable
 from upgradelens.docs.chunking import chunk_markdown
 from upgradelens.docs.cleaning import clean_document
+from upgradelens.docs.source_manifest import (
+    DocSourceManifestError,
+    discover_manifests,
+    load_source_manifest,
+    resolve_snapshot,
+)
 from upgradelens.domain.doc_evidence import DocChunk, DocSourceRecord
-from upgradelens.domain.skill import DocSource, SkillPackage, TrustLevel
+from upgradelens.domain.doc_source_spec import DocSourceManifest, DocSourceSpec, TrustLevel
+from upgradelens.domain.skill import DocSource, SkillPackage
+from upgradelens.skills.compat import skill_source_to_spec
 from upgradelens.skills.loader import SkillParseError
 
 
@@ -23,41 +37,31 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _resolve_fixture(skill: SkillPackage, source: DocSource) -> Path:
-    if not source.fixture_snapshot:
-        raise SkillParseError(
-            f"source '{source.id}' has no fixture_snapshot; cannot ingest offline"
-        )
-    fixture = Path(skill.source_path) / source.fixture_snapshot
-    if not fixture.exists():
-        raise SkillParseError(f"documentation fixture not found: {fixture}")
-    return fixture
-
-
 def persist_source_text(
     session: Session,
-    source: DocSource,
+    spec: DocSourceSpec,
     raw: str,
     snapshot_path: str,
     *,
     trust_level: TrustLevel | None = None,
-    title: str | None = None,
-    package_name: str = "",
-    source_version_spec: str = "",
     embedding: EmbeddingBackend | None = None,
 ) -> DocSourceRecord:
     """Clean, chunk and persist one documentation source's text.
 
-    Shared by the offline fixture path (stage 4) and the live fetch path
-    (stage 7). Re-ingesting the same source id removes its previous chunks
-    (and their FTS5 rows) first, so the index stays deduplicated.
+    Shared by the offline snapshot path (stage 4 / S6 manifests) and the live
+    fetch path (stage 7). ``trust_level`` overrides the spec's declaration,
+    which the live path uses because a fetched URL can drift from what the
+    author assumed.
+
+    Re-ingesting the same source id removes its previous chunks (and their
+    FTS5 rows) first, so the index stays deduplicated.
     """
     snapshot_hash = _sha256(raw)
-    cleaned = clean_document(raw, source.fetch_strategy)
-    chunks = chunk_markdown(cleaned, source.id)
+    cleaned = clean_document(raw, spec.fetch_strategy)
+    chunks = chunk_markdown(cleaned, spec.id)
 
     existing = (
-        session.execute(select(models.DocChunkRow).where(models.DocChunkRow.source_id == source.id))
+        session.execute(select(models.DocChunkRow).where(models.DocChunkRow.source_id == spec.id))
         .scalars()
         .all()
     )
@@ -66,18 +70,17 @@ def persist_source_text(
     for row in existing:
         session.delete(row)
 
-    source_row = session.get(models.DocSourceRow, source.id)
+    source_row = session.get(models.DocSourceRow, spec.id)
     if source_row is None:
-        source_row = models.DocSourceRow(id=source.id)
+        source_row = models.DocSourceRow(id=spec.id)
         session.add(source_row)
-    source_row.url = source.url
-    source_row.source_type = source.source_type
-    source_row.trust_level = trust_level or source.trust_level
-    source_row.title = source.id
-    target_spec = source.target_version_spec or ""
-    source_row.target_version_spec = target_spec
-    source_row.package_name = package_name
-    source_row.source_version_spec = source_version_spec
+    source_row.url = spec.url
+    source_row.source_type = spec.source_type
+    source_row.trust_level = trust_level or spec.trust_level
+    source_row.title = spec.display_title
+    source_row.target_version_spec = spec.target_version_spec
+    source_row.package_name = spec.canonical_package
+    source_row.source_version_spec = spec.source_version_spec
     source_row.snapshot_path = snapshot_path
     source_row.snapshot_hash = snapshot_hash
     session.flush()
@@ -85,7 +88,7 @@ def persist_source_text(
     new_chunks: list[models.DocChunkRow] = []
     for chunk in chunks:
         crow = models.DocChunkRow(
-            source_id=source.id,
+            source_id=spec.id,
             title=chunk.title,
             content=chunk.content,
             content_hash=chunk.content_hash,
@@ -102,7 +105,7 @@ def persist_source_text(
             {
                 "rid": crow.id,
                 "content": chunk.content,
-                "sid": source.id,
+                "sid": spec.id,
                 "title": chunk.title,
                 "hp": json.dumps(chunk.heading_path, ensure_ascii=False),
             },
@@ -113,13 +116,13 @@ def persist_source_text(
         _embed_and_index(session, embedding, chunks, new_chunks)
 
     return DocSourceRecord(
-        id=source.id,
-        url=source.url,
-        title=source.id,
+        id=spec.id,
+        url=spec.url,
+        title=spec.display_title,
         snapshot_hash=snapshot_hash,
-        target_version_spec=target_spec,
-        package_name=package_name,
-        source_version_spec=source_version_spec,
+        target_version_spec=spec.target_version_spec,
+        package_name=spec.canonical_package,
+        source_version_spec=spec.source_version_spec,
         chunk_count=len(chunks),
     )
 
@@ -147,31 +150,64 @@ def _embed_and_index(
         vec_index.upsert(crow.id, vec)
 
 
-def ingest_skill_source(
+# --------------------------------------------------------------------------- #
+# Generic (Skill-free) ingestion -- the S6 main path
+# --------------------------------------------------------------------------- #
+
+
+def ingest_source_spec(
     session: Session,
-    skill: SkillPackage,
-    source: DocSource,
+    spec: DocSourceSpec,
+    *,
+    base_dir: str | Path,
     embedding: EmbeddingBackend | None = None,
 ) -> DocSourceRecord:
-    """Clean, chunk and persist one documentation source for a skill.
+    """Ingest one snapshot-backed source, tagged for the shared corpus.
 
-    The source is tagged with the skill's dependency package name (canonicalised)
-    and source/target version specifiers so it becomes part of the shared corpus
-    retrievable by package alone — independent of any usage pattern.
+    Raises:
+        DocSourceManifestError: the snapshot is missing or outside ``base_dir``.
     """
-    fixture = _resolve_fixture(skill, source)
-    raw = fixture.read_text(encoding="utf-8")
-    package_name = canonicalize_name(skill.package_names[0]) if skill.package_names else ""
-    source_version_spec = skill.source_version_spec or ""
-    return persist_source_text(
-        session,
-        source,
-        raw,
-        str(fixture),
-        package_name=package_name,
-        source_version_spec=source_version_spec,
-        embedding=embedding,
-    )
+    snapshot = resolve_snapshot(spec, base_dir)
+    raw = snapshot.read_text(encoding="utf-8")
+    return persist_source_text(session, spec, raw, str(snapshot), embedding=embedding)
+
+
+def ingest_manifest(
+    session: Session,
+    manifest: DocSourceManifest,
+    *,
+    base_dir: str | Path | None = None,
+    embedding: EmbeddingBackend | None = None,
+) -> list[DocSourceRecord]:
+    """Ingest every source of an already-loaded manifest."""
+    root = Path(base_dir) if base_dir is not None else Path(manifest.base_dir)
+    return [
+        ingest_source_spec(session, spec, base_dir=root, embedding=embedding)
+        for spec in manifest.sources
+    ]
+
+
+def ingest_manifest_file(
+    session: Session, path: str | Path, *, embedding: EmbeddingBackend | None = None
+) -> list[DocSourceRecord]:
+    """Load a source manifest from disk and ingest everything it declares."""
+    manifest = load_source_manifest(path)
+    return ingest_manifest(session, manifest, embedding=embedding)
+
+
+def ingest_corpus(
+    session: Session, root: str | Path, *, embedding: EmbeddingBackend | None = None
+) -> list[DocSourceRecord]:
+    """Ingest every manifest under ``root`` (or ``root`` itself, if it is one).
+
+    This is what "add a dependency to the corpus" looks like end to end: drop a
+    manifest plus its snapshots into the corpus tree and point this at it. No
+    Skill Pack is created, and none is needed.
+    """
+    records: list[DocSourceRecord] = []
+    for manifest_path in discover_manifests(root):
+        records.extend(ingest_manifest_file(session, manifest_path, embedding=embedding))
+    return records
 
 
 def iter_sources_for_package(session: Session, package_name: str) -> list[DocSourceRecord]:
@@ -202,10 +238,39 @@ def iter_sources_for_package(session: Session, package_name: str) -> list[DocSou
     ]
 
 
+# --------------------------------------------------------------------------- #
+# Skill compatibility layer (deprecated, see upgradelens.skills.compat)
+# --------------------------------------------------------------------------- #
+
+
+def ingest_skill_source(
+    session: Session,
+    skill: SkillPackage,
+    source: DocSource,
+    embedding: EmbeddingBackend | None = None,
+) -> DocSourceRecord:
+    """Ingest one Skill-declared source through the generic path.
+
+    Deprecated since S6: declare a source manifest instead. Kept so built-in
+    Skills keep working; snapshot problems are still reported as
+    :class:`SkillParseError` for callers that catch it.
+    """
+    spec = skill_source_to_spec(skill, source)
+    try:
+        return ingest_source_spec(
+            session, spec, base_dir=Path(skill.source_path), embedding=embedding
+        )
+    except DocSourceManifestError as exc:
+        raise SkillParseError(str(exc)) from exc
+
+
 def ingest_skill(
     session: Session, skill: SkillPackage, embedding: EmbeddingBackend | None = None
 ) -> list[DocSourceRecord]:
-    """Ingest every source of ``skill`` that has an offline fixture snapshot."""
+    """Ingest every source of ``skill`` that has an offline fixture snapshot.
+
+    Deprecated since S6 -- see :func:`ingest_corpus`.
+    """
     records: list[DocSourceRecord] = []
     for source in skill.sources:
         if not source.fixture_snapshot:

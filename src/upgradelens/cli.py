@@ -73,7 +73,7 @@ from upgradelens.capabilities import CapabilityRegistry, TransformationPack
 from upgradelens.config import Settings
 from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
 from upgradelens.db.repository import persist_code_report
-from upgradelens.docs import ingest_skill, retrieve
+from upgradelens.docs import DocSourceManifestError, ingest_corpus, ingest_skill, retrieve
 from upgradelens.domain import (
     DependencyAnalysisRequest,
     DependencyScanResult,
@@ -267,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest_docs = subparsers.add_parser(
         _INGEST_DOCS_COMMAND,
-        help="Ingest built-in documentation snapshots into the SQLite index (stage 4).",
+        help="Ingest documentation snapshots into the shared corpus (stage 4).",
     )
     ingest_docs.add_argument(
         "--db",
@@ -276,9 +276,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"SQLite database path (default: {DEFAULT_DB_PATH}).",
     )
     ingest_docs.add_argument(
+        "--manifest",
+        type=Path,
+        help=(
+            "Source manifest file, or a corpus directory scanned for manifest.yaml. "
+            "This is the supported way to add a dependency to the shared corpus."
+        ),
+    )
+    ingest_docs.add_argument(
         "--skill",
-        default="pydantic_v1_to_v2",
-        help="Skill Pack id whose documentation snapshots should be ingested.",
+        help="DEPRECATED: ingest a Skill Pack's own snapshots. Use --manifest instead.",
     )
 
     retrieve_docs = subparsers.add_parser(
@@ -1126,7 +1133,14 @@ def _fetch_docs_command(args: argparse.Namespace) -> int:
             for source in skill.sources:
                 if not source.url:
                     continue
-                rec = ingest_live_source(session, source, fetcher, refresh=args.refresh)
+                rec = ingest_live_source(
+                    session,
+                    source,
+                    fetcher,
+                    refresh=args.refresh,
+                    package_name=canonicalize_name(args.dependency),
+                    source_version_spec=skill.source_version_spec or "",
+                )
                 if rec is not None:
                     records.append(rec)
 
@@ -1310,6 +1324,48 @@ def _retrieval_baseline_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _ingest_docs_command(args: argparse.Namespace) -> int:
+    """Ingest documentation into the shared corpus (stage 4 / S6).
+
+    ``--manifest`` is the supported path: it needs no Skill Pack, so adding a
+    dependency to the corpus is a data change. ``--skill`` remains only to keep
+    the built-in Skills ingestable while they are migrated.
+    """
+    if (args.manifest is None) == (args.skill is None):
+        sys.stderr.write(
+            "upgradelens: ingest-docs requires exactly one of "
+            "--manifest (preferred) or --skill (deprecated)\n"
+        )
+        return EXIT_INVALID_REQUEST
+
+    skill = None
+    if args.skill is not None:
+        skill = builtin_registry().get(args.skill)
+        if skill is None:
+            sys.stderr.write(f"upgradelens: unknown skill '{args.skill}'\n")
+            return EXIT_INVALID_REQUEST
+        sys.stderr.write(
+            "upgradelens: --skill is deprecated; declare a source manifest and use --manifest\n"
+        )
+
+    engine = engine_for(args.db)
+    init_db(engine)
+    session = session_for(engine)()
+    try:
+        if skill is not None:
+            records = ingest_skill(session, skill)
+        else:
+            try:
+                records = ingest_corpus(session, args.manifest)
+            except DocSourceManifestError as exc:
+                sys.stderr.write(f"upgradelens: {exc}\n")
+                return EXIT_INVALID_REQUEST
+        _emit([rec.model_dump(mode="json") for rec in records])
+    finally:
+        session.close()
+    return EXIT_OK
+
+
 def _gate_command(args: argparse.Namespace) -> int:
     """Apply the CI gate to a verified report (ROADMAP 6.1).
 
@@ -1439,19 +1495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
 
     if args.command == _INGEST_DOCS_COMMAND:
-        skill = builtin_registry().get(args.skill)
-        if skill is None:
-            sys.stderr.write(f"upgradelens: unknown skill '{args.skill}'\n")
-            return EXIT_INVALID_REQUEST
-        engine = engine_for(args.db)
-        init_db(engine)
-        session = session_for(engine)()
-        try:
-            records = ingest_skill(session, skill)
-            _emit([rec.model_dump(mode="json") for rec in records])
-        finally:
-            session.close()
-        return EXIT_OK
+        return _ingest_docs_command(args)
 
     if args.command == _RETRIEVE_DOCS_COMMAND:
         engine = engine_for(args.db)

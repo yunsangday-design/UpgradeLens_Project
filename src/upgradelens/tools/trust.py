@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from upgradelens.domain.skill import TrustLevel
+from upgradelens.domain.doc_source_spec import TrustLevel
 
 #: Hosts we treat as first-party / canonical for the ecosystems we care about.
 OFFICIAL_HOSTS = frozenset(

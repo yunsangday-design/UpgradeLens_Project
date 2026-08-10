@@ -1,251 +1,244 @@
 # UpgradeLens
 
-Evidence-driven dependency upgrade pre-audit agent. This repository implements
-the full **stage 1-8** pipeline (declaration scan → AST code evidence → Skill
-Packs → RAG document retrieval → model-backed assessment → verification & eval
-→ live doc fetch → patch draft), an **MCP server**, a **Streamlit demo**, and a
-**PR-comment** command that posts the assessment back to GitHub.
+Evidence-driven dependency upgrade pre-audit agent. UpgradeLens analyses a
+repository for the impact of upgrading a Python dependency: it scans the
+codebase for usages of the dependency's API, retrieves relevant documentation,
+and produces a **verified** impact report with specific breaking-change risks,
+evidence citations, and migration recommendations.
 
-> Status: stages 1-8, MCP server, Streamlit demo, and `comment-pr` are
-> implemented. The model gateway defaults to `fake` (offline, deterministic);
-> switch to `live`/`replay` for real or recorded LLM runs.
+> **Status:** stages S0–S8 complete (518 tests, ruff/mypy clean). The model
+> gateway defaults to `fake` (offline, deterministic); switch to `live`/
+> `replay` for real or recorded LLM runs. The recommended entry point for new
+> code is [`DependencyUpgradeAgent`](#python-api).
 
-## Requirements
-
-- `uv` (https://docs.astral.sh/uv/)
-- Python 3.12 (managed by `uv`; the system Python is not used)
-
-## macOS / zsh
+## Quick start
 
 ```zsh
-# install uv (official installer)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-
-# run
+# Install
 uv sync --all-groups --locked
+
+# Offline demo (no API key, no network)
+uv run python demo/run_offline.py
+
+# Run an assessment
+uv run upgradelens assess \
+  --repo tests/fixtures/eval/alias_import/repo \
+  --dependency pydantic --target-version 2.0 \
+  --mode fake
+
+# Run the agent (plan-driven, with tool trace)
+uv run upgradelens agent "upgrade pydantic to 2.0" \
+  --repo tests/fixtures/eval/alias_import/repo \
+  --dependency pydantic --target-version 2.0 \
+  --mode fake
+
+# Architecture comparison (offline)
+uv run upgradelens eval-compare
+uv run upgradelens eval-ablate
+
+# Quality gates
 uv run pytest
-uv run pytest --cov=upgradelens --cov-report=term-missing
-uv run ruff format --check .
 uv run ruff check .
 uv run mypy src
 ```
 
-## Windows / PowerShell
+## Python API
 
-```powershell
-# install uv (official installer)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+The `DependencyUpgradeAgent` class is the single entry point for programmatic
+use — CLI, MCP and demo all drive the same kernel:
 
-# run
-uv sync --all-groups --locked
-uv run pytest
-uv run pytest --cov=upgradelens --cov-report=term-missing
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy src
+```python
+from upgradelens import DependencyUpgradeAgent
+
+agent = DependencyUpgradeAgent(mode="fake")
+result = agent.run("upgrade pydantic to 2.0", repo="./repo", dependency="pydantic")
+
+if result.verified:
+    print(result.verified.conclusion)       # impacted / no_impact / evidence_insufficient
+    for risk in result.verified.verified_risks:
+        print(f"  [{risk.severity.value}] {risk.title}")
+
+# Run the deterministic pipeline directly (baseline)
+outcome = agent.run_pipeline(repo="./repo", dependency="pydantic", target_version="2.0")
 ```
 
-> **Compatibility note:** the `windows-latest` GitHub Actions runner runs the
-> same `uv sync --all-groups --locked` and the same quality commands as macOS.
-> Passing Windows CI means the build is continuously checked on Windows. It is
-> **not** the same as the native Windows manual Gate performed after stage 4.
+**Modes:**
 
-## CLI (stage 1)
+| Mode | Network | API Key | Use case |
+|---|---|---|---|
+| `fake` | no | no | CI, demos, unit tests (deterministic) |
+| `replay` | no | no | replay recorded live responses offline |
+| `live` | yes | yes | real LLM assessment |
 
-```zsh
-uv run upgradelens scan-dependency \
-  --repo tests/fixtures/pydantic_validator/repo \
-  --dependency pydantic \
-  --target-version 2.0.0
-```
+## CLI
+
+| Command | What it does |
+|---|---|
+| `scan-dependency` | Parse manifests and resolve the declared version. |
+| `assess` | Run the full pipeline: scan → code evidence → RAG → model → verify → patch draft. |
+| `agent` | Natural-language entry: route → plan → agent loop → run artifacts. |
+| `comment-pr` | Run `assess` and post the report as a GitHub PR comment. |
+| `eval` | Offline hybrid evaluation (baseline suite). |
+| `eval-compare` | S8 architecture comparison: direct LLM vs pipeline vs agent. |
+| `eval-ablate` | S8 ablation: isolate verifier / supplement / agent value. |
+| `eval-replay` | S8 comparison against recorded live model responses. |
+| `ingest-docs` | Ingest documentation into the SQLite evidence store. |
+| `retrieve-docs` | Query the doc store (FTS5 + sqlite-vec). |
+| `mcp` | Start the MCP server (stdio transport). |
 
 ### Source version inference
 
-The `assess`, `comment-pr`, and `agent` commands run the same dependency scan
-**first** and infer the *from-version* from the manifest rather than guessing:
+`assess`, `comment-pr`, and `agent` run the same dependency scan **first** and
+infer the *from-version* from the manifest:
 
-- **declared** — an exact pin (e.g. `pydantic==1.10.13`) is used verbatim;
-- **inferred** — a range (e.g. `pydantic>=1.10`) is reported as a range and is
-  never upgraded into a fabricated exact version;
-- **conflict** — conflicting declarations are flagged instead of guessed;
-- **unknown** — when nothing is declared, the assessment is explicitly marked
-  *not anchored to a specific from-version* and degrades honestly.
+- **declared** — an exact pin (`pydantic==1.10.13`) is used verbatim;
+- **inferred** — a range (`pydantic>=1.10`) is reported as a range;
+- **conflict** — conflicting declarations are flagged;
+- **unknown** — when nothing is declared, the assessment degrades honestly.
 
-The resolved from-version and its provenance (`version_source`) flow into the
-RAG query, the planner/impact prompts, and the rendered report. Pass
-`--source-version` to override the inferred value (treated as `user`-provided).
+Pass `--source-version` to override (treated as `user`-provided).
 
-### Posting the assessment to a GitHub PR
+### Run artifacts
 
-`comment-pr` runs the same assessment as `assess` and posts the rendered report
-as a comment on a pull request or issue. It reuses the project's SSRF-guarded,
-traced HTTP path, so posting stays inside the same security model (no ad-hoc
-HTTP, token never logged).
+`upgradelens agent` writes a self-contained directory under `runs/<run_id>/`:
+
+```
+runs/<run_id>/
+  intent.json    # routed intent (repo/dependency/version)
+  plan.json      # execution plan (steps + statuses)
+  trace.jsonl    # one JSON object per tool call
+  report.json    # verified assessment (machine-readable)
+  report.md      # verified assessment (human-readable)
+  RUN.md         # run summary
+```
+
+## Architecture
+
+```
+                    ┌──────────────────────────────────────────┐
+                    │          DependencyUpgradeAgent           │
+                    │         (.run(goal) / .run_pipeline())    │
+                    └──────────────────┬───────────────────────┘
+                                       │
+           ┌───────────┬───────────────┼───────────────┬──────────┐
+           ▼           ▼               ▼               ▼          ▼
+        CLI agent    CLI assess     MCP assess     Streamlit    demo script
+                    / comment-pr                   demo         run_offline.py
+                                       │
+                    ┌──────────────────┴───────────────────────┐
+                    │              Agent Loop                   │
+                    │  route → plan → collect → verify →       │
+                    │  supplement → re-verify → report          │
+                    └──────────────────┬───────────────────────┘
+                                       │
+                    ┌──────────────────┴───────────────────────┐
+                    │           Pipeline (baseline)            │
+                    │  scan_dependency → scan_code →            │
+                    │  retrieve_for_package → analyse → verify  │
+                    └──────────────────────────────────────────┘
+```
+
+### One pipeline, several front doors
+
+`assess`, `comment-pr`, the MCP `assess` tool, the Streamlit demo and the agent
+all share the same evidence-collection and verification core. The agent loop
+(`run_agent`) wraps the pipeline with plan-driven collection, coverage
+assessment (S4), supplementary retrieval, and verifier feedback (S5). When the
+agent cannot produce a report it falls back to the deterministic pipeline.
+
+### Evidence contract
+
+Every verified risk must cite real evidence:
+
+- **code evidence** — AST-scanned usage of the dependency's API (symbol, path, line);
+- **doc evidence** — ingested documentation chunks (retrieved via FTS5 + sqlite-vec).
+
+Risks with no evidence are **degraded**, not dropped silently. Risks citing
+non-existent evidence are **quarantined** by the verifier. This is the core
+no-hallucination guarantee, enforced by `tests/unit/test_s8_ci_gate.py`.
+
+### Evaluation (S8)
+
+The offline comparison harness runs three architectures over 18 cases covering
+pydantic, sqlalchemy and fastapi:
+
+| System | Retrieval | Verification | Agent loop | Supplement |
+|---|---|---|---|---|
+| `direct_llm` | no | no | no | no |
+| `fixed_pipeline` | yes | yes | no | no |
+| `agent` | yes | yes | yes | yes |
+| `agent_no_supplement` | yes | yes | yes | no (ablation) |
+
+Key metric: **verifier detection rate** — the verifier catches 100% of
+fabricated claims in `fixed_pipeline` and `agent`, while `direct_llm` trusts
+them (0%). See `uv run upgradelens eval-compare` for the full table.
+
+## Streamlit demo
 
 ```zsh
-# Offline-safe preview (renders and prints, does not post):
-uv run upgradelens comment-pr \
-  --repo . \
-  --dependency pydantic --target-version 2.0 \
-  --slug owner/repo --pr 123 \
-  --mode fake --dry-run
-
-# Real post (token from --token or the GITHUB_TOKEN env var):
-uv run upgradelens comment-pr \
-  --repo . \
-  --dependency pydantic --target-version 2.0 \
-  --slug owner/repo --pr 123 \
-  --mode live --token "$GITHUB_TOKEN"
+uv run --extra demo streamlit run demo/app.py
 ```
 
-Options:
+Tabs: Overview, Agent Plan (step statuses + cost), Risk Details, Code Evidence,
+Report Markdown, Patch Draft. Default is `fake` mode (offline). Check "Agent
+模式" to see the plan-driven loop with tool trace and token cost.
 
-| Option | Required | Meaning |
-|---|---|---|
-| `--repo` | yes | Repository root to scan. |
-| `--dependency` | yes | Dependency name, any casing (`PyDantic` works). |
-| `--target-version` | yes | Target PEP 440 version. |
-| `--manifest` | no | Scan a single manifest instead of auto-discovery. |
+## MCP server
 
-Exit codes: `0` scan completed (any status, including `not_found`), `1` the
-request was rejected, `2` argparse usage error.
-
-### Output contract
-
-```json
-{
-  "schema_version": "1.0",
-  "requested_name": "pydantic",
-  "dependency_name": "pydantic",
-  "status": "resolved",
-  "current_version": "1.10.13",
-  "current_specifier": "==1.10.13",
-  "target_version": "2.0.0",
-  "transition": "upgrade",
-  "cross_major": true,
-  "declarations": [
-    {
-      "manifest_type": "requirements_txt",
-      "path": "requirements.txt",
-      "location": "line:2",
-      "raw": "pydantic==1.10.13",
-      "raw_name": "pydantic",
-      "specifier": "==1.10.13",
-      "extras": [],
-      "marker": null
-    }
-  ],
-  "warnings": [],
-  "errors": []
-}
+```zsh
+uv run upgradelens-mcp
 ```
 
-`status` is the confidence of the answer:
-
-| Status | Meaning |
-|---|---|
-| `resolved` | A single unambiguous `==` pin; `current_version` is trustworthy. |
-| `ambiguous` | Declared as a range or with conflicting pins. `current_version`, `transition` and `cross_major` are deliberately left empty — a manifest states which versions are *allowed*, not which one is *installed*. |
-| `not_found` | No supported manifest, or the dependency is not declared in one. |
-| `invalid` | The request was rejected, or every manifest was unreadable. |
-| `unsupported` | An explicitly requested manifest is not a supported format. |
-
-`path` is always a POSIX path relative to `--repo`, so results are identical on
-macOS and Windows. Machine-absolute paths never appear in the output, including
-in error messages.
-
-`location` uses two formats on purpose: real 1-based line numbers
-(`line:2`) for `requirements.txt`, and array indices
-(`[project].dependencies[1]`) for `pyproject.toml`, because `tomllib` does not
-expose the source line of an array element. Fabricating a line number there
-would be undetectable downstream.
-
-### Stage 1 scope
-
-Only `pyproject.toml` (`[project].dependencies`, PEP 621) and `requirements.txt`
-in the repository root are parsed. Poetry, Pipfile, `setup.py` and dynamic
-dependencies are reported as structured issues rather than silently skipped.
-The target repository is never imported, installed or executed.
+Exposes 11 tools: `scan_dependency`, `scan_code`, `assess`, `ingest_docs`,
+`retrieve_docs`, `fetch_docs`, `list_skills`, `resolve_skill`,
+`list_capabilities`, `resolve_capability`, `run_eval`.
 
 ## Project layout
 
 ```text
 src/upgradelens/
-  cli.py               # assess / scan-dependency / fetch-docs / comment-pr / eval
-  config.py            # pydantic-settings (model mode, keys, budgets)
-  platform.py          # cross-platform path/text helpers
-  observability/       # structured logging
-  domain/              # stage 1-3 domain models (dependency, code, doc, skill)
-  analyzers/           # manifest parsers, version comparison, AST code scan
-  skills/              # Skill Pack loader + built-in registry
-  docs/                # doc cleaning, chunking, ingest, keyword retrieval
-  db/                  # SQLite evidence store (SQLAlchemy models + repository)
-  llm/
-    gateway.py         # fake / replay / live model gateway
-    context.py         # evidence context builder + token budget
-    prompts.py         # externalised prompt templates + evidence contract
-  graph/               # the model loop (plan -> analyze -> report)
-  pipeline.py          # the one assessment sequence every front door runs
-  verify/              # stage 6 verifier, risk rules, recommender
-  patch/               # stage 6 draft patch generator
-  report/              # Markdown / JSON rendering
-  tools/
-    registry.py        # uniform Tool abstraction over every capability
-    fetcher.py         # SSRF-guarded HTTP fetcher + cache
-    github.py          # PR comment client
-    live_repo.py       # shallow clone of public GitHub repos
-    trace.py           # tool call trace / metrics
-  eval/                # offline evaluation harness and scorers
-  mcp/                 # MCP server exposing the same tools
+  __init__.py            # public API: DependencyUpgradeAgent, AgentResult
+  cli.py                 # all CLI commands
+  config.py              # pydantic-settings
+  agent/
+    api.py               # DependencyUpgradeAgent (unified entry point)
+    router.py            # NL intent routing
+    planner.py           # plan construction
+    loop.py              # plan-driven agent loop (S3-S5)
+    plan.py              # AgentPlan / AgentPlanStep models
+    run_store.py         # run artifact writer
+    coverage.py          # evidence coverage assessment (S4)
+  pipeline.py            # the deterministic assessment sequence
+  domain/                # domain models (dependency, code, doc, skill)
+  analyzers/             # manifest parsers, AST code scan
+  skills/                # Skill Pack loader + built-in registry
+  docs/                  # doc cleaning, chunking, ingest, FTS5 + sqlite-vec
+  db/                    # SQLite evidence store
+  llm/                   # fake/replay/live gateway, prompts, query rewrite
+  verify/                # verifier, risk rules, remediation
+  patch/                 # patch draft generator
+  plan/                  # UpgradePlan export + executor (S7)
+  report/                # Markdown / JSON rendering
+  eval/                  # offline evaluation harness, S8 comparison/ablation
+  tools/                 # ToolRegistry, fetcher, GitHub client, trace
+  mcp/                   # MCP server
+demo/
+  app.py                 # Streamlit UI
+  pipeline.py            # headless assess + agent demo functions
+  run_offline.py         # CLI demo script (offline, no deps)
 tests/
-  unit/                # domain, parsers, tools, prompts, verifier, gateway
-  cli/                 # CLI behaviour and exit codes
-  fixtures/            # offline fixtures (request + expected JSON) + LLM replays
-  test_front_door_parity.py  # CLI == MCP == demo, so they cannot drift again
+  unit/                  # 518 tests
+  fixtures/eval/         # 18 eval cases (pydantic/sqlalchemy/fastapi)
 ```
 
-### One pipeline, several front doors
+## Limitations
 
-`assess`, `comment-pr`, the MCP `assess` tool and the Streamlit demo all run the
-same sequence, and none of them own a copy of it:
-
-```python
-from upgradelens.pipeline import AssessmentRequest, collect_evidence, analyse
-from upgradelens.tools.registry import ToolContext
-
-request = AssessmentRequest(repo=".", dependency="pydantic", target_version="2.0")
-
-with ToolContext() as ctx:  # owns temp checkouts and DB sessions
-    collection = collect_evidence(request, ctx)  # scan, skill, docs, bundle
-    outcome = analyse(collection, gateway, ctx)  # model loop, then verify
-    outcome.verified.conclusion
-```
-
-The two phases are separate so a caller can inspect -- or add to -- the evidence
-before the model sees it, which is how the demo injects its illustrative
-citations. The context must stay open through `analyse`: verification re-reads
-the analysed tree to confirm every cited location is real.
-
-### The Tool abstraction
-
-Every capability is also reachable through one uniform interface, which is what
-the MCP server and any future agent loop build on:
-
-```python
-from upgradelens.tools.registry import ToolContext, default_registry
-
-registry = default_registry()
-registry.names()  # clone_repo, resolve_skill, retrieve_docs, scan_code, ...
-registry.specs()  # OpenAI/MCP-style function definitions
-
-with ToolContext() as ctx:
-    result = registry.run("scan_code", {"repo": ".", "dependency": "pydantic"}, ctx)
-    ctx.trace.events  # one entry per call, with status and latency
-```
-
-Arguments are validated against a pydantic model before anything runs, results
-are always JSON-safe, and failures surface as `ToolError` subclasses
-(`ToolInputError` for bad arguments, `ToolExecutionError` for handler faults).
-
-See `升级透镜第一步实施计划_环境与依赖解析.md` for the full plan and acceptance gates.
+- Only `pyproject.toml` and `requirements.txt` manifests are parsed;
+- Only Python is analysed (no multi-language AST);
+- Only `pydantic` and `sqlalchemy` have built-in Skill Packs; other dependencies
+  use the generic skill (code-evidence only, risks degrade without docs);
+- The target repository is never imported, installed or executed;
+- `live` mode requires an OpenAI-compatible API (tested with Alibaba Cloud
+  qwen-plus/qwen-max/qwen-flash);
+- No automatic code application — patch drafts and UpgradePlans are
+  human-reviewed before execution.

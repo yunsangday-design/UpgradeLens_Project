@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from demo.pipeline import run_assess
+from demo.pipeline import run_agent_assess, run_assess
 from upgradelens.report import render_markdown
 
 
@@ -49,6 +49,37 @@ def _render_overview(result: dict[str, object]) -> None:
         with st.expander("评估降级说明", expanded=True):
             for note in degradations:
                 st.warning(note)
+
+
+def _render_plan(result: dict[str, object]) -> None:
+    """S9: show the agent's execution plan with step statuses."""
+    plan = result.get("plan")
+    if plan is None:
+        st.info("本次运行未使用 Agent 模式，无执行计划。请在侧边栏勾选「Agent 模式」。")
+        return
+    steps = getattr(plan, "steps", [])
+    if not steps:
+        st.info("执行计划为空。")
+        return
+    for step in steps:
+        status_icon = {
+            "succeeded": "[OK]",
+            "failed": "[FAIL]",
+            "skipped": "[SKIP]",
+            "pending": "[WAIT]",
+            "running": "[RUN]",
+        }.get(step.status, f"[{step.status}]")
+        st.write(f"  {status_icon} #{step.seq} **{step.tool}** — {step.reason}")
+        if step.observation:
+            st.caption(f"    结果：{step.observation}")
+
+    total_tokens = result.get("total_tokens", 0)
+    call_count = result.get("call_count", 0)
+    if total_tokens or call_count:
+        st.divider()
+        cols = st.columns(2)
+        cols[0].metric("模型调用次数", str(call_count))
+        cols[1].metric("总 Token", str(total_tokens))
 
 
 def _render_risks(result: dict[str, object]) -> None:
@@ -146,6 +177,7 @@ def main() -> None:
         api_key = st.text_input("API Key（仅 live）", type="password", value="")
         base_url = st.text_input("Base URL（仅 live）", value="")
         allow_quality_patch = st.checkbox("允许 quality patch（草稿可含需复核项）", value=True)
+        use_agent = st.checkbox("Agent 模式（展示计划/工具调用/成本）", value=False)
         run = st.button("运行评估", type="primary")
 
     if not run:
@@ -157,26 +189,41 @@ def main() -> None:
 
     try:
         with st.spinner("评估中…"):
-            result = run_assess(
-                repo=repo,
-                dependency=dependency,
-                target_version=target_version,
-                mode=mode,
-                model=model,
-                api_key=api_key,
-                base_url=base_url,
-                allow_quality_patch=allow_quality_patch,
-                replay_dir=replay_dir if mode == "replay" else None,
-            )
+            if use_agent:
+                result = run_agent_assess(
+                    repo=repo,
+                    dependency=dependency,
+                    target_version=target_version,
+                    mode=mode,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    allow_quality_patch=allow_quality_patch,
+                    replay_dir=replay_dir if mode == "replay" else None,
+                )
+            else:
+                result = run_assess(
+                    repo=repo,
+                    dependency=dependency,
+                    target_version=target_version,
+                    mode=mode,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    allow_quality_patch=allow_quality_patch,
+                    replay_dir=replay_dir if mode == "replay" else None,
+                )
     except Exception as exc:  # surface any pipeline error in the UI
         st.exception(exc)
         return
 
-    tab_overview, tab_risks, tab_evidence, tab_report, tab_patch = st.tabs(
-        ["概览", "风险明细", "代码证据", "报告 Markdown", "Patch 草稿"]
+    tab_overview, tab_plan, tab_risks, tab_evidence, tab_report, tab_patch = st.tabs(
+        ["概览", "Agent 计划", "风险明细", "代码证据", "报告 Markdown", "Patch 草稿"]
     )
     with tab_overview:
         _render_overview(result)
+    with tab_plan:
+        _render_plan(result)
     with tab_risks:
         _render_risks(result)
     with tab_evidence:

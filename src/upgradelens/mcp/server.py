@@ -49,6 +49,7 @@ from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.patch import generate_patch_draft
 from upgradelens.pipeline import AssessmentOutcome, AssessmentRequest, run_pipeline
+from upgradelens.plan import PlanMode, build_upgrade_plan, export_plan
 from upgradelens.skills import SkillRegistry, builtin_registry
 from upgradelens.tools.registry import ToolContext, resolve_skill_package
 
@@ -292,6 +293,9 @@ def assess(
     budget_tokens: int | None = None,
     allow_quality_patch: bool = False,
     emit_patch: str | None = None,
+    plan_only: bool = False,
+    plan_path: str | None = None,
+    plan_mode: str = "patch_draft",
     record_replay: str | None = None,
     ref: str | None = None,
 ) -> dict[str, Any]:
@@ -316,6 +320,9 @@ def assess(
         budget_tokens: Maximum total tokens for the assessment.
         allow_quality_patch: Also draft patches whose rules require a quality model.
         emit_patch: Write a generated Unified Diff patch draft to this path.
+        plan_only: Also build a stable UpgradePlan (S7) and attach it to the result.
+        plan_path: Write the UpgradePlan JSON to this path (implies ``plan_only``).
+        plan_mode: Plan execution mode (phase 1: patch_draft | sandbox_apply).
         record_replay: Record/reply directory for live/replay modes.
         ref: Git branch/tag to clone when ``repo`` is a GitHub URL.
     """
@@ -336,6 +343,13 @@ def assess(
         result: dict[str, Any] = outcome.verified.model_dump(mode="json")
         if emit_patch is not None:
             result.update(_draft_patch(outcome, Path(emit_patch), allow_quality_patch))
+        if plan_only or plan_path is not None:
+            plan = build_upgrade_plan(
+                outcome, repo_root=outcome.repo_path, mode=PlanMode(plan_mode)
+            )
+            result["upgrade_plan"] = plan.model_dump(mode="json")
+            if plan_path is not None:
+                export_plan(plan, Path(plan_path))
     return result
 
 

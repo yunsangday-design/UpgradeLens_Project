@@ -105,6 +105,7 @@ from upgradelens.pipeline import (
     collect_evidence,
     run_pipeline,
 )
+from upgradelens.plan import PlanMode, build_upgrade_plan, export_plan
 from upgradelens.report import render_markdown
 from upgradelens.skills import SkillParseError, SkillRegistry, builtin_registry
 from upgradelens.tools.cache import DocCache
@@ -399,6 +400,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Write a generated Unified Diff patch draft to this path (stage 8).",
+    )
+    assess.add_argument(
+        "--plan-only",
+        type=Path,
+        default=None,
+        help="Write a stable UpgradePlan JSON (S7) to this path and exit.",
+    )
+    assess.add_argument(
+        "--plan-mode",
+        choices=[m.value for m in PlanMode],
+        default=PlanMode.PATCH_DRAFT.value,
+        help="Plan execution mode for --plan-only (phase 1: patch_draft | sandbox_apply).",
     )
     assess.add_argument(
         "--allow-quality-patch",
@@ -841,6 +854,18 @@ def _assess_command(args: argparse.Namespace) -> int:
 
         if args.emit_patch is not None:
             _emit_patch_draft(args, result.verified, result.repo_path, result.skill, result.bundle)
+
+        if args.plan_only is not None:
+            plan = build_upgrade_plan(
+                result,
+                repo_root=result.repo_path,
+                mode=PlanMode(args.plan_mode),
+            )
+            dest = export_plan(plan, args.plan_only)
+            sys.stderr.write(
+                f"upgradelens: wrote upgrade plan to {dest} "
+                f"({len(plan.steps)} step(s), mode={plan.mode.value})\n"
+            )
     return EXIT_OK
 
 

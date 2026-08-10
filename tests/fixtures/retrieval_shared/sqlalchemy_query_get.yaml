@@ -1,0 +1,8 @@
+case_id: sqlalchemy_query_get_shared
+package: sqlalchemy
+source_version: "1.4.52"
+target_version: "2.0.29"
+user_intent: "Query.get() is legacy in SQLAlchemy 2.0"
+code_symbols: [get, Session]
+expected_chunks:
+  - "Query.get() → Session.get()"

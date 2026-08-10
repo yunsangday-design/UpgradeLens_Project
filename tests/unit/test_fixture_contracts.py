@@ -32,7 +32,10 @@ REPLAY_CONTAINERS = {"llm_replay"}
 # Retrieval evaluation cases (ROADMAP Step 4, B0) live under `retrieval/`: each
 # file is a labelled `(pattern, code_symbols) -> expected_chunks` case consumed by
 # `upgradelens eval retrieval-baseline`, not a stage 1 scan contract.
-RETRIEVAL_CONTAINERS = {"retrieval"}
+# `retrieval_shared/` is its S6 counterpart (shared corpus, no curated queries),
+# and `corpus/` holds the source manifests plus snapshots those cases retrieve
+# from -- documentation data, not repositories to scan.
+RETRIEVAL_CONTAINERS = {"retrieval", "retrieval_shared", "corpus"}
 NON_STAGE1 = STAGE2_CODE_FIXTURES | EVAL_CONTAINERS | REPLAY_CONTAINERS | RETRIEVAL_CONTAINERS
 STAGE1_FIXTURE_DIRS = [p for p in FIXTURE_DIRS if p.name not in NON_STAGE1]
 STAGE1_FIXTURE_IDS = [p.name for p in STAGE1_FIXTURE_DIRS]
@@ -44,6 +47,7 @@ def _fixture_ids() -> list[str]:
 
 def test_fixture_set_is_complete() -> None:
     assert _fixture_ids() == [
+        "corpus",
         "eval",
         "llm_replay",
         "pydantic_config",
@@ -52,6 +56,7 @@ def test_fixture_set_is_complete() -> None:
         "pydantic_usage",
         "pydantic_validator",
         "retrieval",
+        "retrieval_shared",
     ]
 
 

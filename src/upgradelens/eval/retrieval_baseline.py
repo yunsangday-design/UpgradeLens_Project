@@ -1,4 +1,15 @@
-"""Retrieval evaluation baseline (ROADMAP Step 4, B0).
+"""Retrieval evaluation baselines (ROADMAP Step 4, B0 and S6).
+
+Two paths are measured here, on purpose:
+
+* the **curated baseline** (B0) -- the historic Skill-driven path, kept as a
+  regression guard;
+* the **shared-corpus baseline** (:func:`run_shared_corpus_baseline`, S6) --
+  what the product actually does now: retrieve from the corpus using only the
+  package, the upgrade window and the scanned code symbols, with no per-package
+  query lists. It is the one that tells us whether a dependency *without* a
+  Skill is served as well as one with a Skill, and, via
+  :func:`compare_reports`, whether hybrid retrieval earns its default.
 
 Measure the *current* curated FTS5 retrieval path
 (``skill.sources`` × ``pattern.retrieval_queries`` with a ``pattern.match`` boost)
@@ -33,7 +44,7 @@ from sqlalchemy.orm import Session
 from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.db.vector import EmbeddingBackend, SqliteVecIndex, VectorIndexUnavailable
 from upgradelens.docs import embeddings as _embeddings
-from upgradelens.docs.ingest import ingest_skill
+from upgradelens.docs.ingest import ingest_corpus, ingest_skill
 from upgradelens.docs.retrieval import retrieve, retrieve_for_package
 from upgradelens.domain.doc_evidence import RetrievalRun
 from upgradelens.domain.skill import SkillPackage, UsagePattern
@@ -44,13 +55,19 @@ _KS = (1, 3, 5, 10)
 
 
 class RetrievalCase(BaseModel):
-    """One labelled retrieval query: which chunk *should* the curated path surface."""
+    """One labelled retrieval query: which chunk *should* retrieval surface.
+
+    ``pattern_id`` is only meaningful for the legacy curated baseline. Shared
+    corpus cases leave it empty, because a package in the corpus need not have
+    a Skill Pack at all (S6).
+    """
 
     case_id: str
     package: str
     source_version: str
     target_version: str
-    pattern_id: str
+    pattern_id: str = ""
+    user_intent: str = ""
     code_symbols: list[str] = Field(default_factory=list)
     #: Leaf chunk titles (``heading_path[-1]``) that must be recalled.
     expected_chunks: list[str]
@@ -146,6 +163,21 @@ def _evaluate_ranking(
     return leaf_ranking[:top_k], ranks, best, hit, mrr, recall_at_k, top_k_hit
 
 
+def _summarise(results: list[RetrievalCaseResult]) -> dict[str, Any]:
+    """Average MRR / recall@k / hit-rate over evaluated cases."""
+    n = len(results)
+    return {
+        "n_cases": n,
+        "avg_mrr": (sum(r.mrr for r in results) / n) if n else 0.0,
+        "avg_recall_at_k": {
+            str(k): (sum(r.recall_at_k[str(k)] for r in results) / n) if n else 0.0 for k in _KS
+        },
+        "avg_top_k_hit_rate": {
+            str(k): (sum(1 for r in results if r.top_k_hit[str(k)]) / n) if n else 0.0 for k in _KS
+        },
+    }
+
+
 def ingest_skills_for_baseline(session: Session, skills: list[SkillPackage]) -> int:
     """Ingest every built-in skill that ships an offline fixture; return source count."""
     total = 0
@@ -194,23 +226,12 @@ def run_retrieval_baseline(
             )
         )
 
-    n = len(results)
-    summary: dict[str, Any] = {
-        "n_cases": n,
-        "avg_mrr": (sum(r.mrr for r in results) / n) if n else 0.0,
-        "avg_recall_at_k": {
-            str(k): (sum(r.recall_at_k[str(k)] for r in results) / n) if n else 0.0 for k in _KS
-        },
-        "avg_top_k_hit_rate": {
-            str(k): (sum(1 for r in results if r.top_k_hit[str(k)]) / n) if n else 0.0 for k in _KS
-        },
-    }
     return RetrievalBaselineReport(
         generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
         top_k=top_k,
-        n_cases=n,
+        n_cases=len(results),
         cases=results,
-        summary=summary,
+        summary=_summarise(results),
     )
 
 
@@ -303,29 +324,161 @@ def run_hybrid_baseline(
             )
         )
 
-    n = len(results)
-    summary: dict[str, Any] = {
-        "n_cases": n,
-        "avg_mrr": (sum(r.mrr for r in results) / n) if n else 0.0,
-        "avg_recall_at_k": {
-            str(k): (sum(r.recall_at_k[str(k)] for r in results) / n) if n else 0.0 for k in _KS
-        },
-        "avg_top_k_hit_rate": {
-            str(k): (sum(1 for r in results if r.top_k_hit[str(k)]) / n) if n else 0.0 for k in _KS
-        },
-    }
     return RetrievalBaselineReport(
         generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
         top_k=top_k,
-        n_cases=n,
+        n_cases=len(results),
         cases=results,
-        summary=summary,
+        summary=_summarise(results),
         notes=(
             "Hybrid FTS5 + sqlite-vec retrieval baseline (RRF fusion). "
             "Vector index used only when an embedding backend is configured; "
             "otherwise identical to the FTS5-only baseline."
         ),
     )
+
+
+def ingest_corpus_for_baseline(
+    session: Session, corpus_root: Path, *, embedding: EmbeddingBackend | None = None
+) -> int:
+    """Ingest every source manifest under ``corpus_root``; return source count.
+
+    The Skill-free counterpart of :func:`ingest_skills_for_baseline`: the
+    evaluation corpus is data on disk, so measuring a new dependency needs a
+    manifest, not a Skill Pack.
+    """
+    return len(ingest_corpus(session, corpus_root, embedding=embedding))
+
+
+def run_shared_corpus_baseline(
+    session: Session,
+    cases: list[RetrievalCase],
+    *,
+    top_k: int = 5,
+    embedding: EmbeddingBackend | None = None,
+) -> RetrievalBaselineReport:
+    """Evaluate the shared-corpus retrieval path (S6).
+
+    Deliberately different from :func:`run_hybrid_baseline` in one way that
+    matters: **no curated queries are passed**. Retrieval sees only what the
+    product sees for an arbitrary dependency -- the package, the upgrade
+    window, the user's intent and the symbols found in the code. That makes the
+    numbers comparable across packages that do and do not have a Skill, which
+    is the whole point of retiring the per-package query lists.
+
+    Works with or without ``embedding``: with one the vector index is rebuilt
+    and the path is hybrid FTS5+sqlite-vec, without one it is FTS5-only, so the
+    two can be diffed with :func:`compare_reports`.
+    """
+    if embedding is not None and embedding.available():
+        try:
+            SqliteVecIndex(session, embedding.dimension).rebuild(session, embedding)
+        except VectorIndexUnavailable:
+            embedding = None  # degrade to FTS5-only rather than half-index
+
+    results: list[RetrievalCaseResult] = []
+    for case in cases:
+        runs = retrieve_for_package(
+            session,
+            case.package,
+            case.source_version,
+            case.target_version,
+            case.user_intent,
+            case.code_symbols,
+            curated_queries=[],
+            top_k=top_k,
+            embedding=embedding,
+        )
+        leaves = _flatten_runs_leaves(runs)
+        top_chunks, ranks, best, hit, mrr, recall_at_k, top_k_hit = _evaluate_ranking(
+            [[leaf] for leaf in leaves], case.expected_chunks, top_k=top_k
+        )
+        results.append(
+            RetrievalCaseResult(
+                case_id=case.case_id,
+                package=case.package,
+                pattern_id=case.pattern_id,
+                expected_chunks=case.expected_chunks,
+                top_chunks=top_chunks,
+                ranks=ranks,
+                best_rank=best,
+                hit=hit,
+                mrr=mrr,
+                recall_at_k=recall_at_k,
+                top_k_hit=top_k_hit,
+            )
+        )
+
+    mode = "hybrid FTS5 + sqlite-vec" if embedding is not None else "FTS5-only"
+    return RetrievalBaselineReport(
+        generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        top_k=top_k,
+        n_cases=len(results),
+        cases=results,
+        summary=_summarise(results),
+        notes=(
+            f"Shared-corpus retrieval baseline ({mode}), no curated queries: "
+            "package + upgrade window + code symbols only."
+        ),
+    )
+
+
+def compare_reports(
+    fts_report: RetrievalBaselineReport, hybrid_report: RetrievalBaselineReport
+) -> dict[str, Any]:
+    """Diff two baselines so "should hybrid be the default?" is answered by data.
+
+    Reports the per-metric delta plus the cases each path wins, because an
+    unchanged average can still hide a path that trades one package's recall
+    for another's.
+    """
+    fts_cases = {c.case_id: c for c in fts_report.cases}
+    hybrid_cases = {c.case_id: c for c in hybrid_report.cases}
+    shared = sorted(set(fts_cases) & set(hybrid_cases))
+    return {
+        "n_compared": len(shared),
+        "mrr": {
+            "fts": fts_report.summary["avg_mrr"],
+            "hybrid": hybrid_report.summary["avg_mrr"],
+            "delta": hybrid_report.summary["avg_mrr"] - fts_report.summary["avg_mrr"],
+        },
+        "recall_at_k_delta": {
+            str(k): hybrid_report.summary["avg_recall_at_k"][str(k)]
+            - fts_report.summary["avg_recall_at_k"][str(k)]
+            for k in _KS
+        },
+        "hybrid_wins": [c for c in shared if _rank_better(hybrid_cases[c], fts_cases[c])],
+        "fts_wins": [c for c in shared if _rank_better(fts_cases[c], hybrid_cases[c])],
+    }
+
+
+def _rank_better(left: RetrievalCaseResult, right: RetrievalCaseResult) -> bool:
+    """True when ``left`` recalled the expected chunk at a strictly better rank."""
+    if left.best_rank is None:
+        return False
+    return right.best_rank is None or left.best_rank < right.best_rank
+
+
+def render_comparison_markdown(comparison: dict[str, Any]) -> str:
+    """Render a FTS5-vs-hybrid delta so the default can be argued from numbers."""
+    lines = [
+        "# Retrieval comparison: FTS5-only vs hybrid",
+        "",
+        f"- cases compared: **{comparison['n_compared']}**",
+        f"- MRR: FTS5 **{comparison['mrr']['fts']:.3f}** -> "
+        f"hybrid **{comparison['mrr']['hybrid']:.3f}** "
+        f"(delta {comparison['mrr']['delta']:+.3f})",
+        "",
+    ]
+    for k in _KS:
+        lines.append(f"- recall@{k} delta: **{comparison['recall_at_k_delta'][str(k)]:+.3f}**")
+    lines += [
+        "",
+        f"- hybrid wins: {', '.join(comparison['hybrid_wins']) or '—'}",
+        f"- FTS5 wins: {', '.join(comparison['fts_wins']) or '—'}",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def render_retrieval_baseline_markdown(report: RetrievalBaselineReport) -> str:
@@ -375,9 +528,20 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eva
     import sys
     from pathlib import Path
 
-    parser = argparse.ArgumentParser(description="UpgradeLens B0 retrieval baseline")
+    parser = argparse.ArgumentParser(description="UpgradeLens retrieval baseline")
     parser.add_argument("--db", required=True)
     parser.add_argument("--cases-dir", required=True)
+    parser.add_argument("--corpus-dir", default="", help="Source manifests to ingest (S6).")
+    parser.add_argument(
+        "--shared",
+        action="store_true",
+        help="Evaluate the shared-corpus path (no curated Skill queries).",
+    )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="With --shared --hybrid: also run FTS5-only and print the delta.",
+    )
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--hybrid", action="store_true")
     parser.add_argument("--embedding-url", default="")
@@ -391,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eva
     try:
         skills = builtin_registry().all()
         ingest_skills_for_baseline(session, skills)
+        if args.corpus_dir:
+            ingest_corpus_for_baseline(session, Path(args.corpus_dir))
         cases = load_retrieval_cases(Path(args.cases_dir))
 
         embedding: EmbeddingBackend | None = None
@@ -405,13 +571,23 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eva
                 sys.stderr.write("upgradelens: embedding backend unavailable; using FTS5-only\n")
                 embedding = None
 
-        if embedding is not None and embedding.available():
+        if args.shared:
+            report = run_shared_corpus_baseline(
+                session, cases, top_k=args.top_k, embedding=embedding
+            )
+            print(render_retrieval_baseline_markdown(report))
+            if args.compare and embedding is not None:
+                fts = run_shared_corpus_baseline(session, cases, top_k=args.top_k)
+                print()
+                print(render_comparison_markdown(compare_reports(fts, report)))
+        elif embedding is not None:
             report = run_hybrid_baseline(
                 session, skills, cases, top_k=args.top_k, embedding=embedding
             )
+            print(render_retrieval_baseline_markdown(report))
         else:
             report = run_retrieval_baseline(session, skills, cases, top_k=args.top_k)
-        print(render_retrieval_baseline_markdown(report))
+            print(render_retrieval_baseline_markdown(report))
     finally:
         session.close()
     return 0

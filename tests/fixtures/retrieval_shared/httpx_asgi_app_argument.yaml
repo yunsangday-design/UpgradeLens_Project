@@ -1,0 +1,8 @@
+case_id: httpx_asgi_app_argument
+package: httpx
+source_version: "0.23.0"
+target_version: "0.27.0"
+user_intent: "the test client passes app= to AsyncClient"
+code_symbols: [AsyncClient, ASGITransport]
+expected_chunks:
+  - "The app argument is deprecated in favour of ASGITransport"

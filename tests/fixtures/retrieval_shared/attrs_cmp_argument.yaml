@@ -1,0 +1,8 @@
+case_id: attrs_cmp_argument
+package: attrs
+source_version: "21.4.0"
+target_version: "23.2.0"
+user_intent: "attr.s(cmp=True) raises TypeError after the upgrade"
+code_symbols: [cmp, eq, order]
+expected_chunks:
+  - "The cmp argument was removed in favour of eq and order"

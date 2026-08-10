@@ -1,0 +1,8 @@
+case_id: pydantic_validator_shared
+package: pydantic
+source_version: "1.10.13"
+target_version: "2.6.1"
+user_intent: "migrate the @validator decorators to pydantic v2"
+code_symbols: [validator, field_validator]
+expected_chunks:
+  - "@validator → @field_validator"

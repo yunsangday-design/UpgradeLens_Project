@@ -1,0 +1,8 @@
+case_id: pydantic_orm_mode_shared
+package: pydantic
+source_version: "1.10.13"
+target_version: "2.6.1"
+user_intent: "Config.orm_mode no longer works after the upgrade"
+code_symbols: [orm_mode, from_attributes]
+expected_chunks:
+  - "Config.orm_mode → from_attributes"

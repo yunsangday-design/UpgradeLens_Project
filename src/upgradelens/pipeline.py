@@ -114,6 +114,12 @@ class AssessmentRequest:
     #: retrieval path falls back to the code symbols discovered by the scan
     #: (stage B2: the main retrieval no longer depends on a dedicated Skill).
     user_intent: str = ""
+    #: Deprecated (S6). Re-injects a Skill's hand-written ``retrieval_queries``
+    #: as extra boosts. Off by default: hand-written queries are a per-package
+    #: shortcut that hides how well the shared corpus actually retrieves, and a
+    #: dependency without a Skill would silently get a worse search. Kept
+    #: switchable so the two paths can be compared in the retrieval baseline.
+    legacy_skill_query_boost: bool = False
 
 
 @dataclass
@@ -273,9 +279,9 @@ def collect_evidence(
         degradations.append(NO_DOC_INDEX)
 
     session = ctx.session(request.db) if request.db is not None else None
-    # Shared-corpus retrieval (stage B2): the main path no longer depends on a
-    # dedicated Skill Pack. A skill, when present, only contributes curated
-    # boost queries -- it can never block doc evidence from being collected.
+    # Shared-corpus retrieval (stage B2 / S6): the main path depends on neither
+    # a dedicated Skill Pack nor its hand-written queries. A dependency with a
+    # Skill and one without are retrieved for identically.
     doc_runs: list[RetrievalRun] = []
     if session is not None:
         doc_runs = retrieve_for_package(
@@ -286,10 +292,8 @@ def collect_evidence(
             user_intent=request.user_intent,
             code_symbols=sorted({usage.symbol for usage in code_report.usages}),
             source_id=request.source_id,
-            curated_queries=(
-                [query for pattern in skill.patterns for query in pattern.retrieval_queries]
-                if skill is not None
-                else []
+            curated_queries=legacy_skill_boost_queries(
+                skill, enabled=request.legacy_skill_query_boost
             ),
             gateway=gateway,
             mode=mode,
@@ -379,6 +383,23 @@ def _resolve_skill(
     if not skill_id:
         return None
     return builtin_registry().get(str(skill_id))
+
+
+def legacy_skill_boost_queries(skill: SkillPackage | None, *, enabled: bool) -> list[str]:
+    """Hand-written Skill queries to boost retrieval with -- empty unless opted in.
+
+    Deprecated since S6. These queries were a per-package shortcut: packages
+    with a dedicated Skill searched better than packages without one, which
+    both hid weaknesses in the shared corpus and made "no Skill" mean "worse
+    answers". Retrieval now derives its queries from the upgrade goal and the
+    scanned code symbols alone.
+
+    The switch survives so the retrieval baseline can measure the two paths
+    against each other rather than asserting the removal was harmless.
+    """
+    if not enabled or skill is None:
+        return []
+    return [query for pattern in skill.patterns for query in pattern.retrieval_queries]
 
 
 def _target_spec(request: AssessmentRequest, skill: SkillPackage | None) -> str:

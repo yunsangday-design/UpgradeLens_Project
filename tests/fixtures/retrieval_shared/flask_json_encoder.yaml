@@ -1,0 +1,8 @@
+case_id: flask_json_encoder
+package: flask
+source_version: "1.1.4"
+target_version: "2.3.3"
+user_intent: "replace the custom JSON encoder before upgrading Flask"
+code_symbols: [JSONEncoder, json_encoder]
+expected_chunks:
+  - "flask.json.JSONEncoder is replaced by app.json"

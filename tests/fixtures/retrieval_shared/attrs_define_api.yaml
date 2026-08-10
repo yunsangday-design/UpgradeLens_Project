@@ -1,0 +1,8 @@
+case_id: attrs_define_api
+package: attrs
+source_version: "21.4.0"
+target_version: "23.2.0"
+user_intent: "move to the modern attrs.define API"
+code_symbols: [define, field, asdict]
+expected_chunks:
+  - "attr.s and attr.ib are superseded by attrs.define and attrs.field"

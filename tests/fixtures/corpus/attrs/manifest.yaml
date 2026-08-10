@@ -1,0 +1,11 @@
+schema_version: 1
+package_name: attrs
+source_version_spec: ">=21.0,<23.0"
+target_version_spec: ">=23.0,<24.0"
+trust_level: official
+sources:
+  - id: attrs:modern-api
+    url: https://www.attrs.org/en/stable/names.html
+    title: attrs modern API migration
+    source_type: migration_guide
+    snapshot: sources/attrs-modern-api.md

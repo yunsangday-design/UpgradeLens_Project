@@ -1,0 +1,8 @@
+case_id: httpx_proxies_argument
+package: httpx
+source_version: "0.23.0"
+target_version: "0.27.0"
+user_intent: "stop using the deprecated proxies argument"
+code_symbols: [proxies, Client]
+expected_chunks:
+  - "The proxies argument is deprecated in favour of proxy"

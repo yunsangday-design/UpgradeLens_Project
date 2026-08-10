@@ -329,11 +329,32 @@ def retrieve_for_package(
     # Optional hybrid vector recall (stage B4). When sqlite-vec cannot be loaded
     # or no embedding backend is configured, ``_prepare_vector_recall`` returns
     # ``None`` and we degrade to the FTS5-only behaviour the caller expects.
+    # The vector index is searched with *natural-language* queries, never with the
+    # FTS5 ``"term" OR "term"`` expression -- embedding a quoted OR string destroys
+    # the semantic signal (verified in the S6 retrieval eval: flask Markup case was
+    # recalled at vector rank 4 only once the OR expression was dropped).
+    if ModelMode(mode) == ModelMode.LIVE:
+        vector_queries = queries
+    else:
+        nl_terms = _package_query_terms(user_intent, source_version, target_version, code_symbols)
+        vector_queries = [" ".join(nl_terms)] if nl_terms else queries
     vec_index, vec_search, chunk_source = _prepare_vector_recall(
-        session, embedding, queries, top_k, len(source_ids)
+        session, embedding, vector_queries, top_k, len(source_ids)
     )
 
     boost_terms = frozenset(code_symbols)
+    # Vector recall is semantic, so the hit list is independent of the exact FTS5
+    # query wording. ``vec_search`` is keyed by the *vector* query; in fake mode that
+    # is a natural-language string while ``queries`` holds the FTS5 OR expression, so
+    # a per-query lookup would never match and the semantic signal would be silently
+    # dropped. Fall back to the merged vector hits so the recall is always fused in.
+    merged_vec_hits: list[int] = []
+    _seen = set()
+    for _hits in vec_search.values():
+        for _cid in _hits:
+            if _cid not in _seen:
+                _seen.add(_cid)
+                merged_vec_hits.append(_cid)
     runs: list[RetrievalRun] = []
     for query in queries:
         for sid in source_ids:
@@ -343,13 +364,14 @@ def retrieve_for_package(
             if vec_index is None:
                 runs.append(fts_run)
                 continue
+            vec_hits = vec_search.get(query) or merged_vec_hits
             runs.append(
                 _fuse_source(
                     session,
                     source_id=sid,
                     query=query,
                     fts_run=fts_run,
-                    vec_hits=vec_search.get(query, []),
+                    vec_hits=vec_hits,
                     chunk_source=chunk_source,
                     top_k=top_k,
                 )

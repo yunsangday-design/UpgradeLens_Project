@@ -1,0 +1,9 @@
+case_id: flask_markup_escape_semantic
+package: flask
+source_version: "1.1.4"
+target_version: "2.3.3"
+user_intent: "replace the framework's forwarded alias for the string-safe text type with its original library"
+code_symbols: [template, output]
+semantic: true
+expected_chunks:
+  - "flask.Markup and flask.escape are removed"

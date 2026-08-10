@@ -85,10 +85,18 @@ def test_corpus_only_packages_have_no_skill_pack() -> None:
 def test_shared_corpus_recalls_every_labelled_chunk(
     shared_report: RetrievalBaselineReport,
 ) -> None:
-    missed = [case.case_id for case in shared_report.cases if not case.hit]
+    # Semantic cases are deliberately FTS5-resistant (their query paraphrases the
+    # intent so the literal terms never appear in the chunk); they exist to prove
+    # the hybrid path, so they are excluded from the "FTS5 must recall everything"
+    # bar.
+    literal_missed = [
+        case.case_id for case in shared_report.cases if not case.hit and not case.semantic
+    ]
 
-    assert missed == []
-    assert shared_report.summary["avg_recall_at_k"]["5"] == 1.0
+    assert literal_missed == []
+    literal = [c for c in shared_report.cases if not c.semantic]
+    literal_recall = sum(c.recall_at_k["5"] for c in literal) / len(literal)
+    assert literal_recall == 1.0
 
 
 def test_skill_free_packages_retrieve_as_well_as_skill_backed_ones(
@@ -99,11 +107,35 @@ def test_skill_free_packages_retrieve_as_well_as_skill_backed_ones(
     skill_backed = [c for c in shared_report.cases if c.package not in CORPUS_ONLY_PACKAGES]
     assert corpus_only and skill_backed
 
+    # Semantic cases are FTS5-resistant by design, so the S6 acceptance bar
+    # (Skill-free packages retrieve as well as Skill-backed ones) only applies to
+    # the literal cases.
+    corpus_literal = [c for c in corpus_only if not c.semantic]
+
     def mean_mrr(cases: list[RetrievalCaseResult]) -> float:
         return sum(c.mrr for c in cases) / len(cases)
 
-    assert mean_mrr(corpus_only) >= mean_mrr(skill_backed)
-    assert all(c.best_rank is not None and c.best_rank <= 3 for c in corpus_only)
+    assert mean_mrr(corpus_literal) >= mean_mrr(skill_backed)
+    assert all(c.best_rank is not None and c.best_rank <= 3 for c in corpus_literal)
+
+
+def test_semantic_cases_are_resistant_to_fts5(
+    shared_report: RetrievalBaselineReport,
+) -> None:
+    """Semantic cases must fail under FTS5-only, else they do not prove anything.
+
+    Their query is a paraphrase, so the literal terms never appear in the expected
+    chunk -- FTS5 has nothing to match on. The hybrid (vector) path is what rescues
+    them, which is exactly the claim under test in the S6 retrieval eval.
+    """
+    semantic_cases = [c for c in shared_report.cases if c.semantic]
+    assert semantic_cases, "expected at least one semantic case fixture"
+
+    for case in semantic_cases:
+        assert case.best_rank is None, (
+            f"{case.case_id} was recalled by FTS5 (rank {case.best_rank}); "
+            "it should be FTS5-resistant so the hybrid path is what earns the recall"
+        )
 
 
 def test_shared_baseline_reports_the_path_it_measured(
@@ -122,7 +154,10 @@ def test_shared_baseline_degrades_to_fts5_without_an_embedding_backend(
     report = run_shared_corpus_baseline(corpus_session, cases, top_k=5, embedding=None)
 
     assert report.n_cases == len(cases)
-    assert all(case.hit for case in report.cases)
+    # Semantic cases are FTS5-resistant by design, so without a vector backend they
+    # legitimately do not recall -- only the literal cases must still be recalled.
+    literal = [case for case in report.cases if not case.semantic]
+    assert all(case.hit for case in literal)
 
 
 # --------------------------------------------------------------------------- #

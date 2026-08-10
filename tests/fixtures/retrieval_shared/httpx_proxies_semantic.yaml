@@ -1,0 +1,9 @@
+case_id: httpx_proxies_semantic
+package: httpx
+source_version: "0.25.0"
+target_version: "0.27.0"
+user_intent: "set a single forwarder for outbound network traffic instead of the older dictionary form"
+code_symbols: [connection, gateway]
+semantic: true
+expected_chunks:
+  - "The proxies argument is deprecated in favour of proxy"

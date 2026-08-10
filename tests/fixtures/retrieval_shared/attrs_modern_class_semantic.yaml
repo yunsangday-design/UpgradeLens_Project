@@ -1,0 +1,9 @@
+case_id: attrs_modern_class_semantic
+package: attrs
+source_version: "21.0"
+target_version: "23.0"
+user_intent: "introduce a value object with explicit members through the up-to-date declaration approach"
+code_symbols: [model, record]
+semantic: true
+expected_chunks:
+  - "attr.s and attr.ib are superseded by attrs.define and attrs.field"

@@ -32,6 +32,7 @@ in later steps (B2/B4), since the FTS5 baseline relies solely on ``pattern.retri
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,6 +70,11 @@ class RetrievalCase(BaseModel):
     pattern_id: str = ""
     user_intent: str = ""
     code_symbols: list[str] = Field(default_factory=list)
+    #: True for cases whose expected chunk is only reachable via semantic (vector)
+    #: recall -- the query paraphrases the intent so the literal terms do not appear
+    #: in the chunk. Such cases legitimately fail under FTS5-only and exist to prove
+    #: the hybrid path earns its keep.
+    semantic: bool = False
     #: Leaf chunk titles (``heading_path[-1]``) that must be recalled.
     expected_chunks: list[str]
 
@@ -85,6 +91,7 @@ class RetrievalCaseResult(BaseModel):
     mrr: float = 0.0
     recall_at_k: dict[str, float] = Field(default_factory=dict)
     top_k_hit: dict[str, bool] = Field(default_factory=dict)
+    semantic: bool = False
 
 
 class RetrievalBaselineReport(BaseModel):
@@ -223,6 +230,7 @@ def run_retrieval_baseline(
                 mrr=mrr,
                 recall_at_k=recall_at_k,
                 top_k_hit=top_k_hit,
+                semantic=case.semantic,
             )
         )
 
@@ -321,6 +329,7 @@ def run_hybrid_baseline(
                 mrr=mrr,
                 recall_at_k=recall_at_k,
                 top_k_hit=top_k_hit,
+                semantic=case.semantic,
             )
         )
 
@@ -406,6 +415,7 @@ def run_shared_corpus_baseline(
                 mrr=mrr,
                 recall_at_k=recall_at_k,
                 top_k_hit=top_k_hit,
+                semantic=case.semantic,
             )
         )
 
@@ -516,6 +526,26 @@ def render_retrieval_baseline_markdown(report: RetrievalBaselineReport) -> str:
     return "\n".join(lines)
 
 
+def _load_dotenv(path: str = ".env") -> None:
+    """Best-effort load of ``.env`` into ``os.environ`` (stdlib only).
+
+    Existing environment variables win so an exported key is never clobbered.
+    Lets the eval harness run with ``--hybrid`` and no command-line key.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key, val = key.strip(), val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        return
+
+
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eval harness
     """CLI for the B0 retrieval baseline.
 
@@ -524,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eva
     FTS5+sqlite-vec path; when the embedding backend is unreachable the harness
     prints a warning and falls back to FTS5-only so the run never fails.
     """
+    _load_dotenv()
     import argparse
     import sys
     from pathlib import Path
@@ -544,9 +575,21 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eva
     )
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--hybrid", action="store_true")
-    parser.add_argument("--embedding-url", default="")
-    parser.add_argument("--embedding-model", default="")
-    parser.add_argument("--embedding-key", default="")
+    parser.add_argument(
+        "--embedding-url",
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        help="OpenAI-compatible /embeddings endpoint (default: DashScope).",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default="text-embedding-v3",
+        help="Embedding model id (default: text-embedding-v3).",
+    )
+    parser.add_argument(
+        "--embedding-key",
+        default="",
+        help="API key; falls back to UPGRADELENS_MODEL_API_KEY from .env if empty.",
+    )
     args = parser.parse_args(argv)
 
     engine = engine_for(args.db)
@@ -565,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - manual eva
                 enabled=True,
                 base_url=args.embedding_url,
                 model=args.embedding_model,
-                api_key=args.embedding_key,
+                api_key=args.embedding_key or os.environ.get("UPGRADELENS_MODEL_API_KEY", ""),
             )
             if not embedding.available():
                 sys.stderr.write("upgradelens: embedding backend unavailable; using FTS5-only\n")

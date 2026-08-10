@@ -58,6 +58,10 @@ class OpenAICompatibleEmbedding:
         self.dimension = config.dimension
         self._base_url = config.base_url.rstrip("/")
         self._api_key = config.api_key
+        # DashScope / OpenAI-compatible `/embeddings` caps the number of input
+        # texts per request (text-embedding-v3 rejects >10 with HTTP 400). Batching
+        # keeps a large `rebuild` working on any compliant endpoint.
+        self._batch_size = 8
         self._probe()
 
     def _probe(self) -> None:
@@ -73,7 +77,19 @@ class OpenAICompatibleEmbedding:
     def embed(self, texts: list[str]) -> list[list[float]] | None:
         if not texts:
             return []
-        payload = json.dumps({"input": texts, "model": self.model}).encode("utf-8")
+        out: list[list[float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch = texts[start : start + self._batch_size]
+            vectors = self._embed_batch(batch)
+            if vectors is None:
+                return None
+            out.extend(vectors)
+        if self.dimension == 0 and out:
+            self.dimension = len(out[0])
+        return out
+
+    def _embed_batch(self, batch: list[str]) -> list[list[float]] | None:
+        payload = json.dumps({"input": batch, "model": self.model}).encode("utf-8")
         req = urllib.request.Request(
             f"{self._base_url}/embeddings",
             data=payload,
@@ -89,12 +105,9 @@ class OpenAICompatibleEmbedding:
         except Exception as exc:  # network / endpoint failure
             raise VectorIndexUnavailable(f"embedding request failed: {exc}") from exc
         data = body.get("data")
-        if not isinstance(data, list) or len(data) != len(texts):
+        if not isinstance(data, list) or len(data) != len(batch):
             return None
-        vectors = [d["embedding"] for d in data]
-        if self.dimension == 0 and vectors:
-            self.dimension = len(vectors[0])
-        return vectors
+        return [d["embedding"] for d in data]
 
 
 def embedding_from_config(

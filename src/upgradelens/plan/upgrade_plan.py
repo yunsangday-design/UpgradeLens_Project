@@ -88,6 +88,8 @@ class UpgradePlan(BaseModel):
     repo_hash: str = ""
     generated_at: str = Field(default_factory=lambda: _dt.datetime.now(_dt.UTC).isoformat())
     mode: PlanMode = PlanMode.PATCH_DRAFT
+    # S12: marks whether this plan is a concrete deploy contract (vs a draft).
+    deploy_contract: bool = False
     steps: list[UpgradeStep] = Field(default_factory=list)
     patch: PatchDraft | None = None
     assumptions: list[str] = Field(default_factory=list)

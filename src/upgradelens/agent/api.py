@@ -293,6 +293,7 @@ class DependencyUpgradeAgent:
         if store is not None:
             store.write_trace(trace)
             store.write_report(outcome.verified)
+            store.write_assessment(outcome)
             store.write_run_md(
                 intent=intent_dict,
                 mode=gateway.mode.value,

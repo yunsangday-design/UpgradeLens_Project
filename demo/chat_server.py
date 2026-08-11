@@ -24,6 +24,8 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from upgradelens.presentation.projector import project_assessment
+
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = Path(__file__).resolve().parent
 EVAL_CASES_DIR = ROOT / "tests" / "fixtures" / "eval"
@@ -239,6 +241,11 @@ class ChatHandler(SimpleHTTPRequestHandler):
                     ),
                 },
                 "error": result.error,
+                "assessment": (
+                    project_assessment(result.outcome).model_dump(mode="json")
+                    if result.outcome is not None
+                    else None
+                ),
             }
             self._json_response(response)
 

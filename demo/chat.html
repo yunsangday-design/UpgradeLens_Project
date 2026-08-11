@@ -151,6 +151,69 @@ async function sendMsg() {
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function pct(v) { return v != null ? (v*100).toFixed(0)+'%' : 'n/a'; }
 
+// S12: render from the flattened assessment view when present. This view already
+// carries resolved code/doc/migration detail, so the frontend never has to
+// re-join evidence IDs itself. Falls back to the legacy verified report.
+function renderFindings(data) {
+  const a = data.assessment;
+  if (a && ((a.verified_risks||[]).length + (a.degraded_risks||[]).length)) {
+    let h = '<div style="margin-top:0.5rem;">';
+    (a.verified_risks||[]).forEach(f => h += renderFinding(f));
+    (a.degraded_risks||[]).forEach(f => h += renderFinding(f));
+    h += '</div>';
+    return h;
+  }
+  const v = data.verified;
+  if (v) {
+    const allRisks = [...(v.verified_risks||[]), ...(v.degraded_risks||[])];
+    if (allRisks.length) {
+      let h = '<div style="margin-top:0.5rem;">';
+      allRisks.forEach(r => {
+        const sev = r.severity || 'low';
+        const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
+        h += `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${sev}]</span> ${escHtml(r.title)}${r.recommendation ? `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(r.recommendation)}</span>` : ''}</div>`;
+      });
+      h += '</div>';
+      return h;
+    }
+  }
+  return '<p style="color:var(--green);font-size:0.8rem;">🎉 无风险！升级安全。</p>';
+}
+
+function renderFinding(f) {
+  const sev = f.severity || 'low';
+  const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
+  let h = `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${f.status||sev}]</span> ${escHtml(f.title)}`;
+  if (f.recommendation) h += `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(f.recommendation)}</span>`;
+  if (f.migration && f.migration.problem) h += `<br><span style="color:var(--muted);font-size:0.75rem">❗ ${escHtml(f.migration.problem)}</span>`;
+  (f.code||[]).forEach(c => {
+    h += `<div style="font-size:0.72rem;color:var(--blue)">📍 ${escHtml(c.path||'')}:${c.start_line||0}-${c.end_line||0}${c.symbol?(' ('+escHtml(c.symbol)+')'):''}${c.is_test_code?' [test]':''}</div>`;
+    if (c.snippet) h += `<pre style="font-size:0.68rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(c.snippet)}</pre>`;
+  });
+  (f.docs||[]).forEach(d => {
+    const vr = d.source_version_spec ? ` ${escHtml(d.source_version_spec)}→${escHtml(d.target_version_spec)}` : '';
+    h += `<div style="font-size:0.72rem;color:var(--green)">📚 ${escHtml(d.title||'')} <span style="color:var(--muted)">(trust:${escHtml(d.trust_level||'')}${vr})</span></div>`;
+    if (d.snippet) h += `<pre style="font-size:0.68rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(d.snippet)}</pre>`;
+  });
+  const mig = f.migration || {};
+  const steps = mig.steps || [];
+  if (steps.length || mig.before_example || mig.after_example || (mig.verification_steps||[]).length) {
+    h += '<details style="margin-top:0.2rem;"><summary style="font-size:0.72rem;cursor:pointer;color:var(--muted)">🔧 迁移建议</summary><div style="font-size:0.74rem;padding-left:0.5rem;">';
+    if (mig.behavior_change) h += `<p style="color:var(--muted)">⚙️ 行为变化: ${escHtml(mig.behavior_change)}</p>`;
+    steps.forEach(s => h += `<p>• ${escHtml(s)}</p>`);
+    if (mig.before_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text)">${escHtml(mig.before_example)}</pre>`;
+    if (mig.after_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text)">${escHtml(mig.after_example)}</pre>`;
+    if ((mig.verification_steps||[]).length) {
+      h += '<p style="color:var(--muted)">✅ 验证:</p>';
+      mig.verification_steps.forEach(s => h += `<p style="padding-left:0.5rem">• ${escHtml(s)}</p>`);
+    }
+    h += '</div></details>';
+  }
+  if (f.plan_step) h += `<div style="font-size:0.7rem;color:var(--blue)">🔗 关联部署步骤: ${escHtml(f.plan_step.step_id||'')} — ${escHtml(f.plan_step.title||'')}</div>`;
+  h += '</div>';
+  return h;
+}
+
 function renderResult(data) {
   let html = '';
 
@@ -178,22 +241,29 @@ function renderResult(data) {
       <span class="m-chip">已验证风险: <span class="val">${(v.verified_risks||[]).length}</span></span>
       <span class="m-chip">降级风险: <span class="val">${(v.degraded_risks||[]).length}</span></span>
       <span class="m-chip">引用率: <span class="val">${pct(v.citation_existence_rate)}</span></span>
+      ${data.assessment && data.assessment.verdict ? `<span class="m-chip">判定: <span class="val">${escHtml(data.assessment.verdict)}</span></span>` : ''}
+      ${data.assessment && data.assessment.is_evidence_insufficient ? `<span class="m-chip">⚠️ 证据不足</span>` : ''}
     </div>`;
 
-    // Risks
-    const allRisks = [...(v.verified_risks||[]), ...(v.degraded_risks||[])];
-    if (allRisks.length) {
-      html += '<div style="margin-top:0.5rem;">';
-      allRisks.forEach(r => {
-        const sev = r.severity || 'low';
-        const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
-        html += `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${sev}]</span> ${escHtml(r.title)}${r.recommendation ? `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(r.recommendation)}</span>` : ''}</div>`;
-      });
-      html += '</div>';
-    } else {
-      html += '<p style="color:var(--green);font-size:0.8rem;">🎉 无风险！升级安全。</p>';
-    }
+    // S12: render from the flattened assessment view (no ad-hoc evidence-ID
+    // joins); falls back to the legacy verified report when the view is absent.
+    html += renderFindings(data);
     html += '</div>';
+
+    // S12: deploy contract (from the assessment view).
+    if (data.assessment && data.assessment.upgrade_plan && data.assessment.upgrade_plan.steps.length) {
+      const p = data.assessment.upgrade_plan;
+      html += `<div class="result-section"><h4>🗂️ 部署契约 (UpgradePlan)</h4>`;
+      html += `<div class="metrics-row">
+        <span class="m-chip">依赖: <span class="val">${escHtml(p.target_dependency||'')}</span></span>
+        <span class="m-chip">${escHtml(p.source_version_spec||'')}→${escHtml(p.target_version_spec||'')}</span>
+        <span class="m-chip">步骤: <span class="val">${p.step_count}</span></span>
+        <span class="m-chip">deploy_contract: <span class="val">${p.deploy_contract}</span></span>
+      </div>`;
+      html += '<ul class="test-list">';
+      p.steps.forEach(s => html += `<li><code>${escHtml(s.step_id||'')}</code> ${escHtml(s.title||'')} <span style="color:var(--muted)">[${escHtml((s.target_files||[]).join(', '))}]</span></li>`);
+      html += '</ul></div>';
+    }
   }
 
   // Plan

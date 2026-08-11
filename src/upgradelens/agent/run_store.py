@@ -6,6 +6,7 @@ Every run of ``upgradelens agent`` writes a self-contained directory under
 - ``plan.json``   -- the (currently linear) plan the run followed;
 - ``trace.jsonl`` -- one JSON object per tool call (tool/params/status/latency);
 - ``report.json`` -- the verified assessment, machine-readable;
+- ``assessment.json`` -- the S12 presentation view (flattened code/doc evidence);
 - ``report.md``   -- the verified assessment, human-readable;
 - ``RUN.md``      -- a human-readable run summary tying the above together.
 
@@ -156,6 +157,18 @@ class RunStore:
         self._write_json("report.json", verified.model_dump(mode="json"))
         self._write_text("report.md", render_markdown(verified))
 
+    def write_assessment(self, outcome: Any, *, upgrade_plan: Any = None) -> None:
+        """S12: persist the flattened presentation view + resolved evidence map.
+
+        ``report.json`` keeps the raw :class:`VerifiedReport` for backwards
+        compatibility; ``assessment.json`` is the self-contained contract the UI
+        and external agents consume, with no on-the-fly evidence-ID joins.
+        """
+        from upgradelens.presentation.projector import project_assessment
+
+        view = project_assessment(outcome, upgrade_plan=upgrade_plan)
+        self._write_json("assessment.json", view.model_dump(mode="json"))
+
     def write_run_md(
         self,
         *,
@@ -240,6 +253,7 @@ def _render_run_md(
     lines.append("- `plan.json` — the plan the run followed")
     lines.append("- `trace.jsonl` — one line per tool call (tool / params / status / latency)")
     lines.append("- `report.json` — the verified assessment (machine-readable)")
+    lines.append("- `assessment.json` — the S12 presentation view (flattened evidence)")
     lines.append("- `report.md` — the verified assessment (human-readable)")
     lines.append("- `intent.json` — the routed Intent")
     lines.append("")

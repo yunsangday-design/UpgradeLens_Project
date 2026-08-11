@@ -162,6 +162,14 @@ class RiskItem(BaseModel):
     confidence: Confidence = "low"
     evidence_ids: list[str] = Field(default_factory=list)
     recommendation: str = ""
+    # S12: semantic detail forwarded from the impact analyzer to the verifier.
+    # Defaults keep legacy impact reports loadable.
+    problem: str = ""
+    behavior_change: str = ""
+    migration_steps: list[str] = Field(default_factory=list)
+    verification_steps: list[str] = Field(default_factory=list)
+    before_example: str = ""
+    after_example: str = ""
 
     @model_validator(mode="after")
     def _check(self) -> RiskItem:

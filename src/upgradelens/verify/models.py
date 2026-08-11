@@ -183,6 +183,15 @@ class VerifiedRisk(BaseModel):
     issues: list[VerificationIssue] = Field(default_factory=list)
     recommended_tests: list[TestCandidate] = Field(default_factory=list)
     recommendation: str = ""
+    # S12: human-readable migration detail flattened into the report so the
+    # presentation layer never has to re-join evidence IDs. Defaults keep legacy
+    # report.json (serialized before these fields existed) loadable.
+    problem: str = ""
+    behavior_change: str = ""
+    migration_steps: list[str] = Field(default_factory=list)
+    verification_steps: list[str] = Field(default_factory=list)
+    before_example: str = ""
+    after_example: str = ""
 
     @property
     def is_verified(self) -> bool:

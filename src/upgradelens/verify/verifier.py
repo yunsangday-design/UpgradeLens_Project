@@ -320,6 +320,12 @@ class EvidenceVerifier:
         title = getattr(risk, "title", "")
         model_severity = str(getattr(risk, "severity", "low"))
         recommendation = str(getattr(risk, "recommendation", ""))
+        problem = str(getattr(risk, "problem", ""))
+        behavior_change = str(getattr(risk, "behavior_change", ""))
+        migration_steps = list(getattr(risk, "migration_steps", []) or [])
+        verification_steps = list(getattr(risk, "verification_steps", []) or [])
+        before_example = str(getattr(risk, "before_example", ""))
+        after_example = str(getattr(risk, "after_example", ""))
         evidence_ids: list[str] = list(getattr(risk, "evidence_ids", []))
 
         issues: list[VerificationIssue] = []
@@ -422,6 +428,12 @@ class EvidenceVerifier:
             issues=issues,
             recommended_tests=tests,
             recommendation=recommendation,
+            problem=problem,
+            behavior_change=behavior_change,
+            migration_steps=migration_steps,
+            verification_steps=verification_steps,
+            before_example=before_example,
+            after_example=after_example,
         )
 
     def _conclude(self, verified: list[VerifiedRisk], degraded: list[VerifiedRisk]) -> Conclusion:

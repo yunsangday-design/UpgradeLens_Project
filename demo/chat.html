@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UpgradeLens — 对话式 Agent</title>
+<style>
+:root { --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --blue: #58a6ff; --green: #3fb950; --yellow: #d29922; --red: #f85149; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+.app-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.8rem 1.5rem; display: flex; align-items: center; gap: 0.8rem; }
+.app-header h1 { font-size: 1rem; color: var(--blue); }
+.app-header span { font-size: 0.8rem; color: var(--muted); }
+
+/* Chat area */
+.chat-area { flex: 1; overflow-y: auto; padding: 1rem 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
+
+/* Messages */
+.msg { max-width: 90%; padding: 0.8rem1rem; border-radius: 12px; font-size: 0.9rem; line-height: 1.5; animation: fadeIn 0.3s; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.msg.user { align-self: flex-end; background: #1f6feb; color: white; border-bottom-right-radius: 4px; }
+.msg.agent { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; max-width: 95%; }
+.msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 0.8rem; }
+.msg.error { align-self: flex-start; background: #f8514922; border: 1px solid var(--red); color: var(--red); }
+
+/* Result blocks inside agent message */
+.result-block { margin-top: 0.8rem; }
+.result-section { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; margin-top: 0.6rem; }
+.result-section h4 { color: var(--blue); font-size: 0.8rem; margin-bottom: 0.5rem; }
+
+/* Metrics row */
+.metrics-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }
+.m-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+.m-chip .val { font-weight: 700; color: var(--blue); }
+
+/* Steps */
+.step-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; font-size: 0.8rem; }
+.step-icon { min-width: 1.2rem; text-align: center; }
+
+/* Risks */
+.risk-item { border-left: 3px solid var(--border); padding: 0.4rem 0.6rem; margin: 0.3rem 0; font-size: 0.8rem; border-radius: 0 4px 4px 0; background: var(--bg); }
+.risk-item.high { border-left-color: var(--red); }
+.risk-item.medium { border-left-color: var(--yellow); }
+.risk-item.low { border-left-color: var(--green); }
+.risk-sev { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; }
+
+/* Input area */
+.input-area { background: var(--surface); border-top: 1px solid var(--border); padding: 0.8rem 1.5rem; display: flex; gap: 0.5rem; }
+.input-area input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1rem; color: var(--text); font-size: 0.9rem; outline: none; }
+.input-area input:focus { border-color: var(--blue); }
+.input-area input::placeholder { color: var(--muted); }
+.input-area button { background: #1f6feb; border: none; border-radius: 8px; padding: 0.6rem 1.2rem; color: white; font-size: 0.85rem; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+.input-area button:hover { background: #388bfd; }
+.input-area button:disabled { background: var(--border); cursor: not-allowed; }
+
+/* Settings bar */
+.settings { padding: 0.4rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 1rem; align-items: center; font-size: 0.75rem; flex-wrap: wrap; }
+.settings label { color: var(--muted); }
+.settings input, .settings select { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.5rem; color: var(--text); font-size: 0.75rem; }
+.settings input { width: 180px; }
+
+/* Loading spinner */
+.loading { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 0.5rem; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Collapsible */
+details { margin-top: 0.5rem; }
+details summary { cursor: pointer; color: var(--blue); font-size: 0.8rem; }
+details summary:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <h1>🔍 UpgradeLens</h1>
+  <span>对话式依赖升级影响分析 Agent</span>
+</div>
+
+<div class="settings">
+  <label>仓库路径 <input id="cfg-repo" value="tests/fixtures/eval/hallucinated_citation/repo" placeholder="./repo 或 GitHub URL"></label>
+  <label>依赖 <input id="cfg-dep" value="" placeholder="自动从query 提取" style="width:100px;"></label>
+  <label>目标版本 <input id="cfg-ver" value="" placeholder="自动提取" style="width:80px;"></label>
+  <label>模式 <select id="cfg-mode"><option value="fake">fake (离线)</option><option value="live">live</option><option value="replay">replay</option></select></label>
+</div>
+
+<div class="chat-area" id="chat">
+  <div class="msg system">👋 输入升级评估请求，例如：<b>upgrade pydantic to 2.0</b> 或 <b>帮我看看 pydantic 升级到 2.0 有什么影响</b></div>
+</div>
+
+<div class="input-area">
+  <input id="input" type="text" placeholder="输入升级评估请求..." autofocus>
+  <button id="send-btn" onclick="sendMsg()">发送</button>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send-btn');
+
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !sendBtn.disabled) sendMsg(); });
+
+function addMsg(type, html) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  div.innerHTML = html;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+async function sendMsg() {
+  const goal = input.value.trim();
+  if (!goal) return;
+  input.value = '';
+  sendBtn.disabled = true;
+
+  addMsg('user', escHtml(goal));
+  const loadingMsg = addMsg('agent', '<span class="loading"></span> Agent 正在分析中...');
+
+  const body = {
+    goal,
+    repo: document.getElementById('cfg-repo').value || null,
+    dependency: document.getElementById('cfg-dep').value || null,
+    target_version: document.getElementById('cfg-ver').value || null,
+    mode: document.getElementById('cfg-mode').value,
+  };
+
+  try {
+    const resp = await fetch('/api/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    loadingMsg.remove();
+
+    if (data.error && !data.intent) {
+      addMsg('error', '❌ ' + escHtml(data.error));
+    } else {
+      addMsg('agent', renderResult(data));
+    }
+  } catch (err) {
+    loadingMsg.remove();
+    addMsg('error', '❌ 网络错误: ' + escHtml(err.message));
+  }
+  sendBtn.disabled = false;
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function pct(v) { return v != null ? (v*100).toFixed(0)+'%' : 'n/a'; }
+
+function renderResult(data) {
+  let html = '';
+
+  // Intent
+  const intent = data.intent;
+  const kindLabel = {upgrade_task:'✅ 升级任务', not_upgrade:'💬 非升级请求', need_clarification:'❓ 需要补充信息', invalid_url:'❌ 无效 URL'};
+  html += `<div class="metrics-row">
+    <span class="m-chip">意图:<span class="val">${kindLabel[intent.kind] || intent.kind}</span></span>
+    ${intent.dependency ? `<span class="m-chip">依赖: <span class="val">${intent.dependency}</span></span>` : ''}
+    ${intent.target_version ? `<span class="m-chip">目标: <span class="val">${intent.target_version}</span></span>` : ''}
+  </div>`;
+
+  if (intent.kind !== 'upgrade_task') {
+    html += `<p style="color:var(--muted);margin-top:0.5rem;">${intent.clarification || '请求未识别为升级任务。'}</p>`;
+    return html;
+  }
+
+  // Verified
+  const v = data.verified;
+  if (v) {
+    const cMap = {impacted:'⚠️ 受影响', no_impact:'✅ 无影响', evidence_insufficient:'❓ 证据不足'};
+    html += `<div class="result-section"><h4>📊 评估结果</h4>`;
+    html += `<div class="metrics-row">
+      <span class="m-chip">结论: <span class="val">${cMap[v.conclusion] || v.conclusion}</span></span>
+      <span class="m-chip">已验证风险: <span class="val">${(v.verified_risks||[]).length}</span></span>
+      <span class="m-chip">降级风险: <span class="val">${(v.degraded_risks||[]).length}</span></span>
+      <span class="m-chip">引用率: <span class="val">${pct(v.citation_existence_rate)}</span></span>
+    </div>`;
+
+    // Risks
+    const allRisks = [...(v.verified_risks||[]), ...(v.degraded_risks||[])];
+    if (allRisks.length) {
+      html += '<div style="margin-top:0.5rem;">';
+      allRisks.forEach(r => {
+        const sev = r.severity || 'low';
+        const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
+        html += `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${sev}]</span> ${escHtml(r.title)}${r.recommendation ? `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(r.recommendation)}</span>` : ''}</div>`;
+      });
+      html += '</div>';
+    } else {
+      html += '<p style="color:var(--green);font-size:0.8rem;">🎉 无风险！升级安全。</p>';
+    }
+    html += '</div>';
+  }
+
+  // Plan
+  if (data.plan && data.plan.steps && data.plan.steps.length) {
+    html += '<details><summary>📋 执行计划 (' + data.plan.steps.length + ' 步)</summary><div class="result-section">';
+    const sMap = {succeeded:'✅', failed:'❌', skipped:'⏭️', pending:'⏳', running:'🔄'};
+    data.plan.steps.forEach(s => {
+      html += `<div class="step-item"><span class="step-icon">${sMap[s.status]||'❓'}</span><b>${s.tool}</b> <span style="color:var(--muted)">— ${escHtml(s.reason||'')}</span></div>`;
+      if (s.observation) html += `<div class="step-item" style="padding-left:1.7rem;color:var(--muted)">💬 ${escHtml(s.observation)}</div>`;
+    });
+    html += '</div></details>';
+  }
+
+  // Trace
+  if (data.trace && data.trace.length) {
+    html += '<details><summary>🔧 工具调用 Trace (' + data.trace.length + ' 次)</summary><div class="result-section">';
+    const tMap = {ok:'✅', cached:'💾', error:'❌'};
+    data.trace.forEach((e,i) => {
+      html += `<div class="step-item"><span class="step-icon">${tMap[e.status]||'❓'}</span>#${i+1} <b>${e.tool}</b> → ${escHtml(e.target.slice(0,50))} <span style="color:var(--muted)">${e.latency_ms}ms</span></div>`;
+    });
+    html += '</div></details>';
+  }
+
+  // Cost
+  if (data.cost) {
+    html += `<div class="metrics-row" style="margin-top:0.5rem;">
+      <span class="m-chip">🤖 模型调用: <span class="val">${data.cost.call_count}</span></span>
+      <span class="m-chip">📊 Token: <span class="val">${data.cost.total_tokens.toLocaleString()}</span></span>
+    </div>`;
+  }
+
+  // Degradations
+  if (data.degradations && data.degradations.length) {
+    html += '<details><summary>⚠️ 降级说明 (' + data.degradations.length + ')</summary><div class="result-section" style="color:var(--yellow);font-size:0.8rem;">';
+    data.degradations.forEach(d => { html += `<p>• ${escHtml(d)}</p>`; });
+    html += '</div></details>';
+  }
+
+  return html;
+}
+</script>
+</body>
+</html>

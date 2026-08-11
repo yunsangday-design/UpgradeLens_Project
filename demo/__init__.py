@@ -1,0 +1,1 @@
+"""UpgradeLens demo package — Streamlit UI and offline demo helpers."""

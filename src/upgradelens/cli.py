@@ -70,7 +70,7 @@ from upgradelens.agent.loop import run_agent
 from upgradelens.agent.planner import build_agent_plan
 from upgradelens.analyzers import scan_code_evidence, scan_dependency
 from upgradelens.capabilities import CapabilityRegistry, TransformationPack
-from upgradelens.config import Settings
+from upgradelens.config import NetworkMode, Settings
 from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
 from upgradelens.db.repository import persist_code_report
 from upgradelens.docs import DocSourceManifestError, ingest_corpus, ingest_skill, retrieve
@@ -152,6 +152,7 @@ _AGENT_COMMAND = "agent"
 _SEED_REPLAY_COMMAND = "seed-replay"
 _RETRIEVAL_BASELINE_COMMAND = "retrieval-baseline"
 _LLM_CHECK_COMMAND = "llm-check"
+_RAG_WORKER_COMMAND = "rag-worker"
 
 #: Shipped Core fixtures, resolved relative to the installed package so the
 #: command works from any working directory.
@@ -579,6 +580,35 @@ def build_parser() -> argparse.ArgumentParser:
         default="md",
         choices=["json", "md"],
         help="Output format: Markdown summary (default) or JSON Tool Trace.",
+    )
+
+    # S17: drain the background corpus-backfill queue (online-discovered sources
+    # re-ingested locally so future retrievals hit without the network).
+    rag_worker = subparsers.add_parser(
+        _RAG_WORKER_COMMAND,
+        help="Drain pending S17 corpus backfill jobs into the shared corpus.",
+    )
+    rag_worker.add_argument(
+        "--db", default=str(DEFAULT_DB_PATH), help="SQLite database path"
+    )
+    rag_worker.add_argument(
+        "--once", action="store_true", help="process pending jobs once and exit (default)"
+    )
+    rag_worker.add_argument(
+        "--loop", action="store_true", help="keep processing until the queue is empty"
+    )
+    rag_worker.add_argument("--limit", type=int, default=10, help="max jobs per pass")
+    rag_worker.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="seconds between passes in --loop mode",
+    )
+    rag_worker.add_argument(
+        "--network",
+        choices=[m.value for m in NetworkMode],
+        default=NetworkMode.ONLINE_FALLBACK.value,
+        help="fetch policy for backfill; never online-fetches in offline mode",
     )
 
     mcp_server = subparsers.add_parser(
@@ -1594,6 +1624,35 @@ def _gate_command(args: argparse.Namespace) -> int:
     return EXIT_GATE_BLOCKED if result.block else EXIT_OK
 
 
+def _rag_worker_command(args: argparse.Namespace) -> int:
+    """Drain pending S17 corpus backfill jobs into the shared corpus."""
+    from upgradelens.docs.worker import process_pending_jobs
+
+    init_db(args.db)
+    engine = engine_for(args.db)
+    network = args.network
+    if args.loop:
+        processed_any = False
+        while True:
+            counts = process_pending_jobs(engine, limit=args.limit, network=network, embedding=None)
+            total = sum(counts.values())
+            if total == 0:
+                print("rag-worker: queue empty", file=sys.stderr)
+                break
+            processed_any = True
+            print(f"rag-worker: processed {total} job(s): {counts}", file=sys.stderr)
+            import time
+
+            time.sleep(args.interval)
+        if not processed_any:
+            print("rag-worker: nothing to do", file=sys.stderr)
+        return EXIT_OK
+    counts = process_pending_jobs(engine, limit=args.limit, network=network, embedding=None)
+    total = sum(counts.values())
+    print(f"rag-worker: processed {total} job(s): {counts}", file=sys.stderr)
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``upgradelens`` script."""
     parser = build_parser()
@@ -1742,6 +1801,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == _RETRIEVAL_BASELINE_COMMAND:
         return _retrieval_baseline_command(args)
+
+    if args.command == _RAG_WORKER_COMMAND:
+        return _rag_worker_command(args)
 
     try:
         request = DependencyAnalysisRequest(

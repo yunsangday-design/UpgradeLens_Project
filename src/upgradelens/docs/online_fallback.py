@@ -256,12 +256,17 @@ class OnlineFallbackResult:
     fetched: int = 0
     discovered: int = 0
     reason: str = ""
+    #: The sources actually discovered for this package -- consumed by S17 to
+    #: enqueue background corpus-backfill jobs. Empty when nothing was fetched.
+    sources: list[DiscoveredSource] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.runs is None:
             self.runs = []
         if self.evidence is None:
             self.evidence = []
+        if self.sources is None:
+            self.sources = []
 
 
 def run_online_fallback(
@@ -376,4 +381,5 @@ def run_online_fallback(
         status=status,
         fetched=fetched,
         discovered=len(sources),
+        sources=sources,
     )

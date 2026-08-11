@@ -39,7 +39,8 @@ from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.db.vector import EmbeddingBackend
 from upgradelens.docs import retrieve as _retrieve
 from upgradelens.docs.ingest import iter_sources_for_package
-from upgradelens.docs.online_fallback import run_online_fallback
+from upgradelens.docs.jobs import enqueue_ingest_job
+from upgradelens.docs.online_fallback import DiscoveredSource, run_online_fallback
 from upgradelens.docs.rag_miss import classify_rag_miss
 from upgradelens.docs.retrieval import retrieve_for_package as _retrieve_for_package
 from upgradelens.domain import DependencyAnalysisRequest
@@ -466,9 +467,67 @@ def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext
                 )
                 if fb.runs:
                     runs = runs + fb.runs
+                # S17: a real online fetch happened (live + online_fallback). Queue the
+                # discovered sources for background re-ingestion into the corpus so the
+                # *next* retrieval for this package can hit locally. This is independent of
+                # whether the fallback produced aligned ``runs`` -- fetched > 0 is enough.
+                if (
+                    args.db
+                    and fb.fetched > 0
+                    and fb.sources
+                    and NetworkMode(settings.network) == NetworkMode.ONLINE_FALLBACK
+                ):
+                    _enqueue_fallback_jobs(
+                        session,
+                        package=args.package,
+                        sources=fb.sources,
+                        source_version=args.source_version or "",
+                        target_version=args.target_version or "",
+                        miss_reason=miss_reason,
+                        trace=ctx.trace,
+                    )
             except Exception as exc:  # noqa: BLE001 - degrade, never crash the loop
                 logger.warning("online fallback failed for %s: %s", args.package, exc)
     return [run.model_dump(mode="json") for run in runs]
+
+
+def _enqueue_fallback_jobs(
+    session: Any,
+    *,
+    package: str,
+    sources: list[DiscoveredSource],
+    source_version: str,
+    target_version: str,
+    miss_reason: Any,
+    trace: Any,
+) -> None:
+    """Best-effort background backfill (S17): queue discovered sources for ingestion.
+
+    Never raises -- a failure to enqueue must not break the live retrieval answer.
+    """
+    discovered = [(s.url, s.title) for s in sources]
+    for src in sources:
+        try:
+            job = enqueue_ingest_job(
+                session,
+                package=package,
+                url=src.url,
+                title=src.title,
+                source_version_spec=source_version,
+                target_version_spec=target_version,
+                trust_level=src.trust_hint,
+                discovered=discovered,
+                reason=miss_reason.value,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("failed to enqueue ingest job for %s: %s", src.url, exc)
+            continue
+        trace.record(
+            tool="ingest_enqueue",
+            target=package,
+            status="ok",
+            params={"job_id": job.id, "url": src.url, "trust": job.trust_level},
+        )
 
 
 def _evidence_item_from_json(raw: Mapping[str, Any]) -> EvidenceItem:

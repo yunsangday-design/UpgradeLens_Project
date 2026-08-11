@@ -34,6 +34,7 @@ def test_alembic_upgrade_creates_all_tables(tmp_path: Path) -> None:
         "retrieval_runs",
         "code_evidence",
         "doc_chunks_fts",
+        "doc_ingest_jobs",
     }.issubset(tables)
 
 

@@ -19,7 +19,9 @@ back to FTS5-only.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import cast
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -135,3 +137,44 @@ class EmbeddingMeta(Base):
     dimension: Mapped[int] = mapped_column(Integer, default=0)
     version: Mapped[str] = mapped_column(String, default="")
     updated_at: Mapped[str] = mapped_column(String, default=_utc_now)
+
+
+class DocIngestJobStatus(StrEnum):
+    """Lifecycle of a background corpus-backfill job (S17)."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class DocIngestJob(Base):
+    """A background job that re-ingests an online-discovered documentation source
+    into the shared corpus (S17).
+
+    Enqueued by the retrieval tool when the local corpus misses and the online
+    fallback actually fetched something (live mode, ``online_fallback`` network
+    policy). A separate worker re-fetches the source through the SSRF-restricted
+    fetcher and persists it so the *next* retrieval for the same package hits the
+    local corpus instead of the network.
+    """
+
+    __tablename__ = "doc_ingest_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    package_name: Mapped[str] = mapped_column(String(255), index=True, default="")
+    source_url: Mapped[str] = mapped_column(String(2048))
+    source_title: Mapped[str] = mapped_column(String(512), default="")
+    source_version_spec: Mapped[str] = mapped_column(String(255), default="")
+    target_version_spec: Mapped[str] = mapped_column(String(255), default="")
+    trust_level: Mapped[str] = mapped_column(String(32), default="community")
+    snapshot_hash: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(32), index=True, default="pending")
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    discovered: Mapped[str] = mapped_column(Text, default="[]")
+    chunks_collected: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[str] = mapped_column(String(32), default=_utc_now)
+    updated_at: Mapped[str] = mapped_column(String(32), default=_utc_now)

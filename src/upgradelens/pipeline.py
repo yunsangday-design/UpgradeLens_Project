@@ -120,6 +120,9 @@ class AssessmentRequest:
     #: dependency without a Skill would silently get a worse search. Kept
     #: switchable so the two paths can be compared in the retrieval baseline.
     legacy_skill_query_boost: bool = False
+    #: Output locale for user-facing labels (S14). Machine-readable enum values
+    #: stay in the JSON; presentation layers translate them to ``*_label`` fields.
+    locale: str = "zh-CN"
 
 
 @dataclass

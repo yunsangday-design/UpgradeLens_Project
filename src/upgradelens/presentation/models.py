@@ -40,6 +40,7 @@ class DocumentReferenceView(BaseModel):
     heading_path: list[str] = []
     snippet: str = ""
     trust_level: str = ""
+    trust_label: str = ""
     source_version_spec: str = ""
     target_version_spec: str = ""
 
@@ -68,6 +69,7 @@ class RagResolutionView(BaseModel):
     score: float = 0.0
     matched_query: str = ""
     trust_level: str = ""
+    trust_label: str = ""
     version_range: str = ""
 
 
@@ -81,6 +83,8 @@ class UpgradePlanStepRef(BaseModel):
     target_files: list[str] = []
     api_symbols: list[str] = []
     evidence_status: str = ""
+    severity_label: str = ""
+    evidence_status_label: str = ""
 
 
 class UpgradePlanRef(BaseModel):
@@ -106,6 +110,8 @@ class UpgradeFindingView(BaseModel):
     model_severity: str = "low"
     status: str = ""
     evidence_status: str = ""
+    severity_label: str = ""
+    evidence_status_label: str = ""
     rule_score: int = 0
     recommendation: str = ""
     code: list[CodeLocationView] = []
@@ -126,6 +132,8 @@ class UpgradeAssessmentView(BaseModel):
     static: bool = False
     # Verdict strictly separates "no risk" from "evidence insufficient".
     verdict: str = ""  # needs_upgrade | no_risk | no_impact | evidence_insufficient
+    verdict_label: str = ""
+    conclusion_label: str = ""
     is_evidence_insufficient: bool = False
     no_impact: bool = False
     is_partial: bool = False

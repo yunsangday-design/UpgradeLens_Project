@@ -19,6 +19,12 @@ from pathlib import Path
 import streamlit as st
 
 from demo.pipeline import run_agent_assess, run_assess
+from upgradelens.presentation.i18n import (
+    evidence_status_label,
+    execution_status_label,
+    issue_code_label,
+    severity_label,
+)
 from upgradelens.report import render_markdown
 
 # -- 颜色 / 样式常量 -------------------------------------------------------- #
@@ -249,7 +255,7 @@ def _render_plan(result: dict[str, object]) -> None:
     st.subheader("📋 执行计划")
 
     for step in steps:
-        icon = _PLAN_STATUS_ICONS.get(step.status, f"[{step.status}]")
+        icon = _PLAN_STATUS_ICONS.get(step.status, f"[{execution_status_label(step.status)}]")
 
         with st.container():
             cols = st.columns([1, 3, 2])
@@ -277,7 +283,7 @@ def _render_plan(result: dict[str, object]) -> None:
     # Plan 状态
     plan_status = getattr(plan, "status", "")
     if plan_status:
-        st.caption(f"计划状态：`{plan_status}`")
+        st.caption(f"计划状态：`{execution_status_label(plan_status)}`")
     notes = getattr(plan, "notes", [])
     if notes:
         with st.expander("📝 计划备注"):
@@ -316,11 +322,12 @@ def _render_risks(result: dict[str, object]) -> None:
             status_icon = _STATUS_COLORS.get(status, "")
 
             with st.expander(
-                f"{sev_icon} [{sev.upper()}] {getattr(risk, 'title', '')}", expanded=True
+                f"{sev_icon} [{severity_label(sev)}] {getattr(risk, 'title', '')}",
+                expanded=True,
             ):
                 cols = st.columns([2, 2, 1])
-                cols[0].caption(f"状态：{status_icon} {status}")
-                cols[1].caption(f"严重性：{sev}")
+                cols[0].caption(f"状态：{status_icon} {evidence_status_label(status)}")
+                cols[1].caption(f"严重性：{severity_label(sev)}")
                 cols[2].caption(f"规则评分：{getattr(risk, 'rule_score', 0)}")
 
                 # 证据
@@ -351,7 +358,7 @@ def _render_risks(result: dict[str, object]) -> None:
                 if issues:
                     st.warning(f"⚠️ Verifier 发现 {len(issues)} 个问题：")
                     for issue in issues:
-                        st.caption(f"  - [{issue.code}] {issue.detail}")
+                        st.caption(f"  - [{issue_code_label(issue.code)}] {issue.detail}")
 
     if degraded_risks:
         st.divider()
@@ -359,8 +366,8 @@ def _render_risks(result: dict[str, object]) -> None:
         for risk in degraded_risks:
             sev = getattr(risk, "severity", "low")
             sev_icon = _SEVERITY_COLORS.get(sev, "🟢")
-            with st.expander(f"{sev_icon} [{sev.upper()}] {getattr(risk, 'title', '')}"):
-                st.caption(f"状态：{getattr(risk, 'status', '')}")
+            with st.expander(f"{sev_icon} [{severity_label(sev)}] {getattr(risk, 'title', '')}"):
+                st.caption(f"状态：{evidence_status_label(str(getattr(risk, 'status', '')))}")
                 st.caption(f"原因：{getattr(risk, 'reason', '证据不足')}")
                 code_ev = getattr(risk, "code_evidence_ids", [])
                 if code_ev:

@@ -156,7 +156,9 @@ class RunStore:
         self._write_json("report.json", verified.model_dump(mode="json"))
         self._write_text("report.md", render_markdown(verified))
 
-    def write_assessment(self, outcome: Any, *, upgrade_plan: Any = None) -> None:
+    def write_assessment(
+        self, outcome: Any, *, upgrade_plan: Any = None, locale: str = "zh-CN"
+    ) -> None:
         """S12: persist the flattened presentation view + resolved evidence map.
 
         ``report.json`` keeps the raw :class:`VerifiedReport` for backwards
@@ -165,7 +167,7 @@ class RunStore:
         """
         from upgradelens.presentation.projector import project_assessment
 
-        view = project_assessment(outcome, upgrade_plan=upgrade_plan)
+        view = project_assessment(outcome, upgrade_plan=upgrade_plan, locale=locale)
         self._write_json("assessment.json", view.model_dump(mode="json"))
 
     def write_upgrade_plan(self, plan: Any) -> None:

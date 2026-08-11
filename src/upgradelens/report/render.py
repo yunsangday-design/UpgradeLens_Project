@@ -96,7 +96,9 @@ def _risk_block(risk: VerifiedRisk, *, index: int) -> list[str]:
     return lines
 
 
-def render_markdown(report: VerifiedReport, max_chars: int | None = None) -> str:
+def render_markdown(
+    report: VerifiedReport, max_chars: int | None = None, locale: str = "zh-CN"
+) -> str:
     """Render ``report`` as a Markdown document.
 
     If ``max_chars`` is provided and the document is longer, the body is cut at
@@ -190,7 +192,7 @@ def render_markdown(report: VerifiedReport, max_chars: int | None = None) -> str
     return "\n".join(truncated).rstrip() + notice
 
 
-def render_plan_markdown(plan: UpgradePlan) -> str:
+def render_plan_markdown(plan: UpgradePlan, locale: str = "zh-CN") -> str:
     """Render a :class:`UpgradePlan` as a Chinese 修改说明.
 
     Pure and deterministic; the plan is a read-only projection so the same plan

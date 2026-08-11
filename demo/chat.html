@@ -183,7 +183,8 @@ function renderFindings(data) {
 function renderFinding(f) {
   const sev = f.severity || 'low';
   const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
-  let h = `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${f.status||sev}]</span> ${escHtml(f.title)}`;
+  const statusLabel = f.evidence_status_label || f.evidence_status || f.status || sev;
+  let h = `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${escHtml(statusLabel)}]</span> ${escHtml(f.title)}`;
   if (f.recommendation) h += `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(f.recommendation)}</span>`;
   if (f.migration && f.migration.problem) h += `<br><span style="color:var(--muted);font-size:0.75rem">❗ ${escHtml(f.migration.problem)}</span>`;
   (f.code||[]).forEach(c => {
@@ -192,7 +193,7 @@ function renderFinding(f) {
   });
   (f.docs||[]).forEach(d => {
     const vr = d.source_version_spec ? ` ${escHtml(d.source_version_spec)}→${escHtml(d.target_version_spec)}` : '';
-    h += `<div style="font-size:0.72rem;color:var(--green)">📚 ${escHtml(d.title||'')} <span style="color:var(--muted)">(trust:${escHtml(d.trust_level||'')}${vr})</span></div>`;
+    h += `<div style="font-size:0.72rem;color:var(--green)">📚 ${escHtml(d.title||'')} <span style="color:var(--muted)">(可信度:${escHtml(d.trust_label||d.trust_level||'')}${vr})</span></div>`;
     if (d.snippet) h += `<pre style="font-size:0.68rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(d.snippet)}</pre>`;
   });
   const mig = f.migration || {};
@@ -215,11 +216,13 @@ function renderFinding(f) {
 }
 
 function renderUpgradePlan(p) {
+  const PLAN_MODE_LABELS = {patch_draft:'补丁草稿', sandbox_apply:'沙箱应用'};
   let h = `<div class="result-section"><h4>🔧 修改计划 (UpgradePlan)</h4>`;
-  h += `<div class="metrics-row">
+    h += `<div class="metrics-row">
     <span class="m-chip">依赖: <span class="val">${escHtml(p.target_dependency||'')}</span></span>
     <span class="m-chip">${escHtml(p.source_version_spec||'')}→${escHtml(p.target_version_spec||'')}</span>
-    <span class="m-chip">步骤: <span class="val">${p.step_count}</span></span>
+    <span class="m-chip">模式: <span class="val">${escHtml(PLAN_MODE_LABELS[p.mode]||p.mode||'')}</span></span>
+    <span class="m-chip">步骤: <span class="val">${(p.steps||[]).length}</span></span>
     <span class="m-chip">部署契约: <span class="val">${p.deploy_contract}</span></span>
   </div>`;
   if (p.warnings && p.warnings.length) {
@@ -227,8 +230,9 @@ function renderUpgradePlan(p) {
   }
   h += '<ol style="margin-left:1.2rem;font-size:0.8rem;">';
   p.steps.forEach(s => {
-    const sev = s.severity || '';
-    h += `<li style="margin:0.4rem 0;"><b>${escHtml(s.title||'')}</b> <span style="color:var(--muted)">[${escHtml(sev)}/${escHtml(s.evidence_status||'')}]</span>`;
+    const sev = s.severity_label || s.severity || '';
+    const estatus = s.evidence_status_label || s.evidence_status || '';
+    h += `<li style="margin:0.4rem 0;"><b>${escHtml(s.title||'')}</b> <span style="color:var(--muted)">[${escHtml(sev)}/${escHtml(estatus)}]</span>`;
     if (s.change_reason) h += `<br><span style="color:var(--muted);font-size:0.75rem">💡 为什么改: ${escHtml(s.change_reason)}</span>`;
     if (s.target_files && s.target_files.length) h += `<br><span style="color:var(--blue);font-size:0.72rem">📍 ${escHtml(s.target_files.join(', '))}</span>`;
     if (s.api_symbols && s.api_symbols.length) h += `<br><span style="color:var(--muted);font-size:0.72rem">🔣 API: ${escHtml(s.api_symbols.join(', '))}</span>`;
@@ -277,7 +281,7 @@ function renderResult(data) {
       <span class="m-chip">已验证风险: <span class="val">${(v.verified_risks||[]).length}</span></span>
       <span class="m-chip">降级风险: <span class="val">${(v.degraded_risks||[]).length}</span></span>
       <span class="m-chip">引用率: <span class="val">${pct(v.citation_existence_rate)}</span></span>
-      ${data.assessment && data.assessment.verdict ? `<span class="m-chip">判定: <span class="val">${escHtml(data.assessment.verdict)}</span></span>` : ''}
+      ${data.assessment && data.assessment.verdict_label ? `<span class="m-chip">判定: <span class="val">${escHtml(data.assessment.verdict_label)}</span></span>` : ''}
       ${data.assessment && data.assessment.is_evidence_insufficient ? `<span class="m-chip">⚠️ 证据不足</span>` : ''}
     </div>`;
 

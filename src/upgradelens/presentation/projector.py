@@ -18,6 +18,13 @@ from upgradelens.pipeline import AssessmentOutcome
 from upgradelens.plan.upgrade_plan import UpgradePlan
 from upgradelens.verify.models import Conclusion, VerifiedReport, VerifiedRisk
 
+from .i18n import (
+    conclusion_label,
+    evidence_status_label,
+    severity_label,
+    trust_label,
+    verdict_label,
+)
 from .models import (
     CodeLocationView,
     DocumentReferenceView,
@@ -49,24 +56,27 @@ def _code_view(item: EvidenceItem) -> CodeLocationView:
     )
 
 
-def _doc_view(item: EvidenceItem) -> DocumentReferenceView:
+def _doc_view(item: EvidenceItem, locale: str = "zh-CN") -> DocumentReferenceView:
     m = item.meta
+    trust = str(m.get("trust_level", ""))
     return DocumentReferenceView(
         evidence_id=item.evidence_id,
         title=str(m.get("title", "")),
         url=str(m.get("url", "")),
         heading_path=list(m.get("heading_path") or []),
         snippet=str(m.get("snippet", "")),
-        trust_level=str(m.get("trust_level", "")),
+        trust_level=trust,
+        trust_label=trust_label(trust, locale),
         source_version_spec=str(m.get("source_version", "")),
         target_version_spec=str(m.get("target_version", "")),
     )
 
 
-def _rag_view(item: EvidenceItem) -> RagResolutionView:
+def _rag_view(item: EvidenceItem, locale: str = "zh-CN") -> RagResolutionView:
     m = item.meta
     src = str(m.get("source_version", ""))
     tgt = str(m.get("target_version", ""))
+    trust = str(m.get("trust_level", ""))
     return RagResolutionView(
         evidence_id=item.evidence_id,
         source_id=str(m.get("source_id", "")),
@@ -77,7 +87,8 @@ def _rag_view(item: EvidenceItem) -> RagResolutionView:
         snapshot_hash=str(m.get("snapshot_hash", "")),
         score=float(m.get("score") or 0.0),
         matched_query=str(m.get("matched_query", "")),
-        trust_level=str(m.get("trust_level", "")),
+        trust_level=trust,
+        trust_label=trust_label(trust, locale),
         version_range=f"{src}->{tgt}" if (src or tgt) else "",
     )
 
@@ -88,7 +99,7 @@ def _status_value(value: Any) -> str:
     return str(value)
 
 
-def _plan_step_refs(plan: UpgradePlan) -> list[UpgradePlanStepRef]:
+def _plan_step_refs(plan: UpgradePlan, locale: str = "zh-CN") -> list[UpgradePlanStepRef]:
     refs: list[UpgradePlanStepRef] = []
     for step in plan.steps:
         refs.append(
@@ -100,6 +111,8 @@ def _plan_step_refs(plan: UpgradePlan) -> list[UpgradePlanStepRef]:
                 target_files=list(step.target_files),
                 api_symbols=list(step.api_symbols),
                 evidence_status=_status_value(step.evidence_status),
+                severity_label=severity_label(step.severity, locale),
+                evidence_status_label=evidence_status_label(step.evidence_status, locale),
             )
         )
     return refs
@@ -134,6 +147,7 @@ def _finding(
     risk: VerifiedRisk,
     bundle: EvidenceBundle,
     plan_steps: list[UpgradePlanStepRef],
+    locale: str = "zh-CN",
 ) -> UpgradeFindingView:
     code_items = _collect_items(bundle, risk.code_evidence_ids)
     doc_items = _collect_items(bundle, risk.doc_evidence_ids)
@@ -153,11 +167,13 @@ def _finding(
         model_severity=risk.model_severity,
         status=_status_value(risk.status),
         evidence_status=_status_value(risk.status),
+        severity_label=severity_label(risk.severity, locale),
+        evidence_status_label=evidence_status_label(risk.status, locale),
         rule_score=risk.rule_score,
         recommendation=risk.recommendation,
         code=[_code_view(c) for c in code_items],
-        docs=[_doc_view(d) for d in doc_items],
-        rag=[_rag_view(d) for d in doc_items],
+        docs=[_doc_view(d, locale) for d in doc_items],
+        rag=[_rag_view(d, locale) for d in doc_items],
         migration=MigrationAdviceView(
             problem=risk.problem,
             behavior_change=risk.behavior_change,
@@ -175,6 +191,7 @@ def project_assessment(
     *,
     upgrade_plan: UpgradePlan | None = None,
     now: datetime | None = None,
+    locale: str = "zh-CN",
 ) -> UpgradeAssessmentView:
     """Project an assessment outcome into a self-contained presentation view.
 
@@ -197,7 +214,7 @@ def project_assessment(
     plan_ref: UpgradePlanRef | None = None
     plan_steps: list[UpgradePlanStepRef] = []
     if upgrade_plan is not None:
-        plan_steps = _plan_step_refs(upgrade_plan)
+        plan_steps = _plan_step_refs(upgrade_plan, locale)
         plan_ref = _plan_ref(upgrade_plan, plan_steps)
 
     gen_at = (now or datetime.now(UTC)).isoformat()
@@ -209,12 +226,14 @@ def project_assessment(
         target_version_spec=report.target_version_spec if report else "",
         static=bool(verified.static),
         verdict=verdict,
+        verdict_label=verdict_label(verdict, locale),
+        conclusion_label=conclusion_label(verified.conclusion, locale),
         is_evidence_insufficient=is_ev,
         no_impact=verdict == "no_impact",
         is_partial=bool(verified.partial) or bool(outcome.degradations),
         degradations=list(outcome.degradations),
-        verified_risks=[_finding(r, bundle, plan_steps) for r in verified_risks],
-        degraded_risks=[_finding(r, bundle, plan_steps) for r in degraded_risks],
+        verified_risks=[_finding(r, bundle, plan_steps, locale) for r in verified_risks],
+        degraded_risks=[_finding(r, bundle, plan_steps, locale) for r in degraded_risks],
         recommended_tests=[t.model_dump(mode="json") for t in verified.recommended_tests],
         citation_existence_rate=verified.citation_existence_rate,
         upgrade_plan=plan_ref,

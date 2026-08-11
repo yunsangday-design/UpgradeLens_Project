@@ -158,6 +158,7 @@ class DependencyUpgradeAgent:
         ref: str | None = None,
         out_dir: str | Path | None = None,
         dry_run: bool = False,
+        locale: str = "zh-CN",
     ) -> AgentResult:
         """Assess a dependency upgrade from a natural-language ``goal``.
 
@@ -310,7 +311,7 @@ class DependencyUpgradeAgent:
             logger.warning("build_upgrade_plan failed: %s", exc)
             upgrade_plan = None
         try:
-            assessment = project_assessment(outcome, upgrade_plan=upgrade_plan)
+            assessment = project_assessment(outcome, upgrade_plan=upgrade_plan, locale=locale)
         except Exception as exc:  # pragma: no cover - projection is best-effort
             logger.warning("project_assessment failed: %s", exc)
             assessment = None
@@ -318,7 +319,7 @@ class DependencyUpgradeAgent:
         if store is not None:
             store.write_trace(trace)
             store.write_report(outcome.verified)
-            store.write_assessment(outcome, upgrade_plan=upgrade_plan)
+            store.write_assessment(outcome, upgrade_plan=upgrade_plan, locale=locale)
             store.write_upgrade_plan(upgrade_plan)
             store.write_run_md(
                 intent=intent_dict,

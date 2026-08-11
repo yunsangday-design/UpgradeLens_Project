@@ -1,339 +1,488 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>UpgradeLens — 对话式 Agent</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>upgradelens 升级影响助手</title>
 <style>
-:root { --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --blue: #58a6ff; --green: #3fb950; --yellow: #d29922; --red: #f85149; }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
-
-/* Header */
-.app-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.8rem 1.5rem; display: flex; align-items: center; gap: 0.8rem; }
-.app-header h1 { font-size: 1rem; color: var(--blue); }
-.app-header span { font-size: 0.8rem; color: var(--muted); }
-
-/* Chat area */
-.chat-area { flex: 1; overflow-y: auto; padding: 1rem 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
-
-/* Messages */
-.msg { max-width: 90%; padding: 0.8rem1rem; border-radius: 12px; font-size: 0.9rem; line-height: 1.5; animation: fadeIn 0.3s; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-.msg.user { align-self: flex-end; background: #1f6feb; color: white; border-bottom-right-radius: 4px; }
-.msg.agent { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; max-width: 95%; }
-.msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 0.8rem; }
-.msg.error { align-self: flex-start; background: #f8514922; border: 1px solid var(--red); color: var(--red); }
-
-/* Result blocks inside agent message */
-.result-block { margin-top: 0.8rem; }
-.result-section { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; margin-top: 0.6rem; }
-.result-section h4 { color: var(--blue); font-size: 0.8rem; margin-bottom: 0.5rem; }
-
-/* Metrics row */
-.metrics-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }
-.m-chip { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.6rem; font-size: 0.75rem; }
-.m-chip .val { font-weight: 700; color: var(--blue); }
-
-/* Steps */
-.step-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; font-size: 0.8rem; }
-.step-icon { min-width: 1.2rem; text-align: center; }
-
-/* Risks */
-.risk-item { border-left: 3px solid var(--border); padding: 0.4rem 0.6rem; margin: 0.3rem 0; font-size: 0.8rem; border-radius: 0 4px 4px 0; background: var(--bg); }
-.risk-item.high { border-left-color: var(--red); }
-.risk-item.medium { border-left-color: var(--yellow); }
-.risk-item.low { border-left-color: var(--green); }
-.risk-sev { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; }
-
-/* Input area */
-.input-area { background: var(--surface); border-top: 1px solid var(--border); padding: 0.8rem 1.5rem; display: flex; gap: 0.5rem; }
-.input-area input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1rem; color: var(--text); font-size: 0.9rem; outline: none; }
-.input-area input:focus { border-color: var(--blue); }
-.input-area input::placeholder { color: var(--muted); }
-.input-area button { background: #1f6feb; border: none; border-radius: 8px; padding: 0.6rem 1.2rem; color: white; font-size: 0.85rem; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-.input-area button:hover { background: #388bfd; }
-.input-area button:disabled { background: var(--border); cursor: not-allowed; }
-
-/* Settings bar */
-.settings { padding: 0.4rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 1rem; align-items: center; font-size: 0.75rem; flex-wrap: wrap; }
-.settings label { color: var(--muted); }
-.settings input, .settings select { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.2rem 0.5rem; color: var(--text); font-size: 0.75rem; }
-.settings input { width: 180px; }
-
-/* Loading spinner */
-.loading { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 0.5rem; vertical-align: middle; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Collapsible */
-details { margin-top: 0.5rem; }
-details summary { cursor: pointer; color: var(--blue); font-size: 0.8rem; }
-details summary:hover { text-decoration: underline; }
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d212b;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #4f8cff;
+    --green: #34c759;
+    --amber: #ffb020;
+    --red: #ff5b5b;
+    --purple: #b06bff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  header h1 { margin: 0; font-size: 1.05rem; }
+  header .sub { color: var(--muted); font-size: 0.8rem; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 1rem; }
+  .composer {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .composer input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.95rem;
+  }
+  .composer button, .quick select {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.7rem 1rem;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  .composer button:disabled { opacity: 0.5; cursor: default; }
+  .quick { display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center; }
+  .quick select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .msg { margin-bottom: 1rem; }
+  .msg .who { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.25rem; }
+  .bubble {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+  }
+  .bubble.user { background: var(--panel-2); }
+  .result-section { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 0 0 0.5rem; margin-top: 0.4rem; }
+  .result-header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+    padding: 0.9rem 1rem 0.4rem;
+  }
+  .result-header h2 { margin: 0; font-size: 1.1rem; }
+  .badges { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-left: auto; }
+  .badge {
+    font-size: 0.72rem; padding: 0.18rem 0.55rem; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+  }
+  .badge.mode-static { color: #c7cdd9; border-color: #3a4150; }
+  .badge.mode-model { color: #9cc2ff; border-color: #2f4d80; background: #16243d; }
+  .badge.kb-hit { color: #8be0a4; border-color: #2c5c3c; background: #14271a; }
+  .badge.online-supplement { color: #d6b3ff; border-color: #553a82; background: #241733; }
+  .badge.kb-writing { color: #ffd98a; border-color: #6b531f; background: #2a2113; }
+  .badge.kb-failed { color: #ffb3b3; border-color: #6b2f2f; background: #2a1515; }
+  .summary {
+    padding: 0.8rem 1rem; border-bottom: 1px solid var(--border);
+    display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem;
+  }
+  .summary dt { color: var(--muted); }
+  .summary dd { margin: 0; }
+  .section { padding: 0.9rem 1rem; border-bottom: 1px solid var(--border); }
+  .section:last-child { border-bottom: none; }
+  .section > h3 { margin: 0 0 0.7rem; font-size: 1rem; }
+  .pill {
+    display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem;
+    border-radius: 999px; border: 1px solid var(--border);
+    color: var(--muted); margin-left: 0.4rem;
+  }
+  .pill.critical, .pill.high { color: var(--red); border-color: #6b2f2f; }
+  .pill.medium { color: var(--amber); border-color: #6b531f; }
+  .pill.verified { color: var(--green); border-color: #2c5c3c; }
+  .pill.partially_verified { color: var(--amber); border-color: #6b531f; }
+  .pill.insufficient_evidence, .pill.conflicting_evidence, .pill.not_applicable {
+    color: var(--muted); border-color: #3a4150; }
+  .finding {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 0.8rem 0.9rem; margin-bottom: 0.8rem;
+  }
+  .finding h4 { margin: 0 0 0.4rem; font-size: 0.98rem; }
+  .finding .detail { color: #c7cdd9; font-size: 0.9rem; }
+  .finding .reco { margin-top: 0.5rem; font-size: 0.92rem; }
+  .finding .reco b { color: var(--text); }
+  .unconfirmed { background: #241f12; border-color: #6b531f; }
+  .unconfirmed .hint {
+    margin-top: 0.5rem; font-size: 0.85rem; color: var(--amber);
+  }
+  .refs, .docs { margin-top: 0.5rem; }
+  .refs summary, .docs summary, details.fold > summary {
+    cursor: pointer; color: var(--accent); font-size: 0.85rem;
+    list-style: none; user-select: none;
+  }
+  .refs summary::-webkit-details-marker,
+  .docs summary::-webkit-details-marker { display: none; }
+  .code { display: block; background: #0b0d11; border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.6rem 0.7rem; overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem; color: #d6dbe6; margin-top: 0.4rem; }
+  .loc { color: var(--muted); font-size: 0.8rem; }
+  .docitem { padding: 0.4rem 0; border-top: 1px dashed var(--border); }
+  .docitem a { color: var(--accent); text-decoration: none; }
+  .docitem a:hover { text-decoration: underline; }
+  .trust { font-size: 0.72rem; padding: 0.05rem 0.4rem; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); margin-left: 0.3rem; }
+  .trust.official { color: #8be0a4; border-color: #2c5c3c; }
+  .trust.community { color: #ffd98a; border-color: #6b531f; }
+  .trust.unverified { color: var(--muted); }
+  .plan-step { background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; }
+  .plan-step .meta { color: var(--muted); font-size: 0.8rem; margin-top: 0.3rem; }
+  .tests { margin: 0; padding-left: 1.1rem; }
+  .tests li { margin: 0.2rem 0; }
+  details.fold { margin-top: 0.4rem; }
+  details.fold > summary { padding: 0.5rem 1rem; color: var(--muted); }
+  .fold-body { padding: 0 1rem 1rem; }
+  .trace-item, .plan-row { padding: 0.4rem 0; border-top: 1px solid var(--border);
+    font-size: 0.88rem; }
+  .trace-item .t { color: var(--accent); }
+  .cost { font-size: 0.85rem; color: var(--muted); }
+  .cost code { color: var(--text); }
+  .degrade { color: var(--amber); font-size: 0.88rem; }
+  .error { color: var(--red); }
+  .loading { color: var(--muted); font-style: italic; }
+  footer { color: var(--muted); font-size: 0.75rem; text-align: center;
+    padding: 1rem; }
 </style>
 </head>
 <body>
+<header>
+  <h1>upgradelens 升级影响助手</h1>
+  <div class="sub">把"我要升级 pydantic 到 2.x"之类的目标发给我，我会给出破坏性变更、修改建议和可执行的升级计划。</div>
+</header>
 
-<div class="app-header">
-  <h1>🔍 UpgradeLens</h1>
-  <span>对话式依赖升级影响分析 Agent</span>
+<div class="wrap">
+  <div class="composer">
+    <input id="input" type="text" placeholder="例如：把 pydantic 升级到 2.7" />
+    <button id="send">发送</button>
+  </div>
+  <div class="quick">
+    <label for="mode">运行模式</label>
+    <select id="mode">
+      <option value="fake">fake（离线模拟，演示默认）</option>
+      <option value="live">live（真实模型）</option>
+    </select>
+    <label for="dep">依赖</label>
+    <select id="dep">
+      <option value="pydantic">pydantic</option>
+      <option value="fastapi">fastapi</option>
+      <option value="requests">requests</option>
+      <option value="celery">celery</option>
+      <option value="sqlalchemy">sqlalchemy</option>
+    </select>
+  </div>
+  <div id="log"></div>
 </div>
 
-<div class="settings">
-  <label>仓库路径 <input id="cfg-repo" value="" placeholder="留空则按依赖自动选示例仓库"></label>
-  <label>依赖 <input id="cfg-dep" value="" placeholder="自动从query 提取" style="width:100px;"></label>
-  <label>目标版本 <input id="cfg-ver" value="" placeholder="自动提取" style="width:80px;"></label>
-  <label>模式 <select id="cfg-mode"><option value="fake">fake (离线)</option><option value="live">live</option><option value="replay">replay</option></select></label>
-</div>
-
-<div class="chat-area" id="chat">
-  <div class="msg system">👋 输入升级评估请求，例如：<b>upgrade pydantic to 2.0</b> 或 <b>帮我看看 pydantic 升级到 2.0 有什么影响</b></div>
-</div>
-
-<div class="input-area">
-  <input id="input" type="text" placeholder="输入升级评估请求..." autofocus>
-  <button id="send-btn" onclick="sendMsg()">发送</button>
-</div>
+<footer>upgradelens-agent · 纯静态演示（零额外 Web 框架）</footer>
 
 <script>
-const chat = document.getElementById('chat');
-const input = document.getElementById('input');
-const sendBtn = document.getElementById('send-btn');
-
-input.addEventListener('keydown', e => { if (e.key === 'Enter' && !sendBtn.disabled) sendMsg(); });
-
-function addMsg(type, html) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + type;
-  div.innerHTML = html;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function el(tag, attrs, children) {
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    if (k === "class") n.className = attrs[k];
+    else if (k === "html") n.innerHTML = attrs[k];
+    else n.setAttribute(k, attrs[k]);
+  }
+  if (children) (Array.isArray(children) ? children : [children]).forEach((c) => {
+    if (c == null) return;
+    n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  });
+  return n;
 }
 
-async function sendMsg() {
+// ----------------------------------------------------------------------- badges
+function renderBadges(badges) {
+  const wrap = el("div", { class: "badges" });
+  (badges || []).forEach((b) =>
+    wrap.appendChild(el("span", { class: "badge " + esc(b.kind) }, b.text))
+  );
+  return wrap;
+}
+
+// ------------------------------------------------------------------- code refs
+function renderCodeRefs(refs) {
+  if (!refs || !refs.length) return null;
+  const d = el("details", { class: "refs" }, [
+    el("summary", null, "代码位置（" + refs.length + "）"),
+  ]);
+  refs.forEach((r) => {
+    const loc = esc(r.file) + (r.line_start ? ":" + r.line_start : "");
+    const head = el("div", { class: "loc" }, loc + (r.symbol ? "  ·  " + esc(r.symbol) : ""));
+    d.appendChild(head);
+    if (r.note) d.appendChild(el("div", { class: "loc" }, esc(r.note)));
+    if (r.snippet) d.appendChild(el("code", { class: "code" }, esc(r.snippet)));
+  });
+  return d;
+}
+
+// ----------------------------------------------------------------------- docs
+function renderDocs(docs) {
+  if (!docs || !docs.length) return null;
+  const d = el("details", { class: "docs" }, [
+    el("summary", null, "文档证据（" + docs.length + "）"),
+  ]);
+  docs.forEach((doc) => {
+    const title = doc.url
+      ? el("a", { href: esc(doc.url), target: "_blank", rel: "noopener" }, esc(doc.title || doc.url))
+      : el("span", null, esc(doc.title || "（无标题文档）"));
+    const trust = doc.trust
+      ? el("span", { class: "trust " + esc(doc.trust) }, esc(doc.trust))
+      : null;
+    const meta = [
+      doc.source ? el("span", { class: "loc" }, "来源：" + esc(doc.source)) : null,
+      doc.version_range ? el("span", { class: "loc" }, "版本：" + esc(doc.version_range)) : null,
+      doc.heading ? el("span", { class: "loc" }, "章节：" + esc(doc.heading)) : null,
+    ].filter(Boolean);
+    d.appendChild(el("div", { class: "docitem" }, [title, trust, ...meta]));
+  });
+  return d;
+}
+
+// -------------------------------------------------------------------- finding
+function renderFinding(f, kind) {
+  const cls = "finding" + (kind === "unconfirmed" ? " unconfirmed" : "");
+  const node = el("div", { class: cls });
+  const sev = f.severity ? el("span", { class: "pill " + esc(f.severity) }, esc(f.severity)) : null;
+  const stat = f.evidence_status
+    ? el("span", { class: "pill " + esc(f.evidence_status) }, esc(f.evidence_status))
+    : null;
+  node.appendChild(el("h4", null, [esc(f.title || "未命名问题"), sev, stat]));
+  if (f.detail) node.appendChild(el("div", { class: "detail" }, esc(f.detail)));
+  if (f.recommendation)
+    node.appendChild(el("div", { class: "reco" }, [el("b", null, "建议："), esc(f.recommendation)]));
+  const refs = renderCodeRefs(f.code_refs);
+  if (refs) node.appendChild(refs);
+  const docs = renderDocs(f.docs);
+  if (docs) node.appendChild(docs);
+  if (f.migration) {
+    const m = f.migration;
+    if (m.before) node.appendChild(el("div", { class: "loc" }, "修改前"));
+    if (m.before) node.appendChild(el("code", { class: "code" }, esc(m.before)));
+    if (m.after) node.appendChild(el("div", { class: "loc" }, "修改后"));
+    if (m.after) node.appendChild(el("code", { class: "code" }, esc(m.after)));
+    if (m.steps && m.steps.length) {
+      const ul = el("ul", { class: "tests" });
+      m.steps.forEach((s) => ul.appendChild(el("li", null, esc(s))));
+      node.appendChild(el("div", { class: "loc" }, "迁移步骤"));
+      node.appendChild(ul);
+    }
+    if (m.verification) node.appendChild(el("div", { class: "loc" }, "验证：" + esc(m.verification)));
+  }
+  if (f.verification && !(f.migration && f.migration.verification))
+    node.appendChild(el("div", { class: "loc" }, "验证：" + esc(f.verification)));
+  if (f.plan_step_ref)
+    node.appendChild(el("div", { class: "loc" }, "对应计划步骤：" + esc(f.plan_step_ref)));
+  if (kind === "unconfirmed")
+    node.appendChild(
+      el("div", { class: "hint" },
+        "证据不足：此问题尚未验证，不作为确定性修改动作；下一步请补齐缺失的文档或代码证据后再确认。")
+    );
+  return node;
+}
+
+// --------------------------------------------------------------------- summary
+function renderSummary(a) {
+  const dl = el("dl", { class: "summary" });
+  const row = (k, v) => { dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", null, v)); };
+  row("升级对象", esc(a.dependency || "—"));
+  row("版本范围", esc(a.source_version || "?") + "  →  " + esc(a.target_version || "?"));
+  row("结论", esc(a.conclusion || "—"));
+  row("判定", esc(a.verdict || "—"));
+  if (a.is_partial) row("完整性", "部分验证（证据不完整）");
+  if (a.note) row("备注", esc(a.note));
+  return dl;
+}
+
+// --------------------------------------------------------------------- result
+function renderResult(result) {
+  const a = result.assessment || {};
+  const section = el("div", { class: "result-section" });
+
+  // 1) header + badges
+  const header = el("div", { class: "result-header" }, [
+    el("h2", null, "升级评估结果"),
+    renderBadges(result.badges),
+  ]);
+  section.appendChild(header);
+
+  // 2) summary
+  section.appendChild(renderSummary(a));
+
+  // 3) verified findings
+  if (a.verified_risks && a.verified_risks.length) {
+    const blk = el("div", { class: "section" }, [
+      el("h3", null, "已验证问题（" + a.verified_risks.length + "）"),
+    ]);
+    a.verified_risks.forEach((f) => blk.appendChild(renderFinding(f, "verified")));
+    section.appendChild(blk);
+  } else if (!a.degraded_risks || !a.degraded_risks.length) {
+    section.appendChild(
+      el("div", { class: "section" },
+        el("div", { class: "loc" },
+          "本次运行未识别出已验证或待确认的破坏性变更（详见上方结论与降级说明）。"))
+    );
+  }
+
+  // 4) unconfirmed (yellow) zone
+  if (a.degraded_risks && a.degraded_risks.length) {
+    const blk = el("div", { class: "section" }, [
+      el("h3", null, "待确认问题（" + a.degraded_risks.length + "）"),
+    ]);
+    a.degraded_risks.forEach((f) => blk.appendChild(renderFinding(f, "unconfirmed")));
+    section.appendChild(blk);
+  }
+
+  // 5) recommended tests
+  if (a.recommended_tests && a.recommended_tests.length) {
+    const ul = el("ul", { class: "tests" });
+    a.recommended_tests.forEach((t) => ul.appendChild(el("li", null, esc(t))));
+    section.appendChild(el("div", { class: "section" }, [
+      el("h3", null, "推荐测试"),
+      ul,
+    ]));
+  }
+
+  // 6) upgrade plan
+  if (result.upgrade_plan && result.upgrade_plan.steps && result.upgrade_plan.steps.length) {
+    const blk = el("div", { class: "section" }, [el("h3", null, "升级修改计划")]);
+    result.upgrade_plan.steps.forEach((s) => {
+      const meta = [
+        s.target_files && s.target_files.length ? "目标文件：" + s.target_files.join(", ") : null,
+        s.api_symbols && s.api_symbols.length ? "API：" + s.api_symbols.join(", ") : null,
+        s.evidence_status ? "证据：" + esc(s.evidence_status) : null,
+        s.status ? "状态：" + esc(s.status) : null,
+      ].filter(Boolean).join("  ·  ");
+      const children = [
+        el("div", null, [esc(s.phase || "") + (s.title ? "： " + esc(s.title) : "")]),
+        el("div", { class: "meta" }, meta),
+        s.detail ? el("div", { class: "detail" }, esc(s.detail)) : null,
+        s.completion_criteria ? el("div", { class: "loc" }, "完成条件：" + esc(s.completion_criteria)) : null,
+        s.recommended_tests && s.recommended_tests.length
+          ? el("div", { class: "loc" }, "推荐测试：" + esc(s.recommended_tests.join("；"))) : null,
+      ];
+      blk.appendChild(el("div", { class: "plan-step" }, children.filter(Boolean)));
+    });
+    section.appendChild(blk);
+  }
+
+  // 7) analysis process (folded): plan / trace / cost / degradations
+  const fold = el("details", { class: "fold" }, [el("summary", null, "分析过程（执行计划 / 工具 trace / 成本 / 降级）")]);
+  const body = el("div", { class: "fold-body" });
+  if (result.plan && result.plan.steps && result.plan.steps.length) {
+    body.appendChild(el("h4", null, "Agent 执行计划"));
+    result.plan.steps.forEach((s) =>
+      body.appendChild(el("div", { class: "plan-row" },
+        esc(s.seq) + ". " + esc(s.name) + " — " + esc(s.description || "") + " [" + esc(s.status) + "]"))
+    );
+  }
+  if (result.trace && Array.isArray(result.trace) && result.trace.length) {
+    body.appendChild(el("h4", null, "工具调用 Trace"));
+    result.trace.forEach((t) =>
+      body.appendChild(el("div", { class: "trace-item" }, [
+        el("span", { class: "t" }, esc(t.tool)),
+        document.createTextNode("：" + esc(t.target || "") + " [" + esc(t.status || "") + "]"),
+      ]))
+    );
+  }
+  if (result.cost) {
+    const c = result.cost;
+    body.appendChild(el("h4", null, "成本"));
+    body.appendChild(el("div", { class: "cost" }, [
+      el("code", null, "tokens " + (c.total_tokens ?? 0)),
+      document.createTextNode("  ·  调用 " + (c.call_count ?? 0) + " 次"),
+    ]));
+  }
+  if (result.degradations && result.degradations.length) {
+    body.appendChild(el("h4", null, "降级说明"));
+    const ul = el("ul", { class: "tests" });
+    result.degradations.forEach((d) => ul.appendChild(el("li", { class: "degrade" }, esc(d))));
+    body.appendChild(ul);
+  }
+  fold.appendChild(body);
+  section.appendChild(fold);
+
+  return section;
+}
+
+// ----------------------------------------------------------------------- send
+function addMsg(who, content) {
+  const log = document.getElementById("log");
+  const msg = el("div", { class: "msg" }, [
+    el("div", { class: "who" }, who),
+    typeof content === "string" ? el("div", { class: "bubble" }, content) : el("div", { class: "bubble" }, content),
+  ]);
+  log.appendChild(msg);
+  log.scrollTop = log.scrollHeight;
+  return msg;
+}
+
+async function send() {
+  const input = document.getElementById("input");
   const goal = input.value.trim();
   if (!goal) return;
-  input.value = '';
-  sendBtn.disabled = true;
-
-  addMsg('user', escHtml(goal));
-  const loadingMsg = addMsg('agent', '<span class="loading"></span> Agent 正在分析中...');
-
-  const body = {
-    goal,
-    repo: document.getElementById('cfg-repo').value || null,
-    dependency: document.getElementById('cfg-dep').value || null,
-    target_version: document.getElementById('cfg-ver').value || null,
-    mode: document.getElementById('cfg-mode').value,
-  };
-
+  const mode = document.getElementById("mode").value;
+  const dep = document.getElementById("dep").value;
+  addMsg("你", goal);
+  input.value = "";
+  const btn = document.getElementById("send");
+  btn.disabled = true;
+  const loading = addMsg("助手", el("span", { class: "loading" }, "分析中…"));
   try {
-    const resp = await fetch('/api/run', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
+    const resp = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, mode, dependency: dep }),
     });
     const data = await resp.json();
-    loadingMsg.remove();
-
-    if (data.error && !data.intent) {
-      addMsg('error', '❌ ' + escHtml(data.error));
+    loading.remove();
+    if (data.error) {
+      addMsg("助手", el("div", { class: "error" }, esc(data.error)));
     } else {
-      addMsg('agent', renderResult(data));
+      addMsg("助手", renderResult(data));
     }
-  } catch (err) {
-    loadingMsg.remove();
-    addMsg('error', '❌ 网络错误: ' + escHtml(err.message));
+  } catch (e) {
+    loading.remove();
+    addMsg("助手", el("div", { class: "error" }, "请求失败：" + esc(String(e))));
+  } finally {
+    btn.disabled = false;
   }
-  sendBtn.disabled = false;
 }
 
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function pct(v) { return v != null ? (v*100).toFixed(0)+'%' : 'n/a'; }
-
-// S12: render from the flattened assessment view when present. This view already
-// carries resolved code/doc/migration detail, so the frontend never has to
-// re-join evidence IDs itself. Falls back to the legacy verified report.
-function renderFindings(data) {
-  const a = data.assessment;
-  if (a && ((a.verified_risks||[]).length + (a.degraded_risks||[]).length)) {
-    let h = '<div style="margin-top:0.5rem;">';
-    (a.verified_risks||[]).forEach(f => h += renderFinding(f));
-    (a.degraded_risks||[]).forEach(f => h += renderFinding(f));
-    h += '</div>';
-    return h;
-  }
-  const v = data.verified;
-  if (v) {
-    const allRisks = [...(v.verified_risks||[]), ...(v.degraded_risks||[])];
-    if (allRisks.length) {
-      let h = '<div style="margin-top:0.5rem;">';
-      allRisks.forEach(r => {
-        const sev = r.severity || 'low';
-        const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
-        h += `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${sev}]</span> ${escHtml(r.title)}${r.recommendation ? `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(r.recommendation)}</span>` : ''}</div>`;
-      });
-      h += '</div>';
-      return h;
-    }
-  }
-  return '<p style="color:var(--green);font-size:0.8rem;">🎉 无风险！升级安全。</p>';
-}
-
-function renderFinding(f) {
-  const sev = f.severity || 'low';
-  const sevColor = {high:'var(--red)', medium:'var(--yellow)', low:'var(--green)'}[sev] || 'var(--muted)';
-  const statusLabel = f.evidence_status_label || f.evidence_status || f.status || sev;
-  let h = `<div class="risk-item ${sev}"><span class="risk-sev" style="color:${sevColor}">[${escHtml(statusLabel)}]</span> ${escHtml(f.title)}`;
-  if (f.recommendation) h += `<br><span style="color:var(--muted);font-size:0.75rem">💡 ${escHtml(f.recommendation)}</span>`;
-  if (f.migration && f.migration.problem) h += `<br><span style="color:var(--muted);font-size:0.75rem">❗ ${escHtml(f.migration.problem)}</span>`;
-  (f.code||[]).forEach(c => {
-    h += `<div style="font-size:0.72rem;color:var(--blue)">📍 ${escHtml(c.path||'')}:${c.start_line||0}-${c.end_line||0}${c.symbol?(' ('+escHtml(c.symbol)+')'):''}${c.is_test_code?' [test]':''}</div>`;
-    if (c.snippet) h += `<pre style="font-size:0.68rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(c.snippet)}</pre>`;
-  });
-  (f.docs||[]).forEach(d => {
-    const vr = d.source_version_spec ? ` ${escHtml(d.source_version_spec)}→${escHtml(d.target_version_spec)}` : '';
-    h += `<div style="font-size:0.72rem;color:var(--green)">📚 ${escHtml(d.title||'')} <span style="color:var(--muted)">(可信度:${escHtml(d.trust_label||d.trust_level||'')}${vr})</span></div>`;
-    if (d.snippet) h += `<pre style="font-size:0.68rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(d.snippet)}</pre>`;
-  });
-  const mig = f.migration || {};
-  const steps = mig.steps || [];
-  if (steps.length || mig.before_example || mig.after_example || (mig.verification_steps||[]).length) {
-    h += '<details style="margin-top:0.2rem;"><summary style="font-size:0.72rem;cursor:pointer;color:var(--muted)">🔧 迁移建议</summary><div style="font-size:0.74rem;padding-left:0.5rem;">';
-    if (mig.behavior_change) h += `<p style="color:var(--muted)">⚙️ 行为变化: ${escHtml(mig.behavior_change)}</p>`;
-    steps.forEach(s => h += `<p>• ${escHtml(s)}</p>`);
-    if (mig.before_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text)">${escHtml(mig.before_example)}</pre>`;
-    if (mig.after_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text)">${escHtml(mig.after_example)}</pre>`;
-    if ((mig.verification_steps||[]).length) {
-      h += '<p style="color:var(--muted)">✅ 验证:</p>';
-      mig.verification_steps.forEach(s => h += `<p style="padding-left:0.5rem">• ${escHtml(s)}</p>`);
-    }
-    h += '</div></details>';
-  }
-  if (f.plan_step) h += `<div style="font-size:0.7rem;color:var(--blue)">🔗 关联部署步骤: ${escHtml(f.plan_step.step_id||'')} — ${escHtml(f.plan_step.title||'')}</div>`;
-  h += '</div>';
-  return h;
-}
-
-function renderUpgradePlan(p) {
-  const PLAN_MODE_LABELS = {patch_draft:'补丁草稿', sandbox_apply:'沙箱应用'};
-  let h = `<div class="result-section"><h4>🔧 修改计划 (UpgradePlan)</h4>`;
-    h += `<div class="metrics-row">
-    <span class="m-chip">依赖: <span class="val">${escHtml(p.target_dependency||'')}</span></span>
-    <span class="m-chip">${escHtml(p.source_version_spec||'')}→${escHtml(p.target_version_spec||'')}</span>
-    <span class="m-chip">模式: <span class="val">${escHtml(PLAN_MODE_LABELS[p.mode]||p.mode||'')}</span></span>
-    <span class="m-chip">步骤: <span class="val">${(p.steps||[]).length}</span></span>
-    <span class="m-chip">部署契约: <span class="val">${p.deploy_contract}</span></span>
-  </div>`;
-  if (p.warnings && p.warnings.length) {
-    h += `<div style="color:var(--yellow);font-size:0.76rem;margin:0.2rem 0;">⚠️ ${escHtml(p.warnings.join('；'))}</div>`;
-  }
-  h += '<ol style="margin-left:1.2rem;font-size:0.8rem;">';
-  p.steps.forEach(s => {
-    const sev = s.severity_label || s.severity || '';
-    const estatus = s.evidence_status_label || s.evidence_status || '';
-    h += `<li style="margin:0.4rem 0;"><b>${escHtml(s.title||'')}</b> <span style="color:var(--muted)">[${escHtml(sev)}/${escHtml(estatus)}]</span>`;
-    if (s.change_reason) h += `<br><span style="color:var(--muted);font-size:0.75rem">💡 为什么改: ${escHtml(s.change_reason)}</span>`;
-    if (s.target_files && s.target_files.length) h += `<br><span style="color:var(--blue);font-size:0.72rem">📍 ${escHtml(s.target_files.join(', '))}</span>`;
-    if (s.api_symbols && s.api_symbols.length) h += `<br><span style="color:var(--muted);font-size:0.72rem">🔣 API: ${escHtml(s.api_symbols.join(', '))}</span>`;
-    if (s.completion_criteria && s.completion_criteria.length) {
-      h += `<br><span style="color:var(--muted);font-size:0.72rem">✅ 完成标准:</span>`;
-      s.completion_criteria.forEach(c => h += `<br><span style="font-size:0.72rem;padding-left:0.8rem">• ${escHtml(c)}</span>`);
-    }
-    if (s.before_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(s.before_example)}</pre>`;
-    if (s.after_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(s.after_example)}</pre>`;
-    h += '</li>';
-  });
-  h += '</ol>';
-  if (p.patch && p.patch.patch_text) {
-    h += `<details style="margin-top:0.3rem;"><summary style="font-size:0.74rem;cursor:pointer;color:var(--muted)">🩹 补丁草稿 (patch draft)</summary>`;
-    h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(p.patch.patch_text)}</pre>`;
-    h += '</details>';
-  }
-  h += '</div>';
-  return h;
-}
-
-function renderResult(data) {
-  let html = '';
-
-  // Intent
-  const intent = data.intent;
-  const kindLabel = {upgrade_task:'✅ 升级任务', not_upgrade:'💬 非升级请求', need_clarification:'❓ 需要补充信息', invalid_url:'❌ 无效 URL'};
-  html += `<div class="metrics-row">
-    <span class="m-chip">意图:<span class="val">${kindLabel[intent.kind] || intent.kind}</span></span>
-    ${intent.dependency ? `<span class="m-chip">依赖: <span class="val">${intent.dependency}</span></span>` : ''}
-    ${intent.target_version ? `<span class="m-chip">目标: <span class="val">${intent.target_version}</span></span>` : ''}
-  </div>`;
-
-  if (intent.kind !== 'upgrade_task') {
-    html += `<p style="color:var(--muted);margin-top:0.5rem;">${intent.clarification || '请求未识别为升级任务。'}</p>`;
-    return html;
-  }
-
-  // Verified
-  const v = data.verified;
-  if (v) {
-    const cMap = {impacted:'⚠️ 受影响', no_impact:'✅ 无影响', evidence_insufficient:'❓ 证据不足'};
-    html += `<div class="result-section"><h4>📊 评估结果</h4>`;
-    html += `<div class="metrics-row">
-      <span class="m-chip">结论: <span class="val">${cMap[v.conclusion] || v.conclusion}</span></span>
-      <span class="m-chip">已验证风险: <span class="val">${(v.verified_risks||[]).length}</span></span>
-      <span class="m-chip">降级风险: <span class="val">${(v.degraded_risks||[]).length}</span></span>
-      <span class="m-chip">引用率: <span class="val">${pct(v.citation_existence_rate)}</span></span>
-      ${data.assessment && data.assessment.verdict_label ? `<span class="m-chip">判定: <span class="val">${escHtml(data.assessment.verdict_label)}</span></span>` : ''}
-      ${data.assessment && data.assessment.is_evidence_insufficient ? `<span class="m-chip">⚠️ 证据不足</span>` : ''}
-    </div>`;
-
-    // S12: render from the flattened assessment view (no ad-hoc evidence-ID
-    // joins); falls back to the legacy verified report when the view is absent.
-    html += renderFindings(data);
-    html += '</div>';
-
-    // S13: full modification plan (default product) with before/after contrast.
-    if (data.upgrade_plan && data.upgrade_plan.steps && data.upgrade_plan.steps.length) {
-      html += renderUpgradePlan(data.upgrade_plan);
-    }
-  }
-
-  // Plan
-  if (data.plan && data.plan.steps && data.plan.steps.length) {
-    html += '<details><summary>📋 执行计划 (' + data.plan.steps.length + ' 步)</summary><div class="result-section">';
-    const sMap = {succeeded:'✅', failed:'❌', skipped:'⏭️', pending:'⏳', running:'🔄'};
-    data.plan.steps.forEach(s => {
-      html += `<div class="step-item"><span class="step-icon">${sMap[s.status]||'❓'}</span><b>${s.tool}</b> <span style="color:var(--muted)">— ${escHtml(s.reason||'')}</span></div>`;
-      if (s.observation) html += `<div class="step-item" style="padding-left:1.7rem;color:var(--muted)">💬 ${escHtml(s.observation)}</div>`;
-    });
-    html += '</div></details>';
-  }
-
-  // Trace
-  if (data.trace && data.trace.length) {
-    html += '<details><summary>🔧 工具调用 Trace (' + data.trace.length + ' 次)</summary><div class="result-section">';
-    const tMap = {ok:'✅', cached:'💾', error:'❌'};
-    data.trace.forEach((e,i) => {
-      html += `<div class="step-item"><span class="step-icon">${tMap[e.status]||'❓'}</span>#${i+1} <b>${e.tool}</b> → ${escHtml(e.target.slice(0,50))} <span style="color:var(--muted)">${e.latency_ms}ms</span></div>`;
-    });
-    html += '</div></details>';
-  }
-
-  // Cost
-  if (data.cost) {
-    html += `<div class="metrics-row" style="margin-top:0.5rem;">
-      <span class="m-chip">🤖 模型调用: <span class="val">${data.cost.call_count}</span></span>
-      <span class="m-chip">📊 Token: <span class="val">${data.cost.total_tokens.toLocaleString()}</span></span>
-    </div>`;
-  }
-
-  // Degradations
-  if (data.degradations && data.degradations.length) {
-    html += '<details><summary>⚠️ 降级说明 (' + data.degradations.length + ')</summary><div class="result-section" style="color:var(--yellow);font-size:0.8rem;">';
-    data.degradations.forEach(d => { html += `<p>• ${escHtml(d)}</p>`; });
-    html += '</div></details>';
-  }
-
-  return html;
-}
+document.getElementById("send").addEventListener("click", send);
+document.getElementById("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") send();
+});
 </script>
 </body>
 </html>

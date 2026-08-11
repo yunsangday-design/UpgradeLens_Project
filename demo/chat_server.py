@@ -20,6 +20,7 @@ import threading
 import traceback
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -90,7 +91,9 @@ PROJECT_INFO = {
         {"id": "S10", "title": "对话式可视化前端", "status": "done"},
         {"id": "S11", "title": "统一执行与产物落盘（run_store）", "status": "done"},
         {"id": "S12", "title": "统一升级评估展示契约（presentation）", "status": "done"},
-        {"id": "S13", "title": "让修改建议与 UpgradePlan 成为默认产出物", "status": "in_progress"},
+        {"id": "S13", "title": "让修改建议与 UpgradePlan 成为默认产出物", "status": "done"},
+        {"id": "S14", "title": "统一升级评估结果中文国际化", "status": "done"},
+        {"id": "S15", "title": "重构对话页结果可视化", "status": "in_progress"},
     ],
     "systems": {
         "direct_llm": "裸 LLM / coding agent：直接信任模型输出，无检索、无验证。",
@@ -143,6 +146,66 @@ def _ensure_comparison_started() -> None:
     if _COMPARISON["ready"] or _COMPARISON["data"] is not None:
         return
     threading.Thread(target=_compute_comparison, daemon=True).start()
+
+
+# --------------------------------------------------------------------------- #
+# Result badges (S15)
+# --------------------------------------------------------------------------- #
+def _build_badges(result: Any) -> list[dict]:
+    """Derive the RAG / data-source badges shown in the result header (S15).
+
+    The badges make the provenance of the answer explicit without leaking
+    engine internals:
+
+    - ``kb-hit`` — at least one risk is backed by a resolved document / RAG chunk
+      from the local knowledge base.
+    - ``online-supplement`` — some evidence was pulled live as a temporary
+      supplement (populated once S16/S17 online fallback lands).
+    - ``kb-writing`` — local KB was used but part of the answer is still being
+      written back (partial).
+    - ``kb-failed`` — doc/coverage retrieval failed, so the result is incomplete.
+    - ``mode-static`` / ``mode-model`` — offline deterministic vs model-assisted.
+
+    Only badges the data actually supports are emitted; the UI renders whatever
+    is present, so S16/S17 can extend the data without touching the frontend.
+    """
+    from upgradelens.presentation.models import UpgradeAssessmentView
+
+    badges: list[dict] = []
+    assessment = result.assessment
+    if assessment is None:
+        return badges
+    asmt = assessment
+    if not isinstance(asmt, UpgradeAssessmentView):
+        try:
+            asmt = UpgradeAssessmentView.model_validate(assessment)
+        except Exception:
+            return badges
+
+    if asmt.static:
+        badges.append({"kind": "mode-static", "text": "离线模拟输出"})
+    else:
+        badges.append({"kind": "mode-model", "text": "模型辅助"})
+
+    degradations = list(result.degradations)
+    doc_failure = any(
+        d in degradations
+        for d in ("NO_DOC_INDEX", "COVERAGE_INSUFFICIENT", "NO_CODE_EVIDENCE")
+    )
+    online_fallback = any(d in degradations for d in ("retrieval_failed", "mode_fallback"))
+
+    # The local knowledge base is the grounding source in both offline (fake)
+    # and live mode unless retrieval explicitly failed.
+    if not doc_failure:
+        badges.append({"kind": "kb-hit", "text": "本地知识库命中"})
+    if online_fallback:
+        badges.append({"kind": "online-supplement", "text": "在线资料临时补充"})
+    if not doc_failure and asmt.is_partial:
+        badges.append({"kind": "kb-writing", "text": "资料正在写入知识库"})
+    if doc_failure:
+        badges.append({"kind": "kb-failed", "text": "资料补充失败，结果不完整"})
+
+    return badges
 
 
 # --------------------------------------------------------------------------- #
@@ -244,6 +307,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
                     ),
                 },
                 "error": result.error,
+                "badges": _build_badges(result),
                 "assessment": (
                     result.assessment.model_dump(mode="json")
                     if result.assessment is not None

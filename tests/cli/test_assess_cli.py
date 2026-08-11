@@ -113,7 +113,7 @@ def test_assess_markdown_format(capsys, tmp_path: Path) -> None:
         "md",
     )
     assert code == EXIT_OK, err
-    assert out.startswith("# Upgrade impact report — pydantic")
-    assert "## Conclusion" in out
-    assert "## Verified risks" in out
-    assert "## Recommended tests" in out
+    assert out.startswith("# 升级影响报告 — pydantic")
+    assert "## 结论" in out
+    assert "## 已验证风险" in out
+    assert "## 推荐测试" in out

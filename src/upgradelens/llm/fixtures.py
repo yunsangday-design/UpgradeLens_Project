@@ -50,11 +50,11 @@ def build_fake_responses(
             risks.append(
                 RiskItem(
                     risk_id="pyd01",
-                    title="pydantic Model.dict() removed in v2",
+                    title="pydantic 的 Model.dict() 在 v2 中已移除",
                     severity="high",
                     confidence="high",
                     evidence_ids=[it.evidence_id],
-                    recommendation="Replace obj.dict() with obj.model_dump().",
+                    recommendation="将 obj.dict() 替换为 obj.model_dump()。",
                 )
             )
             break
@@ -82,11 +82,11 @@ def build_fake_responses(
         risks.append(
             RiskItem(
                 risk_id="pyd02",
-                title="pydantic @validator renamed to @field_validator in v2",
+                title="pydantic 的 @validator 在 v2 中改名为 @field_validator",
                 severity="high",
                 confidence="high",
                 evidence_ids=[validator_item.evidence_id],
-                recommendation="Replace @validator with @field_validator (signature changed).",
+                recommendation="将 @validator 替换为 @field_validator（签名已变更）。",
             )
         )
 
@@ -101,13 +101,13 @@ def build_fake_responses(
             risks.append(
                 RiskItem(
                     risk_id=f"fake:{it.evidence_id}",
-                    title=f"{dependency}: {symbol} usage",
+                    title=f"{dependency}：{symbol} 用法",
                     severity="medium",
                     confidence="high",
                     evidence_ids=[it.evidence_id],
                     recommendation=(
-                        f"Review this {dependency} usage for the target upgrade; "
-                        "see the official migration guide."
+                        f"审查该 {dependency} 用法以适配目标升级版本；"
+                        "参见官方迁移指南。"
                     ),
                 )
             )
@@ -118,6 +118,6 @@ def build_fake_responses(
     report = ImpactReport(
         target_dependency=dependency,
         risks=risks,
-        notes="Fake-mode illustrative output: risks are anchored to real code evidence.",
+        notes="Fake 模式示意输出：风险锚定在真实代码证据上。",
     )
     return {"impact_analyzer": report}, []

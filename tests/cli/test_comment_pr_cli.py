@@ -34,8 +34,8 @@ def test_comment_pr_dry_run_renders_report(capsys: pytest.CaptureFixture[str]) -
         "--dry-run",
     )
     assert code == EXIT_OK, err
-    assert out.startswith("# Upgrade impact report — pydantic")
-    assert "## Conclusion" in out
+    assert out.startswith("# 升级影响报告 — pydantic")
+    assert "## 结论" in out
     assert "dry-run" in err
 
 

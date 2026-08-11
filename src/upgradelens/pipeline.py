@@ -66,18 +66,17 @@ from upgradelens.verify.models import VerifiedReport
 # doors report the same shortfall with the same words.
 
 NO_DOC_INDEX = (
-    "No documentation index was provided (--db); "
-    "risks cannot reach 'verified' without doc evidence."
+    "未提供文档索引（--db）；缺少文档证据时，风险无法升级为“已验证”。"
 )
 
 COVERAGE_INSUFFICIENT = (
-    "Doc evidence does not fully cover the dependency symbols used in code; "
-    "supplementary retrieval could not close every gap (Step 4 coverage shortfall)."
+    "文档证据未能完整覆盖代码中使用的依赖符号；"
+    "补充检索未能补齐所有缺口（Step 4 覆盖不足）。"
 )
 
 NO_CODE_EVIDENCE = (
-    "No usage of the dependency was found in the code; "
-    "the assessment cannot be specific to this repository."
+    "在代码中未发现该依赖的使用；"
+    "评估结果无法针对本仓库具体化。"
 )
 
 
@@ -335,9 +334,8 @@ def build_evidence_collection(
     _add_declaration_evidence(bundle, request, source_version, scan_result)
     if source_version.status in ("unknown", "conflict"):
         degradations.append(
-            "Source version could not be determined from the manifests "
-            f"(status={source_version.status}); the assessment is not anchored "
-            "to a specific from-version."
+            "无法从清单确定来源版本"
+            f"（status={source_version.status}）；评估结果未锚定到具体的起始版本。"
         )
     if not bundle.items:
         degradations.append(NO_CODE_EVIDENCE)

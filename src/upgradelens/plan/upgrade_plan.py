@@ -115,11 +115,11 @@ class UpgradePlan(BaseModel):
             "step_count": len(self.steps),
             "has_patch": self.patch is not None,
             "rules": [
-                "Apply only at the recorded repo_hash.",
-                "Edit only files named in a step's target_files.",
-                "Never touch a file listed in any step's forbidden_regions.",
-                "Phase 1 supports patch_draft or sandbox_apply only.",
-                "No auto-commit, no auto-push, no workspace mutation outside the sandbox.",
+                "仅在记录的仓库哈希上应用。",
+                "只编辑某步骤 target_files 中列出的文件。",
+                "绝不触碰任何步骤 forbidden_regions 中列出的文件。",
+                "第一阶段仅支持 patch_draft 或 sandbox_apply。",
+                "禁止自动提交、自动推送，禁止在沙箱之外修改工作区。",
             ],
         }
 
@@ -199,13 +199,13 @@ def build_upgrade_plan(
     for risk, target_files, api_symbols in zip(risks, targets, symbols, strict=True):
         others = sorted(set(flat_targets) - set(target_files))
         criteria = [
-            f"Remove the old API symbol(s) {', '.join(api_symbols) or 'n/a'} "
-            f"from {', '.join(target_files) or 'the impacted files'}.",
-            "Confirm no remaining reference to the removed API in the target files.",
+            f"从 {', '.join(target_files) or '受影响的文件'} 中移除旧的 API 符号 "
+            f"{', '.join(api_symbols) or '（无）'}。",
+            "确认目标文件中不再残留对已移除 API 的引用。",
         ]
         if target_files:
             criteria.append(
-                "Run the recommended tests and confirm they pass against the target version."
+                "运行推荐测试，确认其在目标版本下通过。"
             )
         # S13: richer, model-grounded step description.
         change_reason = risk.problem or risk.recommendation
@@ -256,11 +256,11 @@ def build_upgrade_plan(
             patch = None
 
     warnings = [
-        f"Degraded finding not turned into a step: {r.risk_id} ({r.status.value})"
+        f"降级发现未转为步骤：{r.risk_id}（{r.status.value}）"
         for r in verified.degraded_risks
     ]
     if not steps:
-        warnings.append("No verified risk produced a step; plan is empty.")
+        warnings.append("没有任何已验证风险生成步骤；计划为空。")
 
     return UpgradePlan(
         target_dependency=verified.target_dependency,
@@ -271,9 +271,9 @@ def build_upgrade_plan(
         steps=steps,
         patch=patch,
         assumptions=[
-            "Plan built against repo_hash "
-            f"{repo_hash_of(repo_root) or '<unknown>'} -- apply only at a matching hash.",
-            "Steps cover only verified risks; degraded findings are warnings, not actions.",
+            "计划基于仓库哈希 "
+            f"{repo_hash_of(repo_root) or '<unknown>'} 生成——请仅在哈希匹配的仓库上应用。",
+            "步骤仅覆盖已验证风险；降级发现只是警告，不是执行动作。",
         ],
         warnings=warnings,
     )

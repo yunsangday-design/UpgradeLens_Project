@@ -40,7 +40,10 @@ Hard rules -- violating any of them makes the answer unusable:
 4. Prefer omission over speculation. When the evidence is thin, say so in the
    notes and lower the confidence rather than filling the gap.
 5. Answer only with the requested structured object. No prose wrapper, no
-   markdown fences, no commentary outside the schema."""
+   markdown fences, no commentary outside the schema.
+6. Write user-facing free text (titles, detail, recommendation, notes,
+   questions) in Simplified Chinese by default. Keep code, API symbols, URLs,
+   version numbers and technical identifiers verbatim in their original form."""
 
 
 @dataclass(frozen=True)

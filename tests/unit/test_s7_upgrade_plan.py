@@ -238,7 +238,7 @@ def test_export_plan_round_trip() -> None:
     assert data["schema_version"] == "upgrade-plan/1"
     assert data["steps"][0]["api_symbols"] == ["old_func"]
     # The execution contract spells out the apply rules.
-    assert "Apply only at the recorded repo_hash." in plan.to_execution_contract()["rules"]
+    assert "仅在记录的仓库哈希上应用。" in plan.to_execution_contract()["rules"]
 
 
 # --------------------------------------------------------------------------- #

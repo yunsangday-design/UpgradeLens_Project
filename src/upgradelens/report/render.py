@@ -10,9 +10,10 @@ bytes, which keeps documentation snapshots diffable.
 
 from __future__ import annotations
 
+from upgradelens.plan.upgrade_plan import UpgradePlan
 from upgradelens.verify.models import Conclusion, VerifiedReport, VerifiedRisk
 
-__all__ = ["render_markdown"]
+__all__ = ["render_markdown", "render_plan_markdown"]
 
 _CONCLUSION_TEXT = {
     Conclusion.IMPACTED: "Impacted — verified risks found",
@@ -187,3 +188,93 @@ def render_markdown(report: VerifiedReport, max_chars: int | None = None) -> str
         truncated.append(line)
         used += addition
     return "\n".join(truncated).rstrip() + notice
+
+
+def render_plan_markdown(plan: UpgradePlan) -> str:
+    """Render a :class:`UpgradePlan` as a Chinese 修改说明.
+
+    Pure and deterministic; the plan is a read-only projection so the same plan
+    always yields the same bytes.
+    """
+    if plan is None:
+        return ""
+    lines: list[str] = [
+        f"# 升级修改计划 — {plan.target_dependency}",
+        "",
+        f"- **目标版本:** `{plan.target_version_spec or 'n/a'}`",
+        f"- **声明版本:** `{plan.source_version_spec or 'n/a'}`",
+        f"- **仓库哈希:** `{plan.repo_hash or '<unknown>'}`",
+        f"- **计划模式:** `{plan.mode.value if hasattr(plan.mode, 'value') else plan.mode}`",
+        f"- **部署契约:** {'要求' if plan.deploy_contract else '不要求'}",
+        f"- **步骤数:** {len(plan.steps)}",
+        "",
+    ]
+
+    if plan.steps:
+        for index, step in enumerate(plan.steps, start=1):
+            sev = step.severity or "low"
+            status = step.evidence_status or ""
+            lines += [
+                f"## 步骤 {index}: {step.title}  [{sev}/{status}]",
+                "",
+            ]
+            if step.change_reason:
+                lines += [f"**为什么改:** {step.change_reason}", ""]
+            if step.target_files:
+                lines += [
+                    "**涉及文件:** " + ", ".join(f"`{f}`" for f in step.target_files),
+                    "",
+                ]
+            if step.api_symbols:
+                lines += [
+                    "**相关 API:** " + ", ".join(f"`{s}`" for s in step.api_symbols),
+                    "",
+                ]
+            if step.completion_criteria:
+                lines += ["**完成标准:**"]
+                lines += [f"- {c}" for c in step.completion_criteria]
+                lines.append("")
+            if step.before_example:
+                lines += [
+                    "**升级前:**",
+                    "```",
+                    step.before_example.rstrip(),
+                    "```",
+                    "",
+                ]
+            if step.after_example:
+                lines += [
+                    "**升级后:**",
+                    "```",
+                    step.after_example.rstrip(),
+                    "```",
+                    "",
+                ]
+    else:
+        lines += ["_无需要修改的步骤。_", ""]
+
+    if plan.patch and not plan.patch.is_empty:
+        patch_text = plan.patch.to_unified_diff()
+        if patch_text:
+            lines += [
+                "## 补丁草稿",
+                "",
+                "```diff",
+                patch_text.rstrip(),
+                "```",
+                "",
+            ]
+
+    if plan.warnings:
+        lines += ["## 警告", ""]
+        lines += [f"- {w}" for w in plan.warnings]
+        lines.append("")
+
+    if plan.deploy_contract:
+        lines += [
+            "> **部署契约:** 本次升级包含需重新部署的破坏性变更，"
+            "请在发布窗口内完成滚动发布并准备回滚预案。",
+            "",
+        ]
+
+    return "\n".join(lines).rstrip() + "\n"

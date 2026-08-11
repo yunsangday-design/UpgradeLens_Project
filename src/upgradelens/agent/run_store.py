@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from upgradelens.agent.plan import AgentPlan
+from upgradelens.report.render import render_markdown, render_plan_markdown
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify.models import VerifiedReport
 
@@ -152,8 +153,6 @@ class RunStore:
         self._write_text("trace.jsonl", body + "\n" if body else "")
 
     def write_report(self, verified: VerifiedReport) -> None:
-        from upgradelens.report import render_markdown
-
         self._write_json("report.json", verified.model_dump(mode="json"))
         self._write_text("report.md", render_markdown(verified))
 
@@ -168,6 +167,15 @@ class RunStore:
 
         view = project_assessment(outcome, upgrade_plan=upgrade_plan)
         self._write_json("assessment.json", view.model_dump(mode="json"))
+
+    def write_upgrade_plan(self, plan: Any) -> None:
+        """S13: persist the modification plan as machine- and human-readable artifacts."""
+        if plan is None:
+            return
+        self._write_json("upgrade-plan.json", plan.model_dump(mode="json"))
+        md = render_plan_markdown(plan)
+        if md:
+            self._write_text("upgrade-plan.md", md)
 
     def write_run_md(
         self,
@@ -255,6 +263,8 @@ def _render_run_md(
     lines.append("- `report.json` — the verified assessment (machine-readable)")
     lines.append("- `assessment.json` — the S12 presentation view (flattened evidence)")
     lines.append("- `report.md` — the verified assessment (human-readable)")
+    lines.append("- `upgrade-plan.json` — the S13 modification plan (machine-readable)")
+    lines.append("- `upgrade-plan.md` — the S13 中文修改说明 (before/after 对比)")
     lines.append("- `intent.json` — the routed Intent")
     lines.append("")
     return "\n".join(lines)

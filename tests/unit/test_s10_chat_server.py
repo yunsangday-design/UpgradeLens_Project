@@ -71,7 +71,7 @@ class TestChatServerSmoke(TestCase):
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data["name"], "UpgradeLens")
-        self.assertEqual(len(data["stages"]), 11)
+        self.assertEqual(len(data["stages"]), 14)
         self.assertIn("agent", data["systems"])
 
     def test_run_returns_serialized_result(self):

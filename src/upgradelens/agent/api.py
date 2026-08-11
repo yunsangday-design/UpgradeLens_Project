@@ -34,6 +34,10 @@ from upgradelens.agent.run_store import RunStore
 from upgradelens.config import Settings
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.pipeline import AssessmentOutcome, AssessmentRequest, run_pipeline
+from upgradelens.plan import PlanMode, build_upgrade_plan
+from upgradelens.plan.upgrade_plan import UpgradePlan
+from upgradelens.presentation.models import UpgradeAssessmentView
+from upgradelens.presentation.projector import project_assessment
 from upgradelens.tools.live_repo import is_repo_url
 from upgradelens.tools.registry import ToolContext, ToolRegistry, default_registry
 from upgradelens.tools.trace import ToolTrace
@@ -66,6 +70,10 @@ class AgentResult:
     degradations: tuple[str, ...] = ()
     gateway: ModelGateway | None = None
     error: str | None = None
+    # S13: the modification plan and the flattened assessment view are now
+    # default products of every upgrade_task run, so CLI/MCP/demo share them.
+    upgrade_plan: UpgradePlan | None = None
+    assessment: UpgradeAssessmentView | None = None
 
     @property
     def verified(self) -> Any:
@@ -290,10 +298,28 @@ class DependencyUpgradeAgent:
                 error=str(exc),
             )
 
+        # S13: the modification plan + flattened assessment are now default products
+        # of every upgrade_task run, so CLI / MCP / demo all share the same result.
+        upgrade_plan: UpgradePlan | None = None
+        assessment: UpgradeAssessmentView | None = None
+        try:
+            upgrade_plan = build_upgrade_plan(
+                outcome, repo_root=outcome.repo_path, mode=PlanMode.PATCH_DRAFT
+            )
+        except Exception as exc:  # pragma: no cover - planning is best-effort
+            logger.warning("build_upgrade_plan failed: %s", exc)
+            upgrade_plan = None
+        try:
+            assessment = project_assessment(outcome, upgrade_plan=upgrade_plan)
+        except Exception as exc:  # pragma: no cover - projection is best-effort
+            logger.warning("project_assessment failed: %s", exc)
+            assessment = None
+
         if store is not None:
             store.write_trace(trace)
             store.write_report(outcome.verified)
-            store.write_assessment(outcome)
+            store.write_assessment(outcome, upgrade_plan=upgrade_plan)
+            store.write_upgrade_plan(upgrade_plan)
             store.write_run_md(
                 intent=intent_dict,
                 mode=gateway.mode.value,
@@ -309,6 +335,8 @@ class DependencyUpgradeAgent:
             run_dir=store.run_dir if store else None,
             degradations=tuple(outcome.degradations),
             gateway=gateway,
+            upgrade_plan=upgrade_plan,
+            assessment=assessment,
         )
 
     def run_pipeline(

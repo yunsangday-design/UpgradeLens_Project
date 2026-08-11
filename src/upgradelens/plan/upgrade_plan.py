@@ -72,6 +72,9 @@ class UpgradeStep(BaseModel):
     forbidden_regions: list[str] = Field(default_factory=list)
     recommended_tests: list[str] = Field(default_factory=list)
     completion_criteria: list[str] = Field(default_factory=list)
+    # S13: before/after code contrast so the modification is self-explanatory.
+    before_example: str = ""
+    after_example: str = ""
 
 
 class UpgradePlan(BaseModel):
@@ -94,6 +97,11 @@ class UpgradePlan(BaseModel):
     patch: PatchDraft | None = None
     assumptions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+    @property
+    def step_count(self) -> int:
+        """Number of modification steps (exposed for templates/UI convenience)."""
+        return len(self.steps)
 
     def to_execution_contract(self) -> dict[str, Any]:
         """Human/machine readable summary of the apply contract for this plan."""
@@ -199,6 +207,13 @@ def build_upgrade_plan(
             criteria.append(
                 "Run the recommended tests and confirm they pass against the target version."
             )
+        # S13: richer, model-grounded step description.
+        change_reason = risk.problem or risk.recommendation
+        step_criteria = (
+            list(risk.verification_steps)
+            if risk.verification_steps
+            else criteria
+        )
         steps.append(
             UpgradeStep(
                 step_id=risk.risk_id,
@@ -207,12 +222,14 @@ def build_upgrade_plan(
                 evidence_status=risk.status.value,
                 target_files=target_files,
                 api_symbols=api_symbols,
-                change_reason=risk.recommendation,
+                change_reason=change_reason,
                 doc_evidence=list(risk.doc_evidence_ids),
                 suggested_approach=risk.recommendation,
                 forbidden_regions=others,
                 recommended_tests=[t.test_path for t in risk.recommended_tests],
-                completion_criteria=criteria,
+                completion_criteria=step_criteria,
+                before_example=risk.before_example or "",
+                after_example=risk.after_example or "",
             )
         )
 

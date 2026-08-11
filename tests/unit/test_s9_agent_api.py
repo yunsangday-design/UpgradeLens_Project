@@ -66,6 +66,9 @@ def test_agent_writes_artifacts(tmp_path):
     assert (run_dir / "intent.json").exists()
     assert (run_dir / "plan.json").exists()
     assert (run_dir / "report.json").exists()
+    assert (run_dir / "assessment.json").exists()
+    assert (run_dir / "upgrade-plan.json").exists()
+    assert (run_dir / "upgrade-plan.md").exists()
     assert (run_dir / "RUN.md").exists()
 
 

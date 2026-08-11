@@ -88,6 +88,9 @@ PROJECT_INFO = {
         {"id": "S8", "title": "建立 Agent 对照评测与 CI 门禁", "status": "done"},
         {"id": "S9", "title": "演示与项目包装（统一 API）", "status": "done"},
         {"id": "S10", "title": "对话式可视化前端", "status": "done"},
+        {"id": "S11", "title": "统一执行与产物落盘（run_store）", "status": "done"},
+        {"id": "S12", "title": "统一升级评估展示契约（presentation）", "status": "done"},
+        {"id": "S13", "title": "让修改建议与 UpgradePlan 成为默认产出物", "status": "in_progress"},
     ],
     "systems": {
         "direct_llm": "裸 LLM / coding agent：直接信任模型输出，无检索、无验证。",
@@ -242,8 +245,17 @@ class ChatHandler(SimpleHTTPRequestHandler):
                 },
                 "error": result.error,
                 "assessment": (
-                    project_assessment(result.outcome).model_dump(mode="json")
-                    if result.outcome is not None
+                    result.assessment.model_dump(mode="json")
+                    if result.assessment is not None
+                    else (
+                        project_assessment(result.outcome).model_dump(mode="json")
+                        if result.outcome is not None
+                        else None
+                    )
+                ),
+                "upgrade_plan": (
+                    result.upgrade_plan.model_dump(mode="json")
+                    if result.upgrade_plan is not None
                     else None
                 ),
             }

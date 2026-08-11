@@ -214,6 +214,42 @@ function renderFinding(f) {
   return h;
 }
 
+function renderUpgradePlan(p) {
+  let h = `<div class="result-section"><h4>🔧 修改计划 (UpgradePlan)</h4>`;
+  h += `<div class="metrics-row">
+    <span class="m-chip">依赖: <span class="val">${escHtml(p.target_dependency||'')}</span></span>
+    <span class="m-chip">${escHtml(p.source_version_spec||'')}→${escHtml(p.target_version_spec||'')}</span>
+    <span class="m-chip">步骤: <span class="val">${p.step_count}</span></span>
+    <span class="m-chip">部署契约: <span class="val">${p.deploy_contract}</span></span>
+  </div>`;
+  if (p.warnings && p.warnings.length) {
+    h += `<div style="color:var(--yellow);font-size:0.76rem;margin:0.2rem 0;">⚠️ ${escHtml(p.warnings.join('；'))}</div>`;
+  }
+  h += '<ol style="margin-left:1.2rem;font-size:0.8rem;">';
+  p.steps.forEach(s => {
+    const sev = s.severity || '';
+    h += `<li style="margin:0.4rem 0;"><b>${escHtml(s.title||'')}</b> <span style="color:var(--muted)">[${escHtml(sev)}/${escHtml(s.evidence_status||'')}]</span>`;
+    if (s.change_reason) h += `<br><span style="color:var(--muted);font-size:0.75rem">💡 为什么改: ${escHtml(s.change_reason)}</span>`;
+    if (s.target_files && s.target_files.length) h += `<br><span style="color:var(--blue);font-size:0.72rem">📍 ${escHtml(s.target_files.join(', '))}</span>`;
+    if (s.api_symbols && s.api_symbols.length) h += `<br><span style="color:var(--muted);font-size:0.72rem">🔣 API: ${escHtml(s.api_symbols.join(', '))}</span>`;
+    if (s.completion_criteria && s.completion_criteria.length) {
+      h += `<br><span style="color:var(--muted);font-size:0.72rem">✅ 完成标准:</span>`;
+      s.completion_criteria.forEach(c => h += `<br><span style="font-size:0.72rem;padding-left:0.8rem">• ${escHtml(c)}</span>`);
+    }
+    if (s.before_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(s.before_example)}</pre>`;
+    if (s.after_example) h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(s.after_example)}</pre>`;
+    h += '</li>';
+  });
+  h += '</ol>';
+  if (p.patch && p.patch.patch_text) {
+    h += `<details style="margin-top:0.3rem;"><summary style="font-size:0.74rem;cursor:pointer;color:var(--muted)">🩹 补丁草稿 (patch draft)</summary>`;
+    h += `<pre style="font-size:0.66rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0.3rem;overflow-x:auto;color:var(--text);margin:0.2rem 0;">${escHtml(p.patch.patch_text)}</pre>`;
+    h += '</details>';
+  }
+  h += '</div>';
+  return h;
+}
+
 function renderResult(data) {
   let html = '';
 
@@ -250,19 +286,9 @@ function renderResult(data) {
     html += renderFindings(data);
     html += '</div>';
 
-    // S12: deploy contract (from the assessment view).
-    if (data.assessment && data.assessment.upgrade_plan && data.assessment.upgrade_plan.steps.length) {
-      const p = data.assessment.upgrade_plan;
-      html += `<div class="result-section"><h4>🗂️ 部署契约 (UpgradePlan)</h4>`;
-      html += `<div class="metrics-row">
-        <span class="m-chip">依赖: <span class="val">${escHtml(p.target_dependency||'')}</span></span>
-        <span class="m-chip">${escHtml(p.source_version_spec||'')}→${escHtml(p.target_version_spec||'')}</span>
-        <span class="m-chip">步骤: <span class="val">${p.step_count}</span></span>
-        <span class="m-chip">deploy_contract: <span class="val">${p.deploy_contract}</span></span>
-      </div>`;
-      html += '<ul class="test-list">';
-      p.steps.forEach(s => html += `<li><code>${escHtml(s.step_id||'')}</code> ${escHtml(s.title||'')} <span style="color:var(--muted)">[${escHtml((s.target_files||[]).join(', '))}]</span></li>`);
-      html += '</ul></div>';
+    // S13: full modification plan (default product) with before/after contrast.
+    if (data.upgrade_plan && data.upgrade_plan.steps && data.upgrade_plan.steps.length) {
+      html += renderUpgradePlan(data.upgrade_plan);
     }
   }
 

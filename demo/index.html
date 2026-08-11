@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UpgradeLens Demo</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --text: #e6e8ee; --muted: #9aa3b2; --accent: #6ea8fe; --accent2: #7ee0b8;
+    --warn: #ffb454; --bad: #ff6b6b; --good: #7ee0b8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 14px 22px;
+    background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
+  }
+  header .logo { font-weight: 700; font-size: 18px; letter-spacing: .3px; }
+  header .logo small { color: var(--accent); font-weight: 600; }
+  header .tagline { color: var(--muted); font-size: 12.5px; flex: 1; }
+  .tabs { display: flex; gap: 8px; }
+  .tab-btn {
+    background: var(--panel2); color: var(--muted); border: 1px solid var(--border);
+    padding: 7px 16px; border-radius: 8px; cursor: pointer; font-size: 13.5px; transition: .15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { background: var(--accent); color: #0b1018; border-color: var(--accent); font-weight: 600; }
+  .view { display: none; height: calc(100vh - 58px); }
+  .view.active { display: block; }
+  #usage.active { display: block; }
+  #usage iframe { width: 100%; height: 100%; border: 0; background: var(--bg); }
+  #project { overflow-y: auto; padding: 26px 30px 60px; max-width: 1080px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 12px; font-size: 16px; }
+  .card h3 { margin: 18px 0 8px; font-size: 14px; color: var(--accent2); }
+  .muted { color: var(--muted); }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .metric { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .metric .v { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .metric .k { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  ul.clean { margin: 6px 0; padding-left: 18px; }
+  ul.clean li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: center; }
+  th { background: var(--panel2); color: var(--muted); font-weight: 600; }
+  td.metric-name { text-align: left; color: var(--text); }
+  .col-agent { background: rgba(110,168,254,.10); }
+  .col-agent.head { color: var(--accent); }
+  .better-high { color: var(--good); font-weight: 600; }
+  .better-low { color: var(--good); font-weight: 600; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; }
+  .pill.done { background: rgba(126,224,184,.15); color: var(--good); }
+  .stage { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-bottom: 1px dashed var(--border); }
+  .stage:last-child { border-bottom: 0; }
+  .stage .id { font-weight: 700; color: var(--accent); min-width: 38px; }
+  .stage .t { flex: 1; }
+  pre { background: #0c0e13; border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+        overflow-x: auto; color: #cfe3ff; font-size: 12.5px; }
+  .loading { color: var(--muted); padding: 20px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  code.ic { background: var(--panel2); border: 1px solid var(--border); padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">UpgradeLens <small>v0.2.0</small></div>
+  <div class="tagline">证据驱动、能自我调整的依赖升级 Agent</div>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="usage">使用</button>
+    <button class="tab-btn" data-tab="project">项目</button>
+  </div>
+</header>
+
+<div id="usage" class="view active">
+  <iframe src="/chat.html" title="对话式使用页"></iframe>
+</div>
+
+<div id="project" class="view">
+  <div class="loading" id="proj-loading">加载项目信息中…</div>
+  <div id="proj-content" style="display:none"></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+// tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    $('#' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'project') loadProject();
+  });
+});
+
+const METRIC_DEFS = [
+  { key: 'breaking_change_recall', label: '破坏性变更召回', better: 'high' },
+  { key: 'code_location_recall',  label: '代码位置召回',   better: 'high' },
+  { key: 'doc_accuracy',          label: '文档引用准确率', better: 'high' },
+  { key: 'no_evidence_rate',      label: '无证据建议率',   better: 'low' },
+  { key: 'coverage',              label: '证据覆盖率',     better: 'high' },
+  { key: 'plan_completion_rate',  label: '计划完成率',     better: 'high' },
+  { key: 'verifier_detection_rate', label: '编造检出率',   better: 'high' },
+  { key: 'total_tokens',          label: 'Token 消耗',     better: 'low' },
+  { key: 'call_count',            label: '调用次数',       better: 'low' },
+];
+const SYS_LABEL = { direct_llm: 'direct_llm', fixed_pipeline: 'fixed_pipeline', agent: 'agent (UpgradeLens)' };
+
+function fmt(v, def) {
+  if (v === null || v === undefined) return 'n/a';
+  if (def.key === 'total_tokens' || def.key === 'call_count') return String(v);
+  if (def.key === 'no_evidence_rate') return (v * 100).toFixed(0) + '%';
+  return (v * 100).toFixed(0) + '%';
+}
+
+let _projectLoaded = false;
+async function loadProject() {
+  if (_projectLoaded) return;
+  try {
+    const info = await (await fetch('/api/project')).json();
+    renderProject(info);
+    _projectLoaded = true;
+  } catch (e) {
+    $('#proj-loading').textContent = '加载失败：' + e;
+  }
+}
+
+function renderProject(info) {
+  $('#proj-loading').style.display = 'none';
+  $('#proj-content').style.display = 'block';
+
+  const m = info.metrics;
+  const metricsHtml = `
+    <div class="card">
+      <h2>项目概览</h2>
+      <p>${info.summary}</p>
+      <h3>设计原则</h3>
+      <ul class="clean">${info.principles.map(p => `<li>${p}</li>`).join('')}</ul>
+      <h3>核心指标</h3>
+      <div class="metrics">
+        <div class="metric"><div class="v">${m.tests_passed}</div><div class="k">测试通过</div></div>
+        <div class="metric"><div class="v">${m.eval_cases}</div><div class="k">Eval 案例</div></div>
+        <div class="metric"><div class="v">${m.cli_commands}</div><div class="k">CLI 命令</div></div>
+        <div class="metric"><div class="v">${m.modes.length}</div><div class="k">模式 (${m.modes.join('/')})</div></div>
+        <div class="metric"><div class="v" style="font-size:15px">${m.latest_commit}</div><div class="k">最新 commit</div></div>
+      </div>
+    </div>`;
+
+  const stagesHtml = `
+    <div class="card">
+      <h2>阶段进度（S0–S10）</h2>
+      ${info.stages.map(s => `
+        <div class="stage">
+          <div class="id">${s.id}</div>
+          <div class="t">${s.title}</div>
+          <div><span class="pill ${s.status}">${s.status === 'done' ? '已完成' : '进行中'}</span></div>
+        </div>`).join('')}
+    </div>`;
+
+  const usageHtml = `
+    <div class="card">
+      <h2>用法</h2>
+      <h3>CLI</h3>
+      ${info.usage.cli.map(c => `<pre>${escapeHtml(c)}</pre>`).join('')}
+      <h3>Python API</h3>
+      <pre>${escapeHtml(info.usage.python)}</pre>
+    </div>`;
+
+  const limitsHtml = `
+    <div class="card">
+      <h2>限制与下一步</h2>
+      <ul class="clean">${info.limits.map(l => `<li>${l}</li>`).join('')}</ul>
+    </div>`;
+
+  const comparisonHtml = `
+    <div class="card">
+      <h2>S8 架构对照（FAKE 离线，18 案例）</h2>
+      <p class="muted">同一份证据喂给三种架构，隔离「检索+验证」与「plan 驱动 agent 循环」带来的增量价值。</p>
+      <div id="cmp-table"><div class="loading">S8 对照计算中（首次约需数十秒）…</div></div>
+      <div class="note">标记 <span class="better-high">绿色</span> 表示该指标下最优系统；「无证据建议率 / Token / 调用」越低越好，其余越高越好。</div>
+    </div>`;
+
+  $('#proj-content').innerHTML = metricsHtml + comparisonHtml + stagesHtml + usageHtml + limitsHtml;
+  loadComparison();
+}
+
+async function loadComparison() {
+  const el = $('#cmp-table');
+  if (!el) return;
+  let data;
+  for (let i = 0; i < 60; i++) {
+    const r = await fetch('/api/comparison');
+    data = await r.json();
+    if (data.status !== 'computing') break;
+    await new Promise(res => setTimeout(res, 1500));
+  }
+  if (!data || !data.aggregate) { el.innerHTML = '<div class="loading">对照数据不可用</div>'; return; }
+  renderComparison(data, el);
+}
+
+function renderComparison(data, el) {
+  const systems = data.systems;
+  const agg = data.aggregate;
+  let head = '<tr><th class="metric-name">指标</th>';
+  systems.forEach(s => {
+    const cls = s === 'agent' ? ' class="col-agent head"' : '';
+    head += `<th${cls}>${SYS_LABEL[s] || s}</th>`;
+  });
+  head += '</tr>';
+
+  let rows = '';
+  METRIC_DEFS.forEach(def => {
+    const vals = systems.map(s => {
+      const v = agg[s] ? agg[s][def.key] : null;
+      return { raw: v, disp: fmt(v, def) };
+    });
+    // determine best
+    let bestIdx = -1;
+    if (vals.some(v => v.raw !== null && v.raw !== undefined)) {
+      const nums = vals.map(v => (v.raw === null || v.raw === undefined ? (def.better === 'low' ? Infinity : -Infinity) : v.raw));
+      if (def.better === 'high') bestIdx = nums.indexOf(Math.max(...nums));
+      else bestIdx = nums.indexOf(Math.min(...nums));
+    }
+    let tds = `<td class="metric-name">${def.label} <span class="note">(${def.better === 'high' ? '↑' : '↓'})</span></td>`;
+    vals.forEach((v, i) => {
+      const isAgent = systems[i] === 'agent';
+      const isBest = i === bestIdx && v.raw !== null && v.raw !== undefined;
+      const cls = [isAgent ? 'col-agent' : '', isBest ? (def.better === 'high' ? 'better-high' : 'better-low') : ''].join(' ').trim();
+      tds += `<td class="${cls}">${v.disp}</td>`;
+    });
+    rows += `<tr>${tds}</tr>`;
+  });
+
+  el.innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>
+    <div class="note">direct_llm 无 plan / verifier，故「计划完成率 / 编造检出率」为 n/a。</div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+</script>
+</body>
+</html>

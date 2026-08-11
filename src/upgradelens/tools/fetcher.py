@@ -301,6 +301,15 @@ class RestrictedFetcher:
         try:
             resp = self._opener(req, self._config.timeout)
         except urllib.error.HTTPError as exc:
+            # With the _NoRedirect handler, urllib surfaces 3xx responses as
+            # HTTPError. We still need to follow them manually, so treat any 3xx
+            # as a redirect response instead of a hard error.
+            if 300 <= exc.code < 400:
+                location = exc.headers.get("Location") if exc.headers.get("Location") else None
+                if location:
+                    next_url = urllib.parse.urljoin(url, location)
+                    self._check_url(next_url)
+                    return self._fetch_with_redirects(next_url, depth + 1)
             raise HttpError(status=exc.code, url=url) from exc
         except urllib.error.URLError as exc:
             reason = exc.reason

@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     model_mode: str = "fake"  # fake | replay | live
     model_base_url: str = ""  # OpenAI-compatible base url
     model_name: str = "qwen-plus"
-    model_max_total_tokens: int = 20000
+    model_max_total_tokens: int = 200000
     # Secret API key used only in live mode. Not required for fake/replay.
     model_api_key: SecretStr | None = Field(default=None)
     # Reasoning models (qwen3.7-plus, etc.) reject function_calling's

@@ -164,6 +164,38 @@ def retrieve(
     scored.sort(key=lambda item: -item[0])
 
     top = scored[:top_k]
+
+    # Guaranteed recall: a single OR query lets bm25 rank favour high-frequency
+    # terms (engine/execute appear in most chunks) and silently drops a
+    # low-frequency but critical code symbol (e.g. declarative_base, which only
+    # matches one chunk). Force every code symbol to appear at least once by
+    # swapping in its best-ranked chunk for the lowest-scored non-boost chunk.
+    if boost_terms:
+        def _blob_of(ch: models.DocChunkRow) -> str:
+            return (ch.title + " " + " ".join(ch.heading_path_list) + " " + ch.content).lower()
+
+        covered: set[str] = set()
+        for _, ch in top:
+            covered.update(t.lower() for t in boost_terms if t.lower() in _blob_of(ch))
+        for term in boost_terms:
+            if term.lower() in covered:
+                continue
+            for score, ch in scored:
+                if any(ch is c for _, c in top):
+                    continue
+                if term.lower() in _blob_of(ch):
+                    # replace lowest-scored chunk that carries no boost term
+                    repl = None
+                    for i, (sc, cand) in enumerate(top):
+                        if not any(t.lower() in _blob_of(cand) for t in boost_terms):
+                            if repl is None or sc < top[repl][0]:
+                                repl = i
+                    if repl is not None:
+                        top[repl] = (score, ch)
+                    else:
+                        top.append((score, ch))
+                    covered.add(term.lower())
+                    break
     evidence = [_to_evidence(session, source_id, chunk, query, score) for score, chunk in top]
     run = RetrievalRun(
         run_id=uuid4().hex,

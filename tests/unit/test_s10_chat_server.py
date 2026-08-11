@@ -53,6 +53,27 @@ class TestChatServerSmoke(TestCase):
         conn.close()
         return resp.status, data
 
+    def _get(self, path: str) -> tuple[int, str]:
+        conn = http.client.HTTPConnection("127.0.0.1", self.srv.port, timeout=30)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8")
+        conn.close()
+        return resp.status, body
+
+    def test_index_served(self):
+        status, body = self._get("/")
+        self.assertEqual(status, 200)
+        self.assertIn("UpgradeLens", body)
+
+    def test_project_endpoint(self):
+        status, body = self._get("/api/project")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data["name"], "UpgradeLens")
+        self.assertEqual(len(data["stages"]), 11)
+        self.assertIn("agent", data["systems"])
+
     def test_run_returns_serialized_result(self):
         status, data = self._post(
             {"goal": "upgrade pydantic from 1.x to 2.7", "mode": "fake"}
@@ -60,7 +81,9 @@ class TestChatServerSmoke(TestCase):
         self.assertEqual(status, 200)
         for key in ("intent", "plan", "verified", "degradations", "trace", "cost"):
             self.assertIn(key, data)
-        self.assertIn(data["intent"]["kind"], {"upgrade_task", "need_clarification"})
+        # 缺 repo 时 server 按依赖自动选示例仓库 → 应为升级任务且计划非空
+        self.assertEqual(data["intent"]["kind"], "upgrade_task")
+        self.assertGreater(len(data["plan"]["steps"]), 0)
         self.assertIsInstance(data["trace"], list)
         self.assertIsInstance(data["cost"], dict)
         self.assertIn("total_tokens", data["cost"])

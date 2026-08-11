@@ -8,8 +8,24 @@ error without echoing the sensitive value into logs or traces.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class NetworkMode(StrEnum):
+    """How far the agent may go beyond the local shared corpus.
+
+    - ``offline``: never touch the network. Online fallback (S16) is disabled.
+    - ``cache_only``: serve only already-cached/ingested evidence.
+    - ``online_fallback``: when the local corpus misses, supplement the current
+      request with keyless online discovery (S16) — still gated to live mode.
+    """
+
+    OFFLINE = "offline"
+    CACHE_ONLY = "cache_only"
+    ONLINE_FALLBACK = "online_fallback"
 
 
 class Settings(BaseSettings):
@@ -29,6 +45,10 @@ class Settings(BaseSettings):
 
     app_name: str = "upgradelens"
     log_level: str = "INFO"
+    # Network policy. Online fallback (S16) only runs when this is
+    # ``online_fallback`` AND the run is in live model mode. fake/replay never
+    # reach the network regardless of this setting.
+    network: str = "online_fallback"
     # Optional secret placeholder. Not required until the LLM stage.
     api_key: SecretStr | None = Field(default=None)
 

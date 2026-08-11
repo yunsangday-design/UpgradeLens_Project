@@ -85,6 +85,11 @@ class DocEvidence(BaseModel):
     target_version_spec: str = ""
     trust_level: str = ""
     chunk_content_hash: str = ""
+    # Where this evidence came from. ``local_corpus`` = the shared offline RAG
+    # store; ``online_fallback`` = pulled live because the local corpus missed
+    # (S16). Online evidence is never auto-trusted to ``official`` and is not
+    # persisted back to the corpus by S16 (that is S17's job).
+    provenance: str = "local_corpus"
 
 
 class RetrievalRun(BaseModel):

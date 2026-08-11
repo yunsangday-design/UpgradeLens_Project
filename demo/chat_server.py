@@ -192,18 +192,34 @@ def _build_badges(result: Any) -> list[dict]:
         d in degradations
         for d in ("NO_DOC_INDEX", "COVERAGE_INSUFFICIENT", "NO_CODE_EVIDENCE")
     )
-    online_fallback = any(d in degradations for d in ("retrieval_failed", "mode_fallback"))
+
+    # Online supplement (S16) is signalled by a trace event rather than a
+    # degradation, because it is a success path, not a degradation.
+    trace = getattr(result, "trace", None)
+    event_tools: list[str] = []
+    if trace is not None:
+        raw = getattr(trace, "events", None)
+        if raw is None and isinstance(trace, list):
+            raw = trace
+        for e in raw or []:
+            tool = getattr(e, "tool", None)
+            if tool is None and isinstance(e, dict):
+                tool = e.get("tool")
+            if tool:
+                event_tools.append(tool)
+    online_ok = "online_supplement" in event_tools
 
     # The local knowledge base is the grounding source in both offline (fake)
-    # and live mode unless retrieval explicitly failed.
-    if not doc_failure:
-        badges.append({"kind": "kb-hit", "text": "本地知识库命中"})
-    if online_fallback:
+    # and live mode unless retrieval explicitly failed. Online supplement wins
+    # over a local miss (it recovered the answer); a bare local miss is a failure.
+    if online_ok:
         badges.append({"kind": "online-supplement", "text": "在线资料临时补充"})
-    if not doc_failure and asmt.is_partial:
-        badges.append({"kind": "kb-writing", "text": "资料正在写入知识库"})
-    if doc_failure:
+    elif doc_failure:
         badges.append({"kind": "kb-failed", "text": "资料补充失败，结果不完整"})
+    else:
+        badges.append({"kind": "kb-hit", "text": "本地知识库命中"})
+        if asmt.is_partial:
+            badges.append({"kind": "kb-writing", "text": "资料正在写入知识库"})
 
     return badges
 

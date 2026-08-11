@@ -20,21 +20,27 @@ through the stage 7 fetcher/clone helpers with their SSRF guard intact.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from upgradelens.analyzers import scan_code_evidence
 from upgradelens.analyzers import scan_dependency as _scan_dependency
+from upgradelens.config import NetworkMode, Settings
 from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.db.vector import EmbeddingBackend
 from upgradelens.docs import retrieve as _retrieve
+from upgradelens.docs.ingest import iter_sources_for_package
+from upgradelens.docs.online_fallback import run_online_fallback
+from upgradelens.docs.rag_miss import classify_rag_miss
 from upgradelens.docs.retrieval import retrieve_for_package as _retrieve_for_package
 from upgradelens.domain import DependencyAnalysisRequest
 from upgradelens.domain.code_evidence import CodeEvidenceReport
@@ -43,10 +49,13 @@ from upgradelens.llm.gateway import ModelGateway, ModelMode
 from upgradelens.models.impact import EvidenceBundle, EvidenceItem, ImpactReport
 from upgradelens.skills import SkillParseError, builtin_registry
 from upgradelens.tools.errors import ToolError, ToolExecutionError, ToolInputError
+from upgradelens.tools.fetcher import RestrictedFetcher
 from upgradelens.tools.live_repo import LiveRepoHandle, clone_live_repo, parse_repo_slug
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify import verify_report as _verify_report
 from upgradelens.verify.version_match import extract_version
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Context
@@ -394,6 +403,22 @@ def _handle_retrieve_docs(args: RetrieveDocsInput, ctx: ToolContext) -> Any:
     return run.model_dump(mode="json")
 
 
+def _any_covers(specs: list[Any], target: str) -> bool:
+    """True if any ingested source targets (roughly) ``target`` per PEP 440."""
+    if not target:
+        return False
+    for spec in specs:
+        tv = getattr(spec, "target_version_spec", "") or ""
+        if not tv:
+            continue
+        try:
+            if SpecifierSet(tv).contains(target):
+                return True
+        except Exception:  # malformed specifier in the corpus — ignore that source
+            continue
+    return False
+
+
 def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext) -> Any:
     session = ctx.session(Path(args.db))
     mode = ctx.gateway.mode if ctx.gateway is not None else ModelMode.FAKE
@@ -411,6 +436,38 @@ def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext
         mode=mode,
         embedding=ctx.embedding,
     )
+    # S16: when the local shared corpus misses, supplement the *current* request
+    # with keyless online discovery. This is gated hard: only live model mode and
+    # only when the network policy allows it. fake/replay runs never touch the
+    # network, so they can never accidentally call out.
+    local_served = any(r.top_doc_evidence for r in runs)
+    if not local_served and mode == ModelMode.LIVE:
+        settings = Settings()
+        if NetworkMode(settings.network) != NetworkMode.OFFLINE:
+            specs = iter_sources_for_package(session, canonicalize_name(args.package))
+            miss_reason = classify_rag_miss(
+                has_db=bool(args.db),
+                has_sources=bool(specs),
+                has_covering_source=_any_covers(specs, args.target_version),
+                runs=runs,
+            )
+            try:
+                fb = run_online_fallback(
+                    args.package,
+                    args.source_version or "",
+                    args.target_version or "",
+                    args.user_intent or "",
+                    list(args.code_symbols),
+                    fetcher=RestrictedFetcher(trace=ctx.trace),
+                    network=settings.network,
+                    trace=ctx.trace,
+                    miss_reason=miss_reason,
+                    plan_step_id=getattr(ctx, "active_plan_step_id", "") or "",
+                )
+                if fb.runs:
+                    runs = runs + fb.runs
+            except Exception as exc:  # noqa: BLE001 - degrade, never crash the loop
+                logger.warning("online fallback failed for %s: %s", args.package, exc)
     return [run.model_dump(mode="json") for run in runs]
 
 

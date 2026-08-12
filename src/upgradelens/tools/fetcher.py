@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -131,6 +132,10 @@ class RestrictedFetcher:
         self._cache = cache
         self._opener = opener or _default_open
         self._last_call: dict[str, float] = {}
+        # Step 13, #3.2: serialises trace writes while the network I/O runs
+        # outside the lock, so parallel fetches overlap (the cache guards its
+        # own I/O via DocCache._lock).
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ guards
     def _resolve_ips(self, host: str) -> list[str]:
@@ -215,21 +220,24 @@ class RestrictedFetcher:
 
         Cache-first: when a fresh entry exists and ``refresh`` is false, it is
         returned with ``cache_hit`` recorded. Otherwise the network is used and
-        the result is cached.
+        the result is cached. ``self._lock`` serialises the trace writes so that
+        several threads may call ``fetch`` in parallel (Step 13, #3.2); the cache
+        guards its own I/O, and the network request runs outside the lock.
         """
         if self._cache is not None and not refresh:
             key = self._cache.key_for(url)
             hit = self._cache.get(key)
             if hit is not None:
-                self._trace.record(
-                    tool="fetcher.cache",
-                    target=url,
-                    status="cached",
-                    http_status=hit.status,
-                    bytes_=len(hit.content),
-                    cache_hit=True,
-                    params=params,
-                )
+                with self._lock:
+                    self._trace.record(
+                        tool="fetcher.cache",
+                        target=url,
+                        status="cached",
+                        http_status=hit.status,
+                        bytes_=len(hit.content),
+                        cache_hit=True,
+                        params=params,
+                    )
                 return FetchResult(
                     url=url,
                     final_url=hit.final_url,
@@ -247,24 +255,26 @@ class RestrictedFetcher:
         try:
             result = self._fetch_with_redirects(url, 0)
         except ToolError as exc:
-            self._trace.record(
-                tool="fetcher",
-                target=url,
-                status="error",
-                error=str(exc),
-                latency_ms=(time.monotonic() - start) * 1000,
-                params=params,
-            )
+            with self._lock:
+                self._trace.record(
+                    tool="fetcher",
+                    target=url,
+                    status="error",
+                    error=str(exc),
+                    latency_ms=(time.monotonic() - start) * 1000,
+                    params=params,
+                )
             raise
         except (TimeoutError, urllib.error.URLError) as exc:  # pragma: no cover
-            self._trace.record(
-                tool="fetcher",
-                target=url,
-                status="error",
-                error=str(exc),
-                latency_ms=(time.monotonic() - start) * 1000,
-                params=params,
-            )
+            with self._lock:
+                self._trace.record(
+                    tool="fetcher",
+                    target=url,
+                    status="error",
+                    error=str(exc),
+                    latency_ms=(time.monotonic() - start) * 1000,
+                    params=params,
+                )
             raise
 
         latency = (time.monotonic() - start) * 1000
@@ -281,15 +291,16 @@ class RestrictedFetcher:
                     fetched_at=time.time(),
                 ),
             )
-        self._trace.record(
-            tool="fetcher",
-            target=url,
-            status="ok",
-            http_status=result.status,
-            bytes_=len(result.content),
-            latency_ms=latency,
-            params=params,
-        )
+        with self._lock:
+            self._trace.record(
+                tool="fetcher",
+                target=url,
+                status="ok",
+                http_status=result.status,
+                bytes_=len(result.content),
+                latency_ms=latency,
+                params=params,
+            )
         return result
 
     def _fetch_with_redirects(self, url: str, depth: int) -> FetchResult:

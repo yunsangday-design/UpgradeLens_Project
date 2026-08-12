@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +64,9 @@ class DocCache:
         self._dir = Path(cache_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._max_age = max_age_seconds
+        # Step 13, #3.2: guard file I/O so the cache can be shared across the
+        # worker threads that fetch discovered sources in parallel.
+        self._lock = threading.Lock()
 
     @staticmethod
     def key_for(*parts: str) -> str:
@@ -77,30 +81,32 @@ class DocCache:
         return self._dir / f"{key}.bin"
 
     def get(self, key: str) -> CacheEntry | None:
-        meta_path = self._meta_path(key)
-        if not meta_path.exists():
-            return None
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            content = self._content_path(key).read_bytes()
-        except (OSError, ValueError):
-            return None
-        if time.time() - float(meta.get("fetched_at", 0)) > self._max_age:
-            return None
-        entry = CacheEntry.from_dict(meta)
-        entry.content = content
-        return entry
+        with self._lock:
+            meta_path = self._meta_path(key)
+            if not meta_path.exists():
+                return None
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                content = self._content_path(key).read_bytes()
+            except (OSError, ValueError):
+                return None
+            if time.time() - float(meta.get("fetched_at", 0)) > self._max_age:
+                return None
+            entry = CacheEntry.from_dict(meta)
+            entry.content = content
+            return entry
 
     def put(self, key: str, entry: CacheEntry) -> None:
-        self._meta_path(key).write_text(
-            json.dumps(
-                {k: v for k, v in entry.to_dict().items() if k != "content"},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        self._content_path(key).write_bytes(entry.content)
+        with self._lock:
+            self._meta_path(key).write_text(
+                json.dumps(
+                    {k: v for k, v in entry.to_dict().items() if k != "content"},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            self._content_path(key).write_bytes(entry.content)
 
     def clear(self) -> None:
         for path in self._dir.glob("*.json"):

@@ -136,6 +136,9 @@ class Plan(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     items: list[PlanItem] = Field(default_factory=list)
+    # Step 13, #2.3: when the planner output is capped (to bound the extractor's
+    # serial LLM calls) this records how many candidate topics were dropped.
+    note: str = ""
 
 
 class BreakingChange(BaseModel):
@@ -276,6 +279,7 @@ def build_bundle(
                         "source_version_spec": de.source_version_spec,
                         "target_version_spec": de.target_version_spec,
                         "trust_level": de.trust_level,
+                        "provenance": de.provenance,
                         "chunk_content_hash": de.chunk_content_hash,
                         "score": de.score,
                     },

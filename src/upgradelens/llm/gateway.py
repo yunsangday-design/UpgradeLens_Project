@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol, TypeVar, cast, runtime_checkable
@@ -271,6 +271,12 @@ class ModelGateway:
         # Strategies the endpoint has already rejected as unsupported. Cached for
         # the lifetime of the run so later nodes skip a doomed round trip.
         self._unsupported_methods: set[str] = set()
+        # Step 13, #3.3: run-scoped cache for identical (prompt, schema, name)
+        # structured calls. Only consulted in live mode -- fake/replay are
+        # deterministic and may be reused across evaluation cases, so we must
+        # not let a cache leak between those cases. Saves redundant LLM calls
+        # when the verification loop re-runs analyse() with unchanged evidence.
+        self._structured_cache: dict[tuple[str, str, str], tuple[Any, CompletionRecord]] = {}
 
     @property
     def budget(self) -> TokenBudget:
@@ -288,10 +294,21 @@ class ModelGateway:
     def complete_structured(
         self, *, prompt: str, schema: type[_M], name: str
     ) -> tuple[_M, CompletionRecord]:
+        mode = self._config.mode
+        # Step 13, #3.3: reuse an identical structured call within a live run.
+        # The key folds in the node name so distinct nodes with identical prompts
+        # still hit separate entries (e.g. two extractors with the same text).
+        cache_key: tuple[str, str, str] | None = None
+        if mode == ModelMode.LIVE:
+            cache_key = (prompt, schema.__name__, name)
+            cached = self._structured_cache.get(cache_key)
+            if cached is not None:
+                obj, rec = cached
+                return obj, replace(rec, cached=True)
+
         prompt_tokens = estimate_tokens(prompt)
         self._budget.consume(prompt_tokens)
 
-        mode = self._config.mode
         if mode == ModelMode.FAKE:
             obj, rec = self._fake.complete(prompt, schema, name)
         elif mode == ModelMode.REPLAY:
@@ -306,6 +323,8 @@ class ModelGateway:
         rec_dir = self._recording_dir
         if rec_dir is not None and mode != ModelMode.REPLAY:
             self._write_recording(name, obj, rec_dir)
+        if mode == ModelMode.LIVE and cache_key is not None:
+            self._structured_cache[cache_key] = (obj, rec)
         return obj, rec
 
     def _write_recording(self, name: str, obj: BaseModel, recording_dir: str) -> None:

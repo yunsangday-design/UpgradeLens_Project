@@ -19,7 +19,7 @@ product baseline / eval harness).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,6 @@ from upgradelens.domain.code_evidence import CodeEvidenceReport
 from upgradelens.domain.dependency import DependencyScanResult, ResolutionStatus
 from upgradelens.domain.doc_evidence import RetrievalRun
 from upgradelens.llm.gateway import ModelGateway, ModelMode
-from upgradelens.llm.query_rewrite import rewrite_query
 from upgradelens.pipeline import (
     COVERAGE_INSUFFICIENT,
     NO_DOC_INDEX,
@@ -71,6 +70,11 @@ _MAX_SUPPLEMENTARY = 2
 # ROADMAP Step 5: cap verification/remediation rounds so the feedback loop always
 # terminates even when the verifier keeps finding remediable issues.
 _MAX_REPLANS = 3
+
+# Maximum history entries included in the _decide prompt.  Older entries are
+# still kept on ctx.tool_history (useful for trace/debug) but not sent to the
+# model to stay within a reasonable prompt size.  Each entry is ~50-150 tokens.
+_MAX_HISTORY_ENTRIES = 12
 
 
 class ToolCallDecision(BaseModel):
@@ -123,20 +127,49 @@ def _decide(
     request: Any,
     acc: _Accumulator,
     turn: int,
+    ctx: ToolContext,
 ) -> ToolCallDecision:
-    spec_lines = "\n".join(f"- {s['name']}: {s['description']}" for s in specs)
+    # Filter out tools whose result is already collected — the model cannot
+    # select what it cannot see, eliminating wasted LLM round-trips entirely.
+    active_specs = [s for s in specs if not _already_collected(s["name"], acc)]
+    spec_lines = "\n".join(f"- {s['name']}: {s['description']}" for s in active_specs)
+    done: list[str] = []
+    if is_repo_url(request.repo) and acc.repo_path is not None:
+        done.append("clone_repo")
+    if acc.scan_result is not None:
+        done.append("scan_dependency")
+    if acc.code_report is not None:
+        done.append("scan_code")
     collected = (
         f"repo_path={acc.repo_path}, code_report={'yes' if acc.code_report else 'no'}, "
-        f"doc_runs={len(acc.doc_runs)}, scan_result={'yes' if acc.scan_result else 'no'}"
+        f"doc_runs={len(acc.doc_runs)}, scan_result={'yes' if acc.scan_result else 'no'}, "
+        f"tools_done={done or 'none'}"
     )
+    # Build conversation history from ctx so the model sees prior tool results.
+    # Only include the most recent entries to stay within a reasonable prompt size.
+    history_section = ""
+    recent = ctx.tool_history[-_MAX_HISTORY_ENTRIES:]
+    if recent:
+        lines: list[str] = []
+        for entry in recent:
+            lines.append(f"[Turn {entry['turn']}] {entry['tool']} → {entry['observation']}")
+        history_section = "# Previous actions\n" + "\n".join(lines) + "\n\n"
+
+    # If no tools remain, force done immediately without asking the model.
+    if not active_specs:
+        return ToolCallDecision(tool=None, done=True, thought="all collection tools completed")
+
     prompt = (
         "You are a senior dependency-upgrade analyst collecting evidence before a "
         "structured assessment. Choose the NEXT tool to call (or finish).\n\n"
         "Return JSON: {tool: str|null, arguments: object, done: bool, thought: str}\n"
-        "- Call each needed collection tool at most once; prefer `scan_code`/`scan_dependency` "
-        "for a local repo, `clone_repo` first for a URL. When evidence is enough, set done=true.\n"
-        "- Only call `retrieve_for_package` if a doc store was provided (it wasn't if absent).\n\n"
+        "- When all needed evidence is collected, set done=true immediately.\n"
+        "- If scan_result=yes AND code_report=yes AND (doc_runs>0 OR no doc store), "
+        "you MUST set done=true.\n"
+        "- Do NOT repeat a tool that already succeeded (see Previous actions).\n"
+        "- Only call `retrieve_for_package` if it is listed in Available tools.\n\n"
         f"# Run state (turn {turn})\n{collected}\n\n"
+        f"{history_section}"
         f"# Available tools\n{spec_lines}\n\n"
         f"# Request\nrepo={request.repo}\ndependency={request.dependency}\n"
         f"target_version={request.target_version}\nsource_version={request.source_version}\n"
@@ -171,13 +204,13 @@ def _build_args(
     if tool == "retrieve_for_package":
         if acc.repo_path is None:
             raise ValueError("repo_path not resolved before retrieve_for_package")
-        if request.db is None:
-            raise ValueError("retrieve_for_package requires a doc store (request.db)")
+        # S16: db is optional now — the handler falls back to online
+        # discovery (PyPI → web search) when no local corpus exists.
         symbols: list[str] = []
         if acc.code_report is not None:
             symbols = [u.symbol for u in acc.code_report.usages]
         out = {
-            "db": str(request.db),
+            "db": str(request.db) if request.db else "",
             "package": request.dependency,
             "source_version": acc.source_version_spec,
             "target_version": acc.target_version_spec,
@@ -248,6 +281,55 @@ def _absorb(tool: str, result: Any, acc: _Accumulator, request: Any) -> str:
     return "ok"
 
 
+# --- deterministic dedup (live-loop hygiene) ----------------------------------- #
+#
+# The live ReAct model may re-call a *covering* tool whose result is already
+# absorbed (each ``_decide`` is also a fresh LLM round-trip).  Re-running these
+# tools is pure waste, so the driven loop skips them deterministically instead of
+# relying on the model to obey the "at most once" prompt hint.
+
+
+def _already_collected(tool: str, acc: _Accumulator) -> bool:
+    """True when a covering tool already produced its result in ``acc``.
+
+    ``scan_dependency``/``scan_code`` would overwrite the same report and
+    ``clone_repo`` would re-fetch the same checkout.  ``retrieve_for_package`` is
+    intentionally excluded: it *accumulates* chunks across queries (the S4
+    supplementary phase depends on that) and is bounded separately by
+    ``_MAX_SUPPLEMENTARY``.
+    """
+    if tool == "clone_repo":
+        return acc.repo_path is not None
+    if tool == "scan_dependency":
+        return acc.scan_result is not None
+    if tool == "scan_code":
+        return acc.code_report is not None
+    return False
+
+
+def _record_redundant_call(
+    plan: AgentPlan, plan_writer: Any, tool: str, turn: int
+) -> None:
+    """Record that the model re-called ``tool`` although its result is collected.
+
+    A succeeded step stays succeeded; we only annotate its observation so the plan
+    stays truthful without accumulating per-call ad-hoc steps.
+    """
+    prior = next(
+        (s for s in plan.steps if s.tool == tool and s.status == SUCCEEDED), None
+    )
+    if prior is not None:
+        note = f"redundant re-call at turn {turn}; skipped (already collected)"
+        prior.observation = "; ".join(x for x in (prior.observation, note) if x)
+        _sync_plan(plan_writer, plan)
+        return
+    step = _resolve_step(plan, tool)
+    if step is None:
+        step = _add_adhoc_step(plan, tool, "redundant re-call; skipped")
+    step.mark_skipped(f"already collected; redundant re-call at turn {turn} skipped")
+    _sync_plan(plan_writer, plan)
+
+
 def _build_collection(acc: _Accumulator, request: Any) -> EvidenceCollection:
     code_report = acc.code_report
     if code_report is None:
@@ -308,8 +390,10 @@ def _evaluate_step(tool: str, acc: _Accumulator, request: Any, repo_is_url: bool
     if tool in ("scan_dependency", "scan_code"):
         return "run" if acc.repo_path is not None else "wait"
     if tool == "retrieve_for_package":
-        if request.db is None:
-            return SKIPPED
+        # S16 two-stage online fallback (PyPI → web search) works even
+        # without a local doc store, so we no longer skip when ``db`` is
+        # None.  The handler itself decides whether to query locally or
+        # fall back to the network.
         return "run" if acc.repo_path is not None else "wait"
     if tool == "supplement_retrieval":
         # ROADMAP Step 4: run as a post-collection phase in ``_run_driven`` (works
@@ -323,7 +407,8 @@ def _skip_reason(tool: str, request: Any) -> str:
     if tool == "clone_repo":
         return "local repo path provided; no clone needed"
     if tool == "retrieve_for_package":
-        return "no doc store configured; skipping doc retrieval"
+        # S16: online fallback is available even without a local db.
+        return "repo path not yet available; waiting"
     return "not applicable to this request"
 
 
@@ -340,16 +425,21 @@ def _evidence_ids(tool: str, acc: _Accumulator) -> list[str]:
 
 
 class _ReactPolicy:
-    """Live mode: a ReAct model decides the next tool (replays in replay mode)."""
+    """Live mode: a ReAct model decides the next tool (replays in replay mode).
 
-    def __init__(self, gateway: ModelGateway, request: Any) -> None:
+    Tool results are recorded on :attr:`ToolContext.tool_history` by the main
+    loop; ``_decide`` reads them from ctx so the model sees what already happened.
+    """
+
+    def __init__(self, gateway: ModelGateway, request: Any, ctx: ToolContext) -> None:
         self.gateway = gateway
         self.request = request
+        self._ctx = ctx
 
     def decide(
         self, turn: int, acc: _Accumulator, plan: AgentPlan, specs: list[dict[str, Any]]
     ) -> ToolCallDecision:
-        return _decide(self.gateway, specs, self.request, acc, turn)
+        return _decide(self.gateway, specs, self.request, acc, turn, self._ctx)
 
 
 class _PlanDrivenPolicy:
@@ -384,9 +474,11 @@ class _PlanDrivenPolicy:
         )
 
 
-def _select_policy(gateway: ModelGateway, request: Any, repo_is_url: bool, plan_writer: Any) -> Any:
+def _select_policy(
+    gateway: ModelGateway, request: Any, repo_is_url: bool, plan_writer: Any, ctx: ToolContext
+) -> Any:
     if gateway.mode == ModelMode.LIVE:
-        return _ReactPolicy(gateway, request)
+        return _ReactPolicy(gateway, request, ctx)
     return _PlanDrivenPolicy(request, repo_is_url, plan_writer)
 
 
@@ -398,25 +490,12 @@ def _build_supplementary_query(
 ) -> str:
     """Phrase the focused supplementary query for one gap.
 
-    ``fake`` mode uses the deterministic :func:`gap_query` template. ``live`` mode
-    asks the LLM to rewrite a focused query (reusing ``gateway.complete_structured``
-    + the shared ``rewrite_query`` path); we fall back to the template on any error
-    or empty result.
+    Uses the deterministic :func:`gap_query` template in both fake and live
+    modes (Step 13, #2.2) so supplementary retrieval never spends an extra LLM
+    round-trip rewriting the query. The template already folds in the package,
+    the missing symbol, the version range, and the migration intent, which is
+    enough for a focused retrieval.
     """
-    if gateway is not None and gateway.mode == ModelMode.LIVE:
-        try:
-            queries = rewrite_query(
-                gateway,
-                package=request.dependency,
-                code_symbols=[gap.symbol],
-                user_intent=request.target_version or request.source_version or "",
-                source_version=acc.source_version_spec,
-                target_version=acc.target_version_spec,
-            )
-            if queries:
-                return queries[0]
-        except Exception:  # noqa: BLE001 - fall back to the deterministic template
-            pass
     return gap_query(
         gap,
         package=request.dependency,
@@ -644,6 +723,50 @@ def _run_remediation(
     # REANALYSE has nothing to re-collect; the next analyse() re-runs model analysis.
 
 
+def _implicated_risk_ids(outcome: AssessmentOutcome) -> set[str]:
+    """Risk ids that carry at least one verifier issue in ``outcome``.
+
+    Phase 3.1 (step13): a remediation round only changes the risks its previous
+    round's issues implicated. These ids mark the risks that must be re-derived;
+    every other risk reuses the prior round verbatim.
+    """
+    ids: set[str] = set()
+    for risk in outcome.verified.all_risks:
+        if getattr(risk, "issues", None):
+            ids.add(risk.risk_id)
+    return ids
+
+
+def _reuse_prior_risks(fresh: Any, prior: Any, implicated: set[str]) -> Any:
+    """Phase 3.1: keep the fresh re-analysis for risks implicated by the previous
+    round's remediation, and reuse the prior round's finding verbatim for every
+    other risk so unaffected findings are not recomputed or flip-flopped.
+
+    A risk whose fresh re-analysis surfaces a *new* issue is always kept fresh
+    (never masked by the prior copy), so the merge cannot hide a regression.
+    """
+    prior_by_id = {r.risk_id: r for r in prior.all_risks}
+
+    def _pick(risks: list[Any]) -> list[Any]:
+        kept: list[Any] = []
+        for risk in risks:
+            prior_risk = prior_by_id.get(risk.risk_id)
+            if risk.risk_id in implicated:
+                kept.append(risk)  # remediation target -> fresh re-analysis wins
+            elif prior_risk is not None and not getattr(risk, "issues", None):
+                kept.append(prior_risk)  # unchanged & clean -> reuse prior verbatim
+            else:
+                kept.append(risk)  # keep fresh (new issue, or no prior to reuse)
+        return kept
+
+    return fresh.model_copy(
+        update={
+            "verified_risks": _pick(fresh.verified_risks),
+            "degraded_risks": _pick(fresh.degraded_risks),
+        }
+    )
+
+
 def _run_verification_loop(
     plan: AgentPlan,
     acc: _Accumulator,
@@ -673,11 +796,22 @@ def _run_verification_loop(
     }
     last_collection: EvidenceCollection | None = None
     last_outcome: AssessmentOutcome | None = None
+    prev_outcome: AssessmentOutcome | None = None
     stopped = "settled"  # settled | budget | rounds
 
     for round_idx in range(max_replans + 1):
         last_collection = _build_collection(acc, request)
         outcome = analyse_fn(last_collection, gateway, ctx, registry=registry)
+        # Phase 3.1 (step13): a remediation round only re-derives the risks its
+        # previous round's issues implicated. Reuse the prior round's finding for
+        # every other risk so unaffected findings are preserved verbatim; LLM calls
+        # for unchanged evidence are already served from the per-run prompt cache
+        # (Phase 3.3).
+        if prev_outcome is not None and isinstance(outcome, AssessmentOutcome):
+            implicated = _implicated_risk_ids(prev_outcome)
+            if implicated:
+                merged = _reuse_prior_risks(outcome.verified, prev_outcome.verified, implicated)
+                outcome = replace(outcome, verified=merged)
         last_outcome = outcome
         issues = [issue for risk in outcome.verified.all_risks for issue in risk.issues]
         plan.unresolved_risks = issues
@@ -704,6 +838,9 @@ def _run_verification_loop(
             break
         plan.replan_count += 1
         _run_remediation(plan, acc, request, registry, ctx, gateway, plan_writer, kinds, issues)
+        # The round whose issues drove this remediation becomes the baseline that
+        # the next iteration reuses for non-implicated risks (Phase 3.1).
+        prev_outcome = last_outcome
 
     if stopped == "budget":
         plan.status = PlanStatus.BUDGET_EXHAUSTED.value
@@ -745,8 +882,9 @@ def _run_driven(
     if not repo_is_url:
         acc.repo_path = Path(request.repo)
 
-    policy = _select_policy(gateway, request, repo_is_url, plan_writer)
+    policy = _select_policy(gateway, request, repo_is_url, plan_writer, ctx)
     specs = _collection_tool_specs(registry, request, repo_is_url)
+    consecutive_redundant = 0  # track consecutive dedup hits for forced convergence
 
     for turn in range(1, max_turns + 1):
         budget = getattr(gateway, "budget", None)
@@ -758,6 +896,25 @@ def _run_driven(
         decision = policy.decide(turn, acc, plan, specs)
         if decision.done or not decision.tool:
             break
+
+        # Deterministic dedup: a covering tool whose result is already absorbed is
+        # skipped instead of paying another tool run on top of the LLM round-trip
+        # that just produced the decision.  This bounds runaway re-calls (the model
+        # was seen re-calling ``scan_dependency`` 25+ times in live mode).
+        if _already_collected(decision.tool, acc):
+            _record_redundant_call(plan, plan_writer, decision.tool, turn)
+            consecutive_redundant += 1
+            # Force convergence: if the model keeps picking completed tools,
+            # stop the loop rather than burning more LLM round-trips.
+            if consecutive_redundant >= 2:
+                plan.notes.append(
+                    f"forced done: model repeated completed tools {consecutive_redundant} times"
+                )
+                _sync_plan(plan_writer, plan)
+                break
+            continue
+
+        consecutive_redundant = 0  # reset on a valid tool call
 
         step = _resolve_step(plan, decision.tool)
         if step is None:
@@ -772,6 +929,11 @@ def _run_driven(
         if ok and ctx.trace.events:
             ctx.trace.events[-1].evidence_ids = _evidence_ids(decision.tool, acc)
         _sync_plan(plan_writer, plan)
+
+        # Record tool result on ctx so the next _decide call can see it.
+        ctx.tool_history.append({
+            "turn": str(turn), "tool": decision.tool, "observation": observation or ""
+        })
 
         if not ok:
             plan.notes.append(f"step {step.id} ({decision.tool}) failed: {observation}")

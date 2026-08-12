@@ -48,6 +48,11 @@ def _summarize_docs(bundle: EvidenceBundle) -> str:
     return "\n".join(lines) or "(no documentation retrieved)"
 
 
+#: Step 13, #2.3 -- cap the number of breaking-change topics the extractor
+#: processes in serial, to keep the extractor's LLM budget bounded.
+_MAX_PLAN_ITEMS = 6
+
+
 def planner(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
     """Plan the analysis from evidence only -- no dedicated Skill Pack required."""
     bundle = state["bundle"]
@@ -60,6 +65,15 @@ def planner(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
         code_evidence=_summarize_code(bundle),
     )
     plan, _ = gateway.complete_structured(prompt=prompt, schema=Plan, name="planner")
+    items = list(plan.items)
+    if len(items) > _MAX_PLAN_ITEMS:
+        kept = items[:_MAX_PLAN_ITEMS]
+        note = (
+            f"[planner] limited breaking-change analysis to the top "
+            f"{len(kept)} of {len(items)} candidate topics; the remaining "
+            f"{len(items) - len(kept)} were not examined to bound LLM calls."
+        )
+        plan = plan.model_copy(update={"items": kept, "note": note})
     return {"plan": plan}
 
 
@@ -105,6 +119,8 @@ def impact_analyzer(state: GraphState, gateway: ModelGateway) -> dict[str, Any]:
     ]
     dropped = len(draft.risks) - len(validated)
     notes = draft.notes
+    if getattr(plan, "note", ""):
+        notes = (notes + " " + plan.note).strip()
     if dropped:
         tag = f"[dropped {dropped} risk(s) with unknown evidence ids]"
         notes = (notes + " " + tag).strip()

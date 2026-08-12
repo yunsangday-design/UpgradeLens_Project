@@ -70,13 +70,12 @@ def test_build_args_injects_known_values() -> None:
     assert docs["source_id"] == "py"
     assert docs["top_k"] == 5
 
-    # No doc store configured -> the loop must refuse retrieve_for_package.
+    # No doc store configured -> S16 allows retrieve_for_package to run
+    # with online fallback (PyPI → web search).  ``db`` is passed as "".
     req_no_store = AssessmentRequest(repo="x", dependency="pydantic", target_version="2.0")
-    try:
-        _build_args("retrieve_for_package", {}, acc, req_no_store)
-        raise AssertionError("expected ValueError")
-    except ValueError:
-        pass
+    docs_no_db = _build_args("retrieve_for_package", {}, acc, req_no_store)
+    assert docs_no_db["db"] == ""
+    assert docs_no_db["package"] == "pydantic"
 
     # scan_code before clone is rejected.
     try:
@@ -127,8 +126,9 @@ def test_run_agent_fake_drives_plan() -> None:
     assert plan.is_resolved()
     assert plan.steps[0].status == "succeeded"  # scan_dependency
     assert plan.steps[1].status == "succeeded"  # scan_code
-    # No doc store -> retrieve_for_package is recorded as skipped, not failed.
-    assert plan.steps[2].status == "skipped"
+    # S16: retrieve_for_package runs even without a db (online fallback available).
+    # In fake mode it succeeds but returns empty evidence.
+    assert plan.steps[2].status == "succeeded"
     # The plan was written back at least once during execution.
     assert written
     # Trace events carry the owning plan step id.

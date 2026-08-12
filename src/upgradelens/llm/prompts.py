@@ -136,7 +136,8 @@ Collected code evidence:
 $code_evidence
 Return a plan listing the topics worth inspecting, with one question each. Use
 the API symbol as the topic id when the topic is about a symbol above; otherwise
-use a short slug derived from the documentation heading.""",
+use a short slug derived from the documentation heading. List at most 6 topics,
+ordered by risk (highest first); if there are more, keep only the most important.""",
 )
 
 #: Code evidence exists, documentation does not. The tempting move is to fill
@@ -234,7 +235,14 @@ Context evidence:
 $context
 
 Return an ImpactReport. Every risk MUST reference only evidence ids that appear
-in the context.""",
+in the context.
+
+When the context contains BOTH code evidence (how the API is used in the
+repository) AND doc evidence (what changed in the target version, including
+documents retrieved online), each risk MUST cite the relevant doc evidence id
+alongside the code evidence id. A risk that only cites code evidence but ignores
+available doc evidence is incomplete — the doc evidence is what establishes that
+the usage is actually affected by the upgrade.""",
     examples=(_UNGROUNDED_RISK_EXAMPLE,),
 )
 

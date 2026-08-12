@@ -99,11 +99,14 @@ def test_manifest_cascades_package_and_versions_into_sources(tmp_path: Path) -> 
 
 
 def test_source_entry_overrides_manifest_defaults(tmp_path: Path) -> None:
-    body = _MANIFEST + """  - id: flask:3.0-changes
+    body = (
+        _MANIFEST
+        + """  - id: flask:3.0-changes
     url: https://flask.palletsprojects.com/en/3.0.x/changes/
     target_version_spec: ">=3.0,<4.0"
     snapshot: sources/flask-2.0-changes.md
 """
+    )
     manifest_path = _write_corpus(tmp_path, manifest_body=body)
 
     manifest = load_source_manifest(manifest_path)

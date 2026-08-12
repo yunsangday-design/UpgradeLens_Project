@@ -153,7 +153,8 @@ def render_markdown(
 
     if report.partial:
         partial_note = (
-            "这是一份部分报告。覆盖不完整：" if zh
+            "这是一份部分报告。覆盖不完整："
+            if zh
             else "This is a partial report. Coverage is incomplete:"
         )
         lines += ["> **" + partial_note + "**", ""]

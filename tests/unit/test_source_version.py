@@ -94,10 +94,7 @@ def _make_repo(tmp_path, dependency_line: str):
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "pyproject.toml").write_text(
-        "[project]\n"
-        'name = "demo"\n'
-        'version = "0.1.0"\n'
-        f"dependencies = [{dependency_line!r}]\n"
+        f'[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = [{dependency_line!r}]\n'
     )
     return repo
 

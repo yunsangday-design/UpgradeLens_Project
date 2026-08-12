@@ -9,6 +9,7 @@ Every function takes a ``locale`` and defaults to ``"zh-CN"``. English is provid
 as a fallback dictionary for the few locales we support; unknown values fall back
 to the raw input so the contract never breaks.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

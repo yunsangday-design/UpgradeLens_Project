@@ -4,6 +4,7 @@ Every ``upgrade_task`` run must yield ``AgentResult.upgrade_plan`` (an
 ``UpgradePlan``) and ``AgentResult.assessment`` (the presentation view), and the
 run store must persist ``upgrade-plan.json`` / ``upgrade-plan.md``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -92,9 +93,7 @@ def test_plan_step_enrichment_from_verified_risk(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     (root / "src").mkdir(parents=True)
-    (root / "src" / "app.py").write_text(
-        "def old_func():\n    return 'old'\n", encoding="utf-8"
-    )
+    (root / "src" / "app.py").write_text("def old_func():\n    return 'old'\n", encoding="utf-8")
     risk = VerifiedRisk(
         risk_id="r1",
         title="Use new_func instead of old_func",

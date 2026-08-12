@@ -10,6 +10,7 @@ The worker lives in a separate process (``upgradelens rag-worker``). Online fetc
 honour the ``NetworkMode`` policy exactly like the live path: in ``offline`` mode a
 job is *skipped*, never fetched.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -49,8 +50,7 @@ _FETCH_EXCEPTIONS = (
 
 def _spec_for_job(job: DocIngestJob) -> DocSourceSpec:
     source_id = (
-        f"online:{job.package_name}:"
-        f"{hashlib.sha1(job.source_url.encode('utf-8')).hexdigest()[:16]}"
+        f"online:{job.package_name}:{hashlib.sha1(job.source_url.encode('utf-8')).hexdigest()[:16]}"
     )
     return DocSourceSpec(
         id=source_id,

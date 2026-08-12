@@ -251,9 +251,7 @@ class _MockRegistry:
         symbol = args["code_symbols"][0]
         self.calls.append((symbol, args.get("curated_queries")))
         ctx.trace.events.append(
-            ToolCallEvent(
-                tool=method, target=symbol, status="ok", latency_ms=1, params=args
-            )
+            ToolCallEvent(tool=method, target=symbol, status="ok", latency_ms=1, params=args)
         )
         if symbol in self.covered:
             return [_run(f"run-{symbol}", symbol).model_dump(mode="json")]

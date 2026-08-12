@@ -4,6 +4,7 @@ The backend keeps machine-readable enum values in the JSON contracts, but the
 presentation layer must expose Chinese ``*_label`` so the demo UI / markdown never
 renders a raw ``str(enum)``.
 """
+
 from __future__ import annotations
 
 from upgradelens.domain.code_evidence import CodeEvidenceReport, CodeEvidenceSummary

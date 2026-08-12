@@ -106,8 +106,7 @@ def build_fake_responses(
                     confidence="high",
                     evidence_ids=[it.evidence_id],
                     recommendation=(
-                        f"审查该 {dependency} 用法以适配目标升级版本；"
-                        "参见官方迁移指南。"
+                        f"审查该 {dependency} 用法以适配目标升级版本；参见官方迁移指南。"
                     ),
                 )
             )

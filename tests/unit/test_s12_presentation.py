@@ -169,9 +169,7 @@ def test_verdict_separation():
 
     # no risk: the dependency IS used (code evidence present) but no breaking
     # change applies -> strictly "no_risk", not "evidence insufficient".
-    no_risk = _outcome(
-        verified=VerifiedReport(conclusion=Conclusion.NO_IMPACT), bundle=_bundle()
-    )
+    no_risk = _outcome(verified=VerifiedReport(conclusion=Conclusion.NO_IMPACT), bundle=_bundle())
     assert project_assessment(no_risk).verdict == "no_risk"
 
     # no impact: the dependency is NOT used at all (no code evidence) -> "no_impact".
@@ -199,9 +197,7 @@ def test_degraded_risks_surface_separately():
 
 def test_upgrade_plan_association_by_file():
     risk = _risk("r1", code_ids=["code1"], doc_ids=["doc1"])
-    verified = VerifiedReport(
-        conclusion=Conclusion.IMPACTED, verified_risks=[risk]
-    )
+    verified = VerifiedReport(conclusion=Conclusion.IMPACTED, verified_risks=[risk])
     bundle = _bundle()
     plan = UpgradePlan(
         target_dependency="pydantic",
@@ -234,9 +230,7 @@ def test_upgrade_plan_association_by_file():
 def test_missing_evidence_ids_are_skipped():
     # Risk references evidence IDs absent from the bundle.
     risk = _risk("r1", code_ids=["missing_code"], doc_ids=["missing_doc"])
-    verified = VerifiedReport(
-        conclusion=Conclusion.IMPACTED, verified_risks=[risk]
-    )
+    verified = VerifiedReport(conclusion=Conclusion.IMPACTED, verified_risks=[risk])
     outcome = _outcome(verified=verified, bundle=_bundle())
     view = project_assessment(outcome)
     finding = view.verified_risks[0]

@@ -48,6 +48,7 @@ class SourceVersion:
         kind = "declared" if self.status == "declared" else "inferred"
         return f"{kind} ({self.spec})"
 
+
 _CODE_KINDS = ("code_usage", "parse_error", "dynamic_import")
 
 

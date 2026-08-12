@@ -8,6 +8,7 @@ Covers the three moving parts:
 * registry gate (``tools/registry.py``) -- live + online_fallback enqueues,
   fake/offline never does.
 """
+
 from __future__ import annotations
 
 import os
@@ -247,10 +248,9 @@ class TestRegistryEnqueueGate:
             ],
         )
         ctx = self._ctx(ModelMode.LIVE)
-        with mock.patch(
-            "upgradelens.tools.registry.run_online_fallback", return_value=fb
-        ), mock.patch(
-            "upgradelens.tools.registry._retrieve_for_package", return_value=[]
+        with (
+            mock.patch("upgradelens.tools.registry.run_online_fallback", return_value=fb),
+            mock.patch("upgradelens.tools.registry._retrieve_for_package", return_value=[]),
         ):
             _handle_retrieve_for_package(self._args(), ctx)
         ctx.close()
@@ -268,10 +268,9 @@ class TestRegistryEnqueueGate:
 
     def test_fake_does_not_enqueue(self) -> None:
         ctx = self._ctx(ModelMode.FAKE)
-        with mock.patch(
-            "upgradelens.tools.registry.run_online_fallback"
-        ) as mock_fb, mock.patch(
-            "upgradelens.tools.registry._retrieve_for_package", return_value=[]
+        with (
+            mock.patch("upgradelens.tools.registry.run_online_fallback") as mock_fb,
+            mock.patch("upgradelens.tools.registry._retrieve_for_package", return_value=[]),
         ):
             _handle_retrieve_for_package(self._args(), ctx)
         ctx.close()
@@ -289,10 +288,9 @@ class TestRegistryEnqueueGate:
             runs=[], evidence=[], status="failed", fetched=0, discovered=0, sources=[]
         )
         ctx = self._ctx(ModelMode.LIVE)
-        with mock.patch(
-            "upgradelens.tools.registry.run_online_fallback", return_value=fb
-        ), mock.patch(
-            "upgradelens.tools.registry._retrieve_for_package", return_value=[]
+        with (
+            mock.patch("upgradelens.tools.registry.run_online_fallback", return_value=fb),
+            mock.patch("upgradelens.tools.registry._retrieve_for_package", return_value=[]),
         ):
             _handle_retrieve_for_package(self._args(), ctx)
         ctx.close()

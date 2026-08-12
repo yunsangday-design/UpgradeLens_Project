@@ -115,9 +115,7 @@ def _all_target_files(plan: UpgradePlan) -> set[str]:
     return targets
 
 
-def _validate_before_apply(
-    plan: UpgradePlan, repo_root: Path
-) -> tuple[bool, str]:
+def _validate_before_apply(plan: UpgradePlan, repo_root: Path) -> tuple[bool, str]:
     """Refuse to apply unless the repo matches the plan's recorded state."""
     if plan.repo_hash:
         current = repo_hash_of(repo_root)
@@ -127,12 +125,7 @@ def _validate_before_apply(
                 f"repo hash mismatch: plan built at {plan.repo_hash}, repo is "
                 f"{current or '<unavailable>'}",
             )
-    missing = [
-        f
-        for step in plan.steps
-        for f in step.target_files
-        if not (repo_root / f).is_file()
-    ]
+    missing = [f for step in plan.steps for f in step.target_files if not (repo_root / f).is_file()]
     if missing:
         return False, "target files missing: " + ", ".join(sorted(missing))
     return True, ""
@@ -213,9 +206,7 @@ def _post_apply_checks(
     return unrelated, residual, round(coverage, 4)
 
 
-def reverify_after_apply(
-    outcome: AssessmentOutcome, sandbox_root: str | Path
-) -> Any | None:
+def reverify_after_apply(outcome: AssessmentOutcome, sandbox_root: str | Path) -> Any | None:
     """Re-run the Verifier against the post-change ``sandbox_root``.
 
     Returns a fresh :class:`VerifiedReport`, or ``None`` if the outcome lacks the inputs
@@ -287,9 +278,7 @@ def execute_plan(
     # The sandbox must live *outside* the repo: shutil.copytree refuses (and would
     # recurse) if the destination is inside the source.
     sandbox_root = (
-        Path(work_dir)
-        if work_dir is not None
-        else Path(tempfile.mkdtemp(prefix="ul_sandbox_"))
+        Path(work_dir) if work_dir is not None else Path(tempfile.mkdtemp(prefix="ul_sandbox_"))
     )
     if sandbox_root.exists():
         shutil.rmtree(sandbox_root)

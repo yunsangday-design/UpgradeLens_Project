@@ -12,6 +12,7 @@
 
 然后打开 http://127.0.0.1:8503
 """
+
 from __future__ import annotations
 
 import json
@@ -189,8 +190,7 @@ def _build_badges(result: Any) -> list[dict]:
 
     degradations = list(result.degradations)
     doc_failure = any(
-        d in degradations
-        for d in ("NO_DOC_INDEX", "COVERAGE_INSUFFICIENT", "NO_CODE_EVIDENCE")
+        d in degradations for d in ("NO_DOC_INDEX", "COVERAGE_INSUFFICIENT", "NO_CODE_EVIDENCE")
     )
 
     # Online supplement (S16) is signalled by a trace event rather than a
@@ -301,26 +301,17 @@ class ChatHandler(SimpleHTTPRequestHandler):
                 "intent": result.intent.model_dump(mode="json"),
                 "plan": result.plan.to_dict() if result.plan else None,
                 "verified": (
-                    result.outcome.verified.model_dump(mode="json")
-                    if result.outcome
-                    else None
+                    result.outcome.verified.model_dump(mode="json") if result.outcome else None
                 ),
                 "degradations": list(result.degradations),
-                "trace": (
-                    [e.to_dict() for e in result.trace.events] if result.trace else []
-                ),
+                "trace": ([e.to_dict() for e in result.trace.events] if result.trace else []),
                 "cost": {
                     "total_tokens": (
-                        sum(
-                            r.prompt_tokens + r.completion_tokens
-                            for r in result.gateway.ledger
-                        )
+                        sum(r.prompt_tokens + r.completion_tokens for r in result.gateway.ledger)
                         if result.gateway
                         else 0
                     ),
-                    "call_count": (
-                        len(result.gateway.ledger) if result.gateway else 0
-                    ),
+                    "call_count": (len(result.gateway.ledger) if result.gateway else 0),
                 },
                 "error": result.error,
                 "badges": _build_badges(result),

@@ -54,7 +54,7 @@ agent = DependencyUpgradeAgent(mode="fake")
 result = agent.run("upgrade pydantic to 2.0", repo="./repo", dependency="pydantic")
 
 if result.verified:
-    print(result.verified.conclusion)       # impacted / no_impact / evidence_insufficient
+    print(result.verified.conclusion)  # impacted / no_impact / evidence_insufficient
     for risk in result.verified.verified_risks:
         print(f"  [{risk.severity.value}] {risk.title}")
 

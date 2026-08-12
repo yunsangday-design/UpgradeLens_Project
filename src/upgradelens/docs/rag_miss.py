@@ -5,6 +5,7 @@ corpus could not serve the request. :class:`RagMissReason` turns the silent
 ``return []`` in :func:`upgradelens.docs.retrieval.retrieve_for_package` into a
 first-class, auditable signal that the trace records as a ``rag_miss`` event.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

@@ -171,6 +171,7 @@ def retrieve(
     # matches one chunk). Force every code symbol to appear at least once by
     # swapping in its best-ranked chunk for the lowest-scored non-boost chunk.
     if boost_terms:
+
         def _blob_of(ch: models.DocChunkRow) -> str:
             return (ch.title + " " + " ".join(ch.heading_path_list) + " " + ch.content).lower()
 

@@ -204,16 +204,10 @@ def build_upgrade_plan(
             "确认目标文件中不再残留对已移除 API 的引用。",
         ]
         if target_files:
-            criteria.append(
-                "运行推荐测试，确认其在目标版本下通过。"
-            )
+            criteria.append("运行推荐测试，确认其在目标版本下通过。")
         # S13: richer, model-grounded step description.
         change_reason = risk.problem or risk.recommendation
-        step_criteria = (
-            list(risk.verification_steps)
-            if risk.verification_steps
-            else criteria
-        )
+        step_criteria = list(risk.verification_steps) if risk.verification_steps else criteria
         steps.append(
             UpgradeStep(
                 step_id=risk.risk_id,
@@ -240,9 +234,7 @@ def build_upgrade_plan(
             from upgradelens.patch import generate_patch_draft
 
             capability = (
-                TransformationPack.from_skill(outcome.skill)
-                if outcome.skill is not None
-                else None
+                TransformationPack.from_skill(outcome.skill) if outcome.skill is not None else None
             )
             verified_risks = outcome.verified.verified_risks if outcome.verified else []
             patch = generate_patch_draft(
@@ -256,8 +248,7 @@ def build_upgrade_plan(
             patch = None
 
     warnings = [
-        f"降级发现未转为步骤：{r.risk_id}（{r.status.value}）"
-        for r in verified.degraded_risks
+        f"降级发现未转为步骤：{r.risk_id}（{r.status.value}）" for r in verified.degraded_risks
     ]
     if not steps:
         warnings.append("没有任何已验证风险生成步骤；计划为空。")

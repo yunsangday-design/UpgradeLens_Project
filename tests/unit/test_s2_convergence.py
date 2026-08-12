@@ -131,9 +131,7 @@ def test_agent_and_pipeline_build_identical_evidence() -> None:
     )
 
     assert (
-        loop_collection.source_version.spec
-        == pipeline_collection.source_version.spec
-        == ">=1.4,<2"
+        loop_collection.source_version.spec == pipeline_collection.source_version.spec == ">=1.4,<2"
     )
     assert (
         loop_collection.source_version.status

@@ -51,9 +51,7 @@ class _Runnable:
 class _FakeChatModel:
     """Stand-in for ``ChatOpenAI`` covering endpoint capability differences."""
 
-    def __init__(
-        self, unsupported: tuple[str, ...] = (), unparsable: tuple[str, ...] = ()
-    ) -> None:
+    def __init__(self, unsupported: tuple[str, ...] = (), unparsable: tuple[str, ...] = ()) -> None:
         self.unsupported = unsupported
         self.unparsable = unparsable
         self.prompts: list[tuple[str, str]] = []

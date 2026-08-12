@@ -132,9 +132,7 @@ def _plan_ref(plan: UpgradePlan, steps: list[UpgradePlanStepRef]) -> UpgradePlan
     )
 
 
-def _collect_items(
-    bundle: EvidenceBundle, evidence_ids: list[str]
-) -> list[EvidenceItem]:
+def _collect_items(bundle: EvidenceBundle, evidence_ids: list[str]) -> list[EvidenceItem]:
     items: list[EvidenceItem] = []
     for eid in evidence_ids:
         item = _evidence(bundle, eid)

@@ -13,6 +13,7 @@ Covers the acceptance criteria without ever touching the real network:
 ``RestrictedFetcher`` suite; S16 reuses that client rather than reimplementing
 it.)
 """
+
 from __future__ import annotations
 
 import json
@@ -230,12 +231,14 @@ class TestRegistryGate(TestCase):
         from upgradelens.tools import registry
 
         captured = {}
-        with mock.patch.object(registry, "iter_sources_for_package", return_value=[]), \
-                mock.patch.object(registry, "_retrieve_for_package", return_value=[]), \
-                mock.patch.object(
-                    registry,
-                    "run_online_fallback",
-                    side_effect=lambda *a, **k: captured.update(k)
+        with (
+            mock.patch.object(registry, "iter_sources_for_package", return_value=[]),
+            mock.patch.object(registry, "_retrieve_for_package", return_value=[]),
+            mock.patch.object(
+                registry,
+                "run_online_fallback",
+                side_effect=lambda *a, **k: (
+                    captured.update(k)
                     or OnlineFallbackResult(
                         runs=[
                             RetrievalRun(
@@ -244,8 +247,10 @@ class TestRegistryGate(TestCase):
                                 query="q",
                             )
                         ]
-                    ),
-                ):
+                    )
+                ),
+            ),
+        ):
             out = registry._handle_retrieve_for_package(self._args(), self._ctx(ModelMode.LIVE))
         self.assertTrue(captured, "run_online_fallback should be called in live mode")
         # The fallback run is merged into the tool output.
@@ -254,9 +259,11 @@ class TestRegistryGate(TestCase):
     def test_fake_never_calls_network(self):
         from upgradelens.tools import registry
 
-        with mock.patch.object(registry, "iter_sources_for_package", return_value=[]), \
-                mock.patch.object(registry, "_retrieve_for_package", return_value=[]), \
-                mock.patch.object(registry, "run_online_fallback") as fb:
+        with (
+            mock.patch.object(registry, "iter_sources_for_package", return_value=[]),
+            mock.patch.object(registry, "_retrieve_for_package", return_value=[]),
+            mock.patch.object(registry, "run_online_fallback") as fb,
+        ):
             registry._handle_retrieve_for_package(self._args(), self._ctx(ModelMode.FAKE))
         fb.assert_not_called()
 

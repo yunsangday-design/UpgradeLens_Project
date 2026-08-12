@@ -588,9 +588,7 @@ def build_parser() -> argparse.ArgumentParser:
         _RAG_WORKER_COMMAND,
         help="Drain pending S17 corpus backfill jobs into the shared corpus.",
     )
-    rag_worker.add_argument(
-        "--db", default=str(DEFAULT_DB_PATH), help="SQLite database path"
-    )
+    rag_worker.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite database path")
     rag_worker.add_argument(
         "--once", action="store_true", help="process pending jobs once and exit (default)"
     )

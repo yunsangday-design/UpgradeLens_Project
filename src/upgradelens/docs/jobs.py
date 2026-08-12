@@ -6,6 +6,7 @@ actually fetches a documentation source, the retrieval tool records a
 (``docs/worker.py``) later drains those jobs and re-ingests the source into the
 shared corpus so the *next* retrieval for the same package hits locally.
 """
+
 from __future__ import annotations
 
 import json
@@ -41,13 +42,17 @@ def enqueue_ingest_job(
     so it survives even if the enclosing request later fails.
     """
     pkg = canonicalize_name(package)
-    existing = session.execute(
-        select(DocIngestJob).where(
-            DocIngestJob.package_name == pkg,
-            DocIngestJob.source_url == url,
-            DocIngestJob.status == DocIngestJobStatus.PENDING.value,
+    existing = (
+        session.execute(
+            select(DocIngestJob).where(
+                DocIngestJob.package_name == pkg,
+                DocIngestJob.source_url == url,
+                DocIngestJob.status == DocIngestJobStatus.PENDING.value,
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if existing is not None:
         return existing
     job = DocIngestJob(
@@ -70,9 +75,11 @@ def enqueue_ingest_job(
 
 def pending_jobs(session: Session, *, limit: int | None = None) -> list[DocIngestJob]:
     """Return pending backfill jobs, oldest first."""
-    q = select(DocIngestJob).where(
-        DocIngestJob.status == DocIngestJobStatus.PENDING.value
-    ).order_by(DocIngestJob.created_at)
+    q = (
+        select(DocIngestJob)
+        .where(DocIngestJob.status == DocIngestJobStatus.PENDING.value)
+        .order_by(DocIngestJob.created_at)
+    )
     if limit is not None:
         q = q.limit(limit)
     return list(session.execute(q).scalars().all())

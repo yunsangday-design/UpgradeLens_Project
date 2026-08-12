@@ -33,9 +33,7 @@ def test_seed_replay_writes_node_responses(tmp_path: Path) -> None:
     assert (replay_dir / "impact_analyzer.json").exists()
 
 
-def test_replay_closed_loop_produces_verified_report(
-    tmp_path: Path, capsys: object
-) -> None:
+def test_replay_closed_loop_produces_verified_report(tmp_path: Path, capsys: object) -> None:
     replay_dir = tmp_path / "replay"
     rc = main(
         [
@@ -78,9 +76,7 @@ def test_replay_closed_loop_produces_verified_report(
     recorded = json.loads((replay_dir / "impact_analyzer.json").read_text())
     recorded_ids = {r["risk_id"] for r in recorded["output"]["risks"]}
     assert recorded_ids
-    replayed_ids = {
-        r["risk_id"] for r in report["verified_risks"] + report["degraded_risks"]
-    }
+    replayed_ids = {r["risk_id"] for r in report["verified_risks"] + report["degraded_risks"]}
     assert replayed_ids == recorded_ids
 
 

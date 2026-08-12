@@ -18,6 +18,7 @@ Safety properties (acceptance criteria):
 * All failures degrade gracefully: the function returns whatever it found (often
   nothing) and records a trace event — it never raises into the agent loop.
 """
+
 from __future__ import annotations
 
 import json
@@ -86,8 +87,7 @@ class DiscoveredSource:
 class DocDiscoveryProvider(Protocol):
     """A keyless way to turn a package name into candidate doc URLs."""
 
-    def discover(self, package: str, *, fetcher: RestrictedFetcher) -> list[DiscoveredSource]:
-        ...
+    def discover(self, package: str, *, fetcher: RestrictedFetcher) -> list[DiscoveredSource]: ...
 
 
 class PypiJsonProvider:

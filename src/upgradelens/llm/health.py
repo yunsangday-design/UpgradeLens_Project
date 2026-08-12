@@ -38,9 +38,7 @@ _NOTES = {
         "mode=fake: no API call was made, the response is canned. "
         "Use --mode live to probe the real endpoint."
     ),
-    ModelMode.REPLAY: (
-        "mode=replay: the response was read from disk, no API call was made."
-    ),
+    ModelMode.REPLAY: ("mode=replay: the response was read from disk, no API call was made."),
     ModelMode.LIVE: (
         "mode=live: the configured endpoint is used directly, "
         "no canned or replayed data is involved."

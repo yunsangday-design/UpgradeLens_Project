@@ -105,7 +105,11 @@ def test_run_agent_fake_drives_plan() -> None:
     written: list[AgentPlan] = []
     ctx = ToolContext()
     result = run_agent(
-        request, gateway, ctx, registry=default_registry(), plan=plan,
+        request,
+        gateway,
+        ctx,
+        registry=default_registry(),
+        plan=plan,
         plan_writer=lambda p: written.append(p),
     )
     # The driven loop produced a verified outcome and recorded trace events.

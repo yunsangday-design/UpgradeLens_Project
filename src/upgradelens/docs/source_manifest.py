@@ -120,9 +120,7 @@ def resolve_snapshot(spec: DocSourceSpec, base_dir: str | Path) -> Path:
     base = Path(base_dir).resolve()
     resolved = (base / candidate).resolve()
     if not resolved.is_relative_to(base):
-        raise DocSourceManifestError(
-            f"source '{spec.id}': snapshot escapes the manifest directory"
-        )
+        raise DocSourceManifestError(f"source '{spec.id}': snapshot escapes the manifest directory")
     if not resolved.is_file():
         raise DocSourceManifestError(f"documentation snapshot not found: {resolved}")
     return resolved
@@ -142,9 +140,7 @@ def _load_mapping(manifest_path: Path) -> dict[str, Any]:
     return data
 
 
-def _build_spec(
-    manifest_path: Path, data: dict[str, Any], entry: Any, index: int
-) -> DocSourceSpec:
+def _build_spec(manifest_path: Path, data: dict[str, Any], entry: Any, index: int) -> DocSourceSpec:
     if not isinstance(entry, dict):
         raise DocSourceManifestError(f"{manifest_path}: source #{index} must be a mapping")
 
@@ -160,9 +156,7 @@ def _build_spec(
     try:
         spec = DocSourceSpec.model_validate(merged)
     except ValidationError as exc:
-        raise DocSourceManifestError(
-            f"{manifest_path}: source #{index} is invalid: {exc}"
-        ) from exc
+        raise DocSourceManifestError(f"{manifest_path}: source #{index} is invalid: {exc}") from exc
 
     if not spec.package_name:
         raise DocSourceManifestError(

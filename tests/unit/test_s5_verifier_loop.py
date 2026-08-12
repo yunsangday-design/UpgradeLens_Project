@@ -165,9 +165,7 @@ def _fail_then_succeed(fail_code: IssueCode, succeed_after: int):
             issue = VerificationIssue(
                 code=fail_code, detail="missing doc evidence", evidence_id="doc:requests.get"
             )
-            verified = VerifiedReport(
-                verified_risks=[_verified_risk([issue])], degraded_risks=[]
-            )
+            verified = VerifiedReport(verified_risks=[_verified_risk([issue])], degraded_risks=[])
         else:
             verified = VerifiedReport(verified_risks=[], degraded_risks=[])
         return SimpleNamespace(verified=verified)
@@ -247,8 +245,15 @@ def test_supplement_issue_triggers_retrieval_then_succeeds() -> None:
 
     analyse_fn = _fail_then_succeed(IssueCode.NO_DOC_EVIDENCE, succeed_after=1)
     outcome = _run_verification_loop(
-        plan, acc, request, registry, ctx, SimpleNamespace(), None,
-        max_replans=3, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        SimpleNamespace(),
+        None,
+        max_replans=3,
+        analyse_fn=analyse_fn,
     )
 
     assert outcome.verified.all_risks == []  # settled
@@ -269,8 +274,15 @@ def test_rescan_issue_triggers_scan_code_then_succeeds() -> None:
 
     analyse_fn = _fail_then_succeed(IssueCode.CONTENT_HASH_CHANGED, succeed_after=1)
     _outcome = _run_verification_loop(
-        plan, acc, request, registry, ctx, SimpleNamespace(), None,
-        max_replans=3, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        SimpleNamespace(),
+        None,
+        max_replans=3,
+        analyse_fn=analyse_fn,
     )
 
     assert plan.status == PlanStatus.COMPLETED.value
@@ -289,8 +301,15 @@ def test_reanalyse_issue_remediates_without_tool_then_succeeds() -> None:
 
     analyse_fn = _fail_then_succeed(IssueCode.UNKNOWN_EVIDENCE_ID, succeed_after=1)
     _outcome = _run_verification_loop(
-        plan, acc, request, registry, ctx, SimpleNamespace(), None,
-        max_replans=3, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        SimpleNamespace(),
+        None,
+        max_replans=3,
+        analyse_fn=analyse_fn,
     )
 
     assert plan.status == PlanStatus.COMPLETED.value
@@ -311,8 +330,15 @@ def test_persistent_issue_exhausts_rounds_needs_human() -> None:
     # never succeeds
     analyse_fn = _fail_then_succeed(IssueCode.NO_DOC_EVIDENCE, succeed_after=99)
     _outcome = _run_verification_loop(
-        plan, acc, request, registry, ctx, SimpleNamespace(), None,
-        max_replans=2, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        SimpleNamespace(),
+        None,
+        max_replans=2,
+        analyse_fn=analyse_fn,
     )
 
     assert plan.status == PlanStatus.NEEDS_HUMAN.value
@@ -330,8 +356,15 @@ def test_exhausted_budget_stops_and_marks_budget_exhausted() -> None:
     gateway = SimpleNamespace(budget=SimpleNamespace(remaining_tokens=0))
     analyse_fn = _fail_then_succeed(IssueCode.NO_DOC_EVIDENCE, succeed_after=99)
     _outcome = _run_verification_loop(
-        plan, acc, request, registry, ctx, gateway, None,
-        max_replans=3, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        gateway,
+        None,
+        max_replans=3,
+        analyse_fn=analyse_fn,
     )
 
     assert plan.status == PlanStatus.BUDGET_EXHAUSTED.value
@@ -355,8 +388,15 @@ def test_success_with_degradation_marks_completed_with_degradation() -> None:
         return SimpleNamespace(verified=verified)
 
     _run_verification_loop(
-        plan, acc, request, registry, ctx, SimpleNamespace(), None,
-        max_replans=3, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        SimpleNamespace(),
+        None,
+        max_replans=3,
+        analyse_fn=analyse_fn,
     )
 
     assert plan.status == PlanStatus.COMPLETED_WITH_DEGRADATION.value
@@ -373,8 +413,15 @@ def test_verification_rounds_are_recorded_in_trace() -> None:
 
     analyse_fn = _fail_then_succeed(IssueCode.NO_DOC_EVIDENCE, succeed_after=1)
     _run_verification_loop(
-        plan, acc, request, registry, ctx, SimpleNamespace(), None,
-        max_replans=3, analyse_fn=analyse_fn,
+        plan,
+        acc,
+        request,
+        registry,
+        ctx,
+        SimpleNamespace(),
+        None,
+        max_replans=3,
+        analyse_fn=analyse_fn,
     )
 
     rounds = [e for e in ctx.trace.events if getattr(e, "tool", None) == "verification_round"]

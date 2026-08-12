@@ -65,19 +65,13 @@ from upgradelens.verify.models import VerifiedReport
 # the report is allowed to speak. Keeping the strings here means all four front
 # doors report the same shortfall with the same words.
 
-NO_DOC_INDEX = (
-    "未提供文档索引（--db）；缺少文档证据时，风险无法升级为“已验证”。"
-)
+NO_DOC_INDEX = "未提供文档索引（--db）；缺少文档证据时，风险无法升级为“已验证”。"
 
 COVERAGE_INSUFFICIENT = (
-    "文档证据未能完整覆盖代码中使用的依赖符号；"
-    "补充检索未能补齐所有缺口（Step 4 覆盖不足）。"
+    "文档证据未能完整覆盖代码中使用的依赖符号；补充检索未能补齐所有缺口（Step 4 覆盖不足）。"
 )
 
-NO_CODE_EVIDENCE = (
-    "在代码中未发现该依赖的使用；"
-    "评估结果无法针对本仓库具体化。"
-)
+NO_CODE_EVIDENCE = "在代码中未发现该依赖的使用；评估结果无法针对本仓库具体化。"
 
 
 # Note: the absence of a Skill Pack is deliberately *not* a degradation. Since

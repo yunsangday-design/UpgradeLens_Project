@@ -6,6 +6,7 @@ returns the S15 presentation DTO (intent / plan / assessment / upgrade_plan /
 badges / trace / cost). Also asserts the static ``chat.html`` exposes the
 result-visualization sections the frontend renders into.
 """
+
 from __future__ import annotations
 
 import http.client
@@ -84,12 +85,19 @@ class TestChatServerSmoke(TestCase):
         self.assertEqual(data["stages"][-2]["status"], "done")
 
     def test_run_returns_presentation_dto(self):
-        status, data = self._post(
-            {"goal": "upgrade pydantic from 1.x to 2.7", "mode": "fake"}
-        )
+        status, data = self._post({"goal": "upgrade pydantic from 1.x to 2.7", "mode": "fake"})
         self.assertEqual(status, 200)
-        for key in ("intent", "plan", "verified", "assessment", "upgrade_plan",
-                    "badges", "degradations", "trace", "cost"):
+        for key in (
+            "intent",
+            "plan",
+            "verified",
+            "assessment",
+            "upgrade_plan",
+            "badges",
+            "degradations",
+            "trace",
+            "cost",
+        ):
             self.assertIn(key, data)
         # S15 info hierarchy is backed by separated verified / unconfirmed risks.
         self.assertEqual(data["intent"]["kind"], "upgrade_task")
@@ -121,11 +129,11 @@ class TestChatServerSmoke(TestCase):
         self.assertTrue(_DEMO_HTML.exists(), "demo/chat.html missing")
         html = _DEMO_HTML.read_text(encoding="utf-8")
         for marker in (
-            "已验证问题",   # verified-findings zone
-            "待确认问题",   # unconfirmed (yellow) zone
+            "已验证问题",  # verified-findings zone
+            "待确认问题",  # unconfirmed (yellow) zone
             "升级修改计划",  # upgrade plan
-            "分析过程",     # folded analysis process
-            "renderBadges", # RAG / source badges
+            "分析过程",  # folded analysis process
+            "renderBadges",  # RAG / source badges
             "renderFinding",  # finding cards
             "verified_risks",  # reads the separated risk list
             "degraded_risks",

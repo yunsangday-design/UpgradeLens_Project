@@ -96,6 +96,4 @@ def ingest_pypi_changelog(
         fetch_strategy="html",
     )
     raw = _format_changelog(dependency, entries)
-    return persist_source_text(
-        session, spec, raw, snapshot_path=spec.url, trust_level="official"
-    )
+    return persist_source_text(session, spec, raw, snapshot_path=spec.url, trust_level="official")

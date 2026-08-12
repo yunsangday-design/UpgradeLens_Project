@@ -95,21 +95,13 @@ def _make_outcome(repo_path: str, *, extra_risk: VerifiedRisk | None = None) -> 
 def _write_repo(root: Path) -> None:
     (root / "src").mkdir(parents=True, exist_ok=True)
     (root / "src" / "app.py").write_text(
-        'import os\n'
-        '\n'
-        'def old_func():\n'
-        '    return "old"\n'
-        '\n'
-        'x = old_func()\n',
+        'import os\n\ndef old_func():\n    return "old"\n\nx = old_func()\n',
         encoding="utf-8",
     )
 
 
 def _render(hunk: PatchHunk) -> str:
-    header = (
-        f"@@ -{hunk.old_start},{hunk.old_count} "
-        f"+{hunk.new_start},{hunk.new_count} @@\n"
-    )
+    header = f"@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@\n"
     return header + "\n".join(hunk.body) + "\n"
 
 
@@ -312,9 +304,7 @@ def test_execute_rejects_repo_hash_mismatch(tmp_path: Path) -> None:
     _write_repo(root)
     outcome = _make_outcome(str(root))
     plan = build_upgrade_plan(outcome, repo_root=root, mode=PlanMode.SANDBOX_APPLY)
-    plan = plan.model_copy(
-        update={"patch": _patch(_replace_all_hunk()), "repo_hash": "deadbeef"}
-    )
+    plan = plan.model_copy(update={"patch": _patch(_replace_all_hunk()), "repo_hash": "deadbeef"})
 
     result = execute_plan(plan, repo_root=root, work_dir=sandbox)
 

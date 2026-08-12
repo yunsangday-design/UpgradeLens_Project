@@ -380,7 +380,7 @@ def retrieve_for_package(
     # is a natural-language string while ``queries`` holds the FTS5 OR expression, so
     # a per-query lookup would never match and the semantic signal would be silently
     # dropped. Fall back to the merged vector hits so the recall is always fused in.
-    merged_vec_hits: list[int] = []
+    merged_vec_hits: list[tuple[int, float]] = []
     _seen = set()
     for _hits in vec_search.values():
         for _cid in _hits:

@@ -85,6 +85,10 @@ class ToolContext:
     # the owning plan step id and attempt counter.
     active_plan_step_id: str = ""
     active_attempt: int = 0
+    # --- agent ReAct history (conversation context) ----------------------- #
+    # Accumulated tool call results so the LLM can see what already happened.
+    # Each entry: {"turn": "N", "tool": "name", "observation": "short result"}.
+    tool_history: list[dict[str, str]] = field(default_factory=list, repr=False)
     _clones: list[LiveRepoHandle] = field(default_factory=list, repr=False)
     _sessions: dict[str, Session] = field(default_factory=dict, repr=False)
 
@@ -421,22 +425,29 @@ def _any_covers(specs: list[Any], target: str) -> bool:
 
 
 def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext) -> Any:
-    session = ctx.session(Path(args.db))
     mode = ctx.gateway.mode if ctx.gateway is not None else ModelMode.FAKE
-    runs = _retrieve_for_package(
-        session,
-        package=args.package,
-        source_version=args.source_version,
-        target_version=args.target_version,
-        user_intent=args.user_intent,
-        code_symbols=list(args.code_symbols),
-        source_id=args.source_id,
-        curated_queries=list(args.curated_queries) if args.curated_queries else None,
-        top_k=args.top_k,
-        gateway=ctx.gateway,
-        mode=mode,
-        embedding=ctx.embedding,
-    )
+    # S16: when no doc store is configured we skip local retrieval entirely
+    # and rely on the two-stage online fallback (PyPI → web search).
+    has_db = bool(args.db and str(args.db).strip())
+    if has_db:
+        session = ctx.session(Path(args.db))
+        runs = _retrieve_for_package(
+            session,
+            package=args.package,
+            source_version=args.source_version,
+            target_version=args.target_version,
+            user_intent=args.user_intent,
+            code_symbols=list(args.code_symbols),
+            source_id=args.source_id,
+            curated_queries=list(args.curated_queries) if args.curated_queries else None,
+            top_k=args.top_k,
+            gateway=ctx.gateway,
+            mode=mode,
+            embedding=ctx.embedding,
+        )
+    else:
+        runs: list[RetrievalRun] = []
+        session = None  # type: ignore[assignment]
     # S16: when the local shared corpus misses, supplement the *current* request
     # with keyless online discovery. This is gated hard: only live model mode and
     # only when the network policy allows it. fake/replay runs never touch the
@@ -445,11 +456,15 @@ def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext
     if not local_served and mode == ModelMode.LIVE:
         settings = Settings()
         if NetworkMode(settings.network) != NetworkMode.OFFLINE:
-            specs = iter_sources_for_package(session, canonicalize_name(args.package))
+            specs = (
+                iter_sources_for_package(session, canonicalize_name(args.package))
+                if session is not None
+                else []
+            )
             miss_reason = classify_rag_miss(
-                has_db=bool(args.db),
+                has_db=has_db,
                 has_sources=bool(specs),
-                has_covering_source=_any_covers(specs, args.target_version),
+                has_covering_source=_any_covers(specs, args.target_version) if specs else False,
                 runs=runs,
             )
             try:

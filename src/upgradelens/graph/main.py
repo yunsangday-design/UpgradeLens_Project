@@ -83,7 +83,7 @@ def run_assessment(
     gateway: ModelGateway,
     *,
     skill: SkillPackage | None = None,
-    max_context_tokens: int = 2000,
+    max_context_tokens: int = 6000,
 ) -> ImpactReport:
     """Run the closed loop and return a structured impact report.
 

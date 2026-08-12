@@ -59,6 +59,8 @@ class IssueCode(StrEnum):
     NO_DOC_EVIDENCE = "no_doc_evidence"
     DOC_VERSION_CONFLICT = "doc_version_conflict"
     DOC_SOURCE_UNTRUSTED = "doc_source_untrusted"
+    DOC_SOURCE_NETWORK = "doc_source_network"
+    DOC_AUTO_LINKED = "doc_auto_linked"
     DYNAMIC_ONLY_EVIDENCE = "dynamic_only_evidence"
     SYMBOL_NOT_IN_EVIDENCE = "symbol_not_in_evidence"
     UNKNOWN_TEST_PATH = "unknown_test_path"

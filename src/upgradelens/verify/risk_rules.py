@@ -24,7 +24,7 @@ __all__ = ["RiskScoringInput", "score_risk", "is_major_bump"]
 _HIGH_THRESHOLD = 7
 _MEDIUM_THRESHOLD = 4
 
-_TRUST_POINTS = {"official": 1, "community": 0, "unverified": 0}
+_TRUST_POINTS = {"official": 1, "community": 0, "unverified": 0, "network": 1}
 
 # Wording in the retrieved documentation that indicates a hard API break rather
 # than a soft behaviour change.
@@ -122,20 +122,21 @@ def _api_change_points(data: RiskScoringInput) -> tuple[int, str]:
 
 
 def _doc_trust(data: RiskScoringInput) -> tuple[int, str]:
-    """Trust level of the cited documentation, taken from the evidence itself.
+    """Presence of cited documentation evidence, taken from the evidence itself.
 
-    The shared corpus stamps every chunk with its ``trust_level``; the Skill
-    lookup only covers legacy evidence that predates that meta field.
+    S16: we no longer block on a trust *level*.  Network-sourced evidence
+    (provenance=online_fallback) earns the same points as official docs — it is
+    only marked as such for transparency.
     """
     if not data.doc_items:
         return 0, "no doc evidence"
+    provenances = {str(item.meta.get("provenance", "") or "").lower() for item in data.doc_items}
+    if "online_fallback" in provenances:
+        return _TRUST_POINTS.get("network", 3), "network"
     levels = [str(item.meta.get("trust_level", "") or "") for item in data.doc_items]
     levels = [level for level in levels if level]
-    if not levels and data.skill is not None:
-        source_ids = {str(item.meta.get("source_id", "")) for item in data.doc_items}
-        levels = [s.trust_level for s in data.skill.sources if s.id in source_ids]
     label = ("official" if "official" in levels else levels[0]) if levels else "unverified"
-    return _TRUST_POINTS.get(label, 0), label
+    return _TRUST_POINTS.get(label, 3), label
 
 
 def score_risk(data: RiskScoringInput) -> tuple[int, str, list[RiskFactor]]:

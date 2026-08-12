@@ -164,9 +164,9 @@ class TestDiscoverAndFallback(TestCase):
         tools = {e.tool for e in trace.events}
         expected_events = (
             "rag_miss",
-            "discover",
+            "discover-l1",
             "fetch",
-            "temporary_retrieve",
+            "temporary_retrieve-l1",
             "online_supplement",
         )
         for expected in expected_events:
@@ -266,6 +266,320 @@ class TestRegistryGate(TestCase):
         ):
             registry._handle_retrieve_for_package(self._args(), self._ctx(ModelMode.FAKE))
         fb.assert_not_called()
+
+
+# -- WebSearchProvider & two-stage fallback tests --------------------------------
+
+# A fake DuckDuckGo HTML result page containing two result links.
+DDG_HTML = """<!DOCTYPE html>
+<html>
+<body>
+<div class="results">
+  <div class="result">
+    <a class="result__a" href="https://someblog.example.com/migration-v2-to-v3">
+      Migrating from v2 to v3 — complete guide
+    </a>
+    <a class="result__snippet" href="https://someblog.example.com/migration-v2-to-v3">
+      This guide covers all breaking changes when upgrading from v2 to v3...
+    </a>
+  </div>
+  <div class="result">
+    <a class="result__a" href="https://github.com/acme/parcel/releases/tag/v3.0.0">
+      Release v3.0.0 - breaking changes
+    </a>
+  </div>
+  <div class="result">
+    <!-- Noise: DuckDuckGo internal -->
+    <a class="result__a" href="https://duckduckgo.com/tracker/foo">Tracker</a>
+  </div>
+  <div class="result">
+    <!-- Ad: doubleclick -->
+    <a class="result__a" href="https://ad.doubleclick.net/foo">Ad</a>
+  </div>
+  <div class="result">
+    <!-- Google search link (noise) -->
+    <a class="result__a" href="https://www.google.com/search?q=parcel">Google</a>
+  </div>
+</div>
+</body>
+</html>
+"""
+
+# DuckDuckGo with uddg= redirect wrapping.
+DDG_HTML_UDDG = """<!DOCTYPE html>
+<html>
+<body>
+<div class="results">
+  <div class="result">
+    <a class="result__a" href="/l/?uddg=https%3A%2F%2Fdocs.example.com%2Fupgrade">docs</a>
+  </div>
+</div>
+</body>
+</html>
+"""
+
+DOCS_V3 = (
+    "# Parcel v3 Migration\n"
+    "The `send_message` API was removed in v3. Use `dispatch` instead.\n"
+    "Breaking change: `ParcelConfig.timeout` renamed to `ParcelConfig.request_timeout`.\n"
+)
+
+
+NO_DOCS_PYPI_JSON = json.dumps({"info": {"project_urls": None, "docs_url": None, "home_page": None}})
+
+
+class TestWebSearchProvider(TestCase):
+    """Tests for WebSearchProvider that searches DuckDuckGo for migration docs."""
+
+    @staticmethod
+    def _provider():
+        from upgradelens.docs.online_fallback import WebSearchProvider
+        return WebSearchProvider()
+
+    def test_discovers_urls_from_ddg_html(self):
+        fetcher = _FakeFetcher(
+            {
+                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                    DDG_HTML,
+                    "text/html",
+                ),
+                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                    "",  # empty — no second-search results
+                    "text/html",
+                ),
+            }
+        )
+        sources = self._provider().discover("parcel", fetcher=fetcher)
+        urls = [s.url for s in sources]
+        # Two productive links from the first search.
+        self.assertIn("https://someblog.example.com/migration-v2-to-v3", urls)
+        self.assertIn("https://github.com/acme/parcel/releases/tag/v3.0.0", urls)
+        # Noise filtered.
+        self.assertNotIn("https://duckduckgo.com/tracker/foo", urls)
+        self.assertNotIn("https://ad.doubleclick.net/foo", urls)
+        self.assertNotIn("https://www.google.com/search?q=parcel", urls)
+
+    def test_unwraps_ddg_redirect(self):
+        fetcher = _FakeFetcher(
+            {
+                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                    DDG_HTML_UDDG,
+                    "text/html",
+                ),
+                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                    "",
+                    "text/html",
+                ),
+            }
+        )
+        sources = self._provider().discover("parcel", fetcher=fetcher)
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0].url, "https://docs.example.com/upgrade")
+
+    def test_all_kinds_are_web_search(self):
+        fetcher = _FakeFetcher(
+            {
+                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                    DDG_HTML,
+                    "text/html",
+                ),
+                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                    "",
+                    "text/html",
+                ),
+            }
+        )
+        sources = self._provider().discover("parcel", fetcher=fetcher)
+        for s in sources:
+            self.assertEqual(s.kind, "web_search")
+
+    def test_empty_on_fetch_error(self):
+        fetcher = _FakeFetcher({})  # every fetch raises
+        sources = self._provider().discover("parcel", fetcher=fetcher)
+        self.assertEqual(sources, [])
+
+    def test_deduplicates_across_queries(self):
+        same_html = DDG_HTML  # both queries return identical results
+        fetcher = _FakeFetcher(
+            {
+                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                    same_html,
+                    "text/html",
+                ),
+                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                    same_html,
+                    "text/html",
+                ),
+            }
+        )
+        sources = self._provider().discover("parcel", fetcher=fetcher)
+        urls = [s.url for s in sources]
+        self.assertEqual(len(urls), len(set(urls)), "URLs must be deduplicated")
+
+
+class TestTwoStageFallback(TestCase):
+    """Verify that run_online_fallback tries PyPI first, then web search
+    only when the first stage yields zero evidence."""
+
+    def _fetcher_pypi_works(self):
+        # PyPI returns good json + docs URL with useful content → Stage 1 succeeds
+        return _FakeFetcher(
+            {
+                "https://pypi.org/pypi/requests/json": (PYPI_JSON, "application/json"),
+                "https://requests.readthedocs.io/": (DOCS_MD, "text/html"),
+                "https://someblog.example.com/changelog": (DOCS_MD, "text/html"),
+            }
+        )
+
+    def _fetcher_pypi_no_evidence(self):
+        """PyPI JSON has ``project_urls`` → a URL is discovered and fetched,
+        but its content doesn't contain any term-match evidence for the query."""
+        return _FakeFetcher(
+            {
+                "https://pypi.org/pypi/requests/json": (
+                    json.dumps(
+                        {
+                            "info": {
+                                "project_urls": {"Homepage": "https://someblog.example.com/about"},
+                                "docs_url": None,
+                                "home_page": None,
+                            }
+                        }
+                    ),
+                    "application/json",
+                ),
+                # The discovered URL pages contain NO upgrade/migration keywords.
+                "https://someblog.example.com/about": (
+                    "<html><body>We are Acme Inc. Our product is great.</body></html>",
+                    "text/html",
+                ),
+            }
+        )
+
+    def _fetcher_pypi_has_no_urls(self):
+        """PyPI JSON is valid but has empty project_urls / docs_url / home_page."""
+        return _FakeFetcher(
+            {
+                "https://pypi.org/pypi/nobody-knows/json": (NO_DOCS_PYPI_JSON, "application/json"),
+            }
+        )
+
+    def _fetcher_both_stages(self):
+        """PyPI has NO docs → web search (DDG) discovers useful blog post."""
+        return _FakeFetcher(
+            {
+                # Stage 1: PyPI — no project_urls / docs_url / home_page
+                "https://pypi.org/pypi/nobody-knows/json": (NO_DOCS_PYPI_JSON, "application/json"),
+                # Stage 2: DuckDuckGo search
+                "https://html.duckduckgo.com/html/?q=nobody-knows%20upgrade%20migration%20guide%20breaking%20changes": (
+                    DDG_HTML,
+                    "text/html",
+                ),
+                "https://html.duckduckgo.com/html/?q=nobody-knows%20changelog%20release%20notes": (
+                    "",
+                    "text/html",
+                ),
+                # Content pages discovered by DDG
+                "https://someblog.example.com/migration-v2-to-v3": (DOCS_V3, "text/html"),
+                "https://github.com/acme/parcel/releases/tag/v3.0.0": (DOCS_V3, "text/html"),
+            }
+        )
+
+    def test_stage1_succeeds_stage2_skipped(self):
+        """When PyPI produces evidence, web search must NOT be triggered."""
+        fetcher = self._fetcher_pypi_works()
+        trace = ToolTrace()
+        result = run_online_fallback(
+            "requests",
+            "2.25",
+            "2.31",
+            "upgrade requests",
+            ["Response.json"],
+            fetcher=fetcher,
+            network="online_fallback",
+            trace=trace,
+        )
+        self.assertTrue(result.evidence, "Stage 1 should produce evidence")
+        tools = {e.tool for e in trace.events}
+        self.assertIn("discover-l1", tools)
+        # Stage 2 must NOT be reached
+        self.assertNotIn("online_fallback_stage2", tools)
+        self.assertNotIn("discover-l2", tools)
+
+    def test_stage1_no_sources_falls_back_to_stage2(self):
+        """PyPI has no URLs → web search discovers and retrieves evidence."""
+        fetcher = self._fetcher_both_stages()
+        trace = ToolTrace()
+        result = run_online_fallback(
+            "nobody-knows",
+            "2.0",
+            "3.0",
+            "upgrade nobody-knows to v3",
+            ["send_message", "ParcelConfig"],
+            fetcher=fetcher,
+            network="online_fallback",
+            trace=trace,
+        )
+        self.assertTrue(
+            result.evidence,
+            f"Stage 2 must produce evidence; got status={result.status!r}",
+        )
+        tools = {e.tool for e in trace.events}
+        self.assertIn("discover-l1", tools)
+        self.assertIn("online_fallback_stage2", tools)
+        self.assertIn("discover-l2", tools)
+
+    def test_stage1_pypi_has_urls_but_no_evidence_falls_back(self):
+        """PyPI discovers a URL, fetches it, but term-match returns empty
+        → Stage 2 (web search) must be attempted."""
+        # Even though Stage 1 "found" a URL, the content has no upgrade terms,
+        # so temporary_retrieve returns empty → triggers Stage 2.
+        # We wire the fetcher so Stage 2's DDG search points to the same no-evidence
+        # URL — both stages fail gracefully, producing "failed" status but no
+        # exception.
+        pypi_fetcher = self._fetcher_pypi_no_evidence()
+        trace = ToolTrace()
+        result = run_online_fallback(
+            "requests",
+            "2.25",
+            "2.31",
+            "upgrade requests to latest",
+            ["Response.json"],
+            fetcher=pypi_fetcher,
+            network="online_fallback",
+            trace=trace,
+        )
+        tools = {e.tool for e in trace.events}
+        # Stage 1 ran, got empty evidence → Stage 2 invoked
+        self.assertIn("online_fallback_stage2", tools)
+        self.assertIn("discover-l2", tools)
+        # Both stages failed to produce evidence → result is empty
+        self.assertEqual(result.runs, [])
+        self.assertIn(
+            result.status,
+            ("failed", "partial"),
+            f"Expected failed/partial, got {result.status!r}",
+        )
+
+    def test_stage1_no_sources_but_stage2_also_fails(self):
+        """PyPI has no URLs, and web search also fails → graceful empty."""
+        # Stage 1: PyPI empty → falls back
+        # Stage 2: DDG query raises (no mapping) → empty
+        empty_fetcher = _FakeFetcher({})  # everything fails
+        trace = ToolTrace()
+        result = run_online_fallback(
+            "ghost",
+            "1.0",
+            "2.0",
+            "upgrade ghost",
+            [],
+            fetcher=empty_fetcher,
+            network="online_fallback",
+            trace=trace,
+        )
+        self.assertEqual(result.runs, [])
+        self.assertEqual(result.status, "failed")
+        # No exception — just an empty result.
 
 
 if __name__ == "__main__":

@@ -21,12 +21,13 @@ Safety properties (acceptance criteria):
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
 import uuid
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from upgradelens.docs.chunking import chunk_markdown
 from upgradelens.docs.rag_miss import RagMissReason
@@ -129,6 +130,122 @@ class PypiJsonProvider:
             out.append(src)
         return out
 
+
+class WebSearchProvider:
+    """Discover migration guides, changelogs, and release notes via web search.
+
+    When PyPI metadata is insufficient (no ``project_urls`` / ``docs_url`` /
+    ``home_page``), this provider searches DuckDuckGo for pages likely to contain
+    upgrade-relevant content: migration guides, breaking-change announcements,
+    changelogs, blog posts, and GitHub release notes.
+
+    All fetches go through ``RestrictedFetcher`` so the existing SSRF / redirect
+    / size / timeout guards apply.
+    """
+
+    _SEARCH_URL = "https://html.duckduckgo.com/html/"
+
+    # DuckDuckGo wraps result links with a redirect tracker like:
+    #   /l/?uddg=https%3A%2F%2Fexample.com&rut=...
+    _UDDG_RE = re.compile(r"uddg=([^&\'\"]+)")
+
+    # The result link tag: <a ... class="result__a" href="...">Title</a>
+    _RESULT_A_RE = re.compile(
+        r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]*)</a>',
+        re.IGNORECASE,
+    )
+
+    def discover(self, package: str, *, fetcher: RestrictedFetcher) -> list[DiscoveredSource]:
+        # Two queries to maximise coverage, ordered by relevance likelihood.
+        queries = [
+            f"{package} upgrade migration guide breaking changes",
+            f"{package} changelog release notes",
+        ]
+        sources: list[DiscoveredSource] = []
+        seen: set[str] = set()
+        for q in queries:
+            for src in self._search_one(q, fetcher=fetcher):
+                key = src.url.rstrip("/").lower()
+                if key not in seen:
+                    seen.add(key)
+                    sources.append(src)
+        return sources
+
+    # ------------------------------------------------------------------ internal
+
+    def _search_one(
+        self, query: str, *, fetcher: RestrictedFetcher
+    ) -> list[DiscoveredSource]:
+        import urllib.parse
+
+        try:
+            content = fetcher.fetch(
+                f"{self._SEARCH_URL}?q={urllib.parse.quote(query)}"
+            )
+        except FETCH_EXCEPTIONS:
+            return []
+
+        html = content.content.decode("utf-8", errors="replace")
+        sources: list[DiscoveredSource] = []
+        for m in self._RESULT_A_RE.finditer(html):
+            raw_url = m.group(1)
+            title = m.group(2).strip()
+            url = self._unwrap(raw_url)
+            if self._is_noise(url):
+                continue
+            if not url:
+                continue
+            sources.append(
+                DiscoveredSource(
+                    url=url,
+                    title=_clean_html(title) or query,
+                    kind="web_search",
+                )
+            )
+        return sources
+
+    @staticmethod
+    def _unwrap(raw: str) -> str:
+        """Remove the DuckDuckGo redirect wrapper from a result URL."""
+        raw = raw.replace("&amp;", "&")
+        m = WebSearchProvider._UDDG_RE.search(raw)
+        if m:
+            decoded = unquote(m.group(1))
+            if decoded.startswith(("http://", "https://")):
+                return decoded
+        if raw.startswith(("http://", "https://")):
+            return raw
+        return ""
+
+    @staticmethod
+    def _is_noise(url: str) -> bool:
+        url_l = url.lower()
+        return any(
+            pat in url_l
+            for pat in (
+                "duckduckgo.com/",
+                "google.com/search",
+                "bing.com/search",
+                "yahoo.com/search",
+                "doubleclick.net",
+                "googlesyndication.com",
+                "adservice.google.com",
+            )
+        )
+
+
+_defang_html_re = re.compile(r"<[^>]+>")
+
+
+def _clean_html(text: str) -> str:
+    return _defang_html_re.sub(" ", text).strip()
+
+
+# Level-1 providers (fast, deterministic — try first).
+_LEVEL1_PROVIDERS: list[DocDiscoveryProvider] = [PypiJsonProvider()]
+
+# Level-2 providers (slower, network-heavy — fallback).
+_LEVEL2_PROVIDERS: list[DocDiscoveryProvider] = [WebSearchProvider()]
 
 DEFAULT_DISCOVERY_PROVIDERS: list[DocDiscoveryProvider] = [PypiJsonProvider()]
 
@@ -269,6 +386,109 @@ class OnlineFallbackResult:
             self.sources = []
 
 
+def _discover_fetch_retrieve(
+    package: str,
+    source_version: str,
+    target_version: str,
+    user_intent: str,
+    code_symbols: list[str],
+    *,
+    fetcher: RestrictedFetcher,
+    providers: list[DocDiscoveryProvider],
+    trace: ToolTrace | None,
+    plan_step_id: str,
+    top_k: int,
+    fetch_cap: int,
+    stage: str,
+    fetch_tool_name: str = "fetch",
+) -> tuple[list[DocEvidence], list[RetrievalRun], int, int, list[DiscoveredSource]]:
+    """Run one discovery stage (discover -> fetch -> chunk -> temporary retrieve).
+
+    Returns ``(evidence, runs, fetched, discovered, sources)``.
+    """
+    sources = discover_sources(package, fetcher=fetcher, providers=providers)
+    if trace is not None:
+        trace.record(
+            tool=f"discover-{stage}",
+            target=package,
+            status="ok" if sources else "error",
+            params={"urls": [s.url for s in sources]},
+            plan_step_id=plan_step_id,
+        )
+    if not sources:
+        return ([], [], 0, 0, [])
+
+    capped = sources[:fetch_cap]
+    chunks: list[DocChunk] = []
+    fetched = 0
+
+    def _fetch_one(src: DiscoveredSource) -> tuple[list[DocChunk], BaseException | None]:
+        # Step 13, #3.2: run the network fetch off the main thread so several
+        # sources overlap. The fetcher serialises its cache + trace access, so
+        # concurrent calls are safe.
+        try:
+            return fetch_and_chunk(src, fetcher, source_id=src.url), None
+        except FETCH_EXCEPTIONS as exc:
+            return [], exc
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(capped), 8)) as ex:
+        results = list(ex.map(_fetch_one, capped))
+
+    for src, (src_chunks, exc) in zip(capped, results, strict=True):
+        if exc is not None:
+            if trace is not None:
+                trace.record(
+                    tool=fetch_tool_name,
+                    target=src.url,
+                    status="error",
+                    error=str(exc),
+                    plan_step_id=plan_step_id,
+                )
+            continue
+        if trace is not None:
+            trace.record(
+                tool=fetch_tool_name,
+                target=src.url,
+                status="ok",
+                bytes_=sum(len(c.content.encode("utf-8")) for c in src_chunks),
+                params={"chunks": len(src_chunks), "stage": stage},
+                plan_step_id=plan_step_id,
+            )
+        fetched += 1
+        chunks.extend(src_chunks)
+
+    evidence = temporary_retrieve(
+        package, source_version, target_version, user_intent, code_symbols, chunks, top_k=top_k
+    )
+    if trace is not None:
+        trace.record(
+            tool=f"temporary_retrieve-{stage}",
+            target=package,
+            status="ok" if evidence else "error",
+            params={"count": len(evidence), "evidence_ids": [e.evidence_id for e in evidence]},
+            plan_step_id=plan_step_id,
+        )
+
+    runs: list[RetrievalRun] = []
+    if evidence:
+        # `matched_chunk_ids` must align 1:1 with `top_doc_evidence` so that
+        # build_evidence_collection can zip them into bundle items. Online
+        # fallback has no local chunk store, so we use positional indices;
+        # each DocEvidence already carries its own `evidence_id`, which the
+        # collection builder prefers over the synthesized id.
+        matched_chunk_ids = list(range(len(evidence)))
+        runs.append(
+            RetrievalRun(
+                run_id=f"online-{stage}-{package}-{uuid.uuid4().hex[:8]}",
+                source_id=f"online:{package}",
+                query=user_intent,
+                matched_chunk_ids=matched_chunk_ids,
+                top_doc_evidence=evidence,
+            )
+        )
+    return (evidence, runs, fetched, len(sources), sources)
+
+
 def run_online_fallback(
     package: str,
     source_version: str,
@@ -285,6 +505,11 @@ def run_online_fallback(
     fetch_cap: int = 3,
 ) -> OnlineFallbackResult:
     """Discover -> fetch -> chunk -> temporary retrieve, emitting trace events.
+
+    Two-stage strategy (easy-first)::
+
+    1. PyPI JSON API (fast, deterministic, official docs preferred).
+    2. Web search  (slower — only when Stage 1 produced no evidence at all).
 
     Returns whatever evidence was recovered. On any error it degrades to an
     empty result with a recorded trace event; it never raises into the caller.
@@ -303,83 +528,79 @@ def run_online_fallback(
             plan_step_id=plan_step_id,
         )
 
-    sources = discover_sources(package, fetcher=fetcher)
-    if trace is not None:
-        trace.record(
-            tool="discover",
-            target=package,
-            status="ok" if sources else "error",
-            params={"urls": [s.url for s in sources]},
-            plan_step_id=plan_step_id,
-        )
-    if not sources:
-        return OnlineFallbackResult(status="failed", discovered=0, reason="no_sources")
+    total_fetched = 0
+    total_discovered = 0
+    all_sources: list[DiscoveredSource] = []
 
-    chunks: list[DocChunk] = []
-    fetched = 0
-    for src in sources[:fetch_cap]:
-        try:
-            src_chunks = fetch_and_chunk(src, fetcher, source_id=src.url)
-        except FETCH_EXCEPTIONS as exc:
-            if trace is not None:
-                trace.record(
-                    tool="fetch",
-                    target=src.url,
-                    status="error",
-                    error=str(exc),
-                    plan_step_id=plan_step_id,
-                )
-            continue
-        if trace is not None:
-            trace.record(
-                tool="fetch",
-                target=src.url,
-                status="ok",
-                bytes_=sum(len(c.content.encode("utf-8")) for c in src_chunks),
-                params={"chunks": len(src_chunks)},
-                plan_step_id=plan_step_id,
-            )
-        fetched += 1
-        chunks.extend(src_chunks)
-
-    evidence = temporary_retrieve(
-        package, source_version, target_version, user_intent, code_symbols, chunks, top_k=top_k
+    # -- Stage 1: PyPI JSON -------------------------------------------------
+    evidence, runs, fetched, discovered, sources = _discover_fetch_retrieve(
+        package,
+        source_version,
+        target_version,
+        user_intent,
+        code_symbols,
+        fetcher=fetcher,
+        providers=_LEVEL1_PROVIDERS,
+        trace=trace,
+        plan_step_id=plan_step_id,
+        top_k=top_k,
+        fetch_cap=fetch_cap,
+        stage="l1",
     )
-    if trace is not None:
-        trace.record(
-            tool="temporary_retrieve",
-            target=package,
-            status="ok" if evidence else "error",
-            params={"count": len(evidence), "evidence_ids": [e.evidence_id for e in evidence]},
-            plan_step_id=plan_step_id,
-        )
+    total_fetched += fetched
+    total_discovered += discovered
+    if sources:
+        all_sources.extend(sources)
 
-    status = "ok" if evidence else ("partial" if fetched else "failed")
-    runs: list[RetrievalRun] = []
-    if evidence:
-        runs.append(
-            RetrievalRun(
-                run_id=f"online-{package}-{uuid.uuid4().hex[:8]}",
-                source_id=f"online:{package}",
-                query=user_intent,
-                matched_chunk_ids=[],
-                top_doc_evidence=evidence,
-            )
-        )
+    # -- Stage 2: web search (only when Stage 1 produced nothing) -----------
+    if not evidence and sources is not None:
         if trace is not None:
             trace.record(
-                tool="online_supplement",
+                tool="online_fallback_stage2",
                 target=package,
                 status="ok",
-                params={"evidence_ids": [e.evidence_id for e in evidence]},
+                params={"reason": "stage1_no_evidence"},
                 plan_step_id=plan_step_id,
-                evidence_ids=[e.evidence_id for e in evidence],
             )
+        evidence2, runs2, fetched2, discovered2, sources2 = _discover_fetch_retrieve(
+            package,
+            source_version,
+            target_version,
+            user_intent,
+            code_symbols,
+            fetcher=fetcher,
+            providers=_LEVEL2_PROVIDERS,
+            trace=trace,
+            plan_step_id=plan_step_id,
+            top_k=top_k,
+            fetch_cap=fetch_cap,
+            stage="l2",
+            fetch_tool_name="fetch-web",
+        )
+        evidence = evidence2
+        runs = runs2
+        total_fetched += fetched2
+        total_discovered += discovered2
+        if sources2:
+            all_sources.extend(sources2)
+
+    # -- build result -------------------------------------------------------
+    if trace is not None and evidence:
+        trace.record(
+            tool="online_supplement",
+            target=package,
+            status="ok",
+            params={"evidence_ids": [e.evidence_id for e in evidence]},
+            plan_step_id=plan_step_id,
+            evidence_ids=[e.evidence_id for e in evidence],
+        )
+
+    status = "ok" if evidence else ("partial" if total_fetched else "failed")
     return OnlineFallbackResult(
         runs=runs,
         evidence=evidence,
         status=status,
-        fetched=fetched,
-        discovered=len(sources),
-        sources=sources,
+        fetched=total_fetched,
+        discovered=total_discovered,
+        sources=all_sources,
     )

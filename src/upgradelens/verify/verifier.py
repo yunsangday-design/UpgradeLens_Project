@@ -171,12 +171,19 @@ class EvidenceVerifier:
         issues: list[VerificationIssue] = []
         source_id = str(item.meta.get("source_id", ""))
         spec_text, trust = self._doc_source_spec(item)
+        provenance = str(item.meta.get("provenance", ""))
 
-        if trust not in ("official",):
+        # S16: we no longer gate on a trust *level*.  Network-sourced evidence
+        # (online fallback) is simply marked as such — it can still verify a
+        # risk, it just carries a provenance note for transparency.
+        if provenance == "online_fallback":
             issues.append(
                 VerificationIssue(
-                    code=IssueCode.DOC_SOURCE_UNTRUSTED,
-                    detail=f"doc source '{source_id}' has trust level '{trust}'",
+                    code=IssueCode.DOC_SOURCE_NETWORK,
+                    detail=(
+                        f"doc source '{source_id}' retrieved from network "
+                        f"(online fallback), trust_level={trust}"
+                    ),
                     evidence_id=item.evidence_id,
                 )
             )
@@ -264,8 +271,8 @@ class EvidenceVerifier:
             return EvidenceStatus.INSUFFICIENT_EVIDENCE
         if not has_doc or IssueCode.SYMBOL_NOT_IN_EVIDENCE in codes:
             return EvidenceStatus.PARTIALLY_VERIFIED
-        if IssueCode.DOC_SOURCE_UNTRUSTED in codes:
-            return EvidenceStatus.PARTIALLY_VERIFIED
+        # S16: network-sourced evidence (DOC_SOURCE_NETWORK) no longer blocks
+        # full verification — it is only a transparency note.
         return EvidenceStatus.VERIFIED
 
     # -- public API --------------------------------------------------------
@@ -333,13 +340,24 @@ class EvidenceVerifier:
         doc_items: list[EvidenceItem] = []
         unknown: list[str] = []
 
+        # S16: does the bundle itself hold code + network docs we can fall back on?
+        bundle_has_code = any(it.kind in _CODE_KINDS for it in self._bundle.items)
+        bundle_has_netdoc = any(
+            it.kind == "doc_chunk"
+            and str(it.meta.get("provenance", "")).lower() == "online_fallback"
+            for it in self._bundle.items
+        )
+
         if not evidence_ids:
-            issues.append(
-                VerificationIssue(
-                    code=IssueCode.NO_EVIDENCE_IDS,
-                    detail="risk cites no evidence at all",
+            # S16: if the bundle holds code + network docs, we can still verify
+            # the risk by auto-linking; don't block on missing citations.
+            if not (bundle_has_code and bundle_has_netdoc):
+                issues.append(
+                    VerificationIssue(
+                        code=IssueCode.NO_EVIDENCE_IDS,
+                        detail="risk cites no evidence at all",
+                    )
                 )
-            )
 
         for evidence_id in evidence_ids:
             item = self._bundle.get(evidence_id)
@@ -357,6 +375,34 @@ class EvidenceVerifier:
                 code_items.append(item)
             elif item.kind == "doc_chunk":
                 doc_items.append(item)
+
+        # S16 auto-link: when a risk cites code evidence but no doc evidence,
+        # or cites nothing at all, and the bundle holds network-sourced
+        # (online_fallback) docs for the dependency, associate them.  The LLM
+        # often fails to cite the fallback docs explicitly; they were
+        # term-matched to the upgrade and are safe to treat as supporting
+        # evidence once marked as network.
+        auto_linked: list[EvidenceItem] = []
+        if (code_items and not doc_items) or (
+            not evidence_ids and bundle_has_code and not doc_items
+        ):
+            auto_linked = [
+                it
+                for it in self._bundle.items
+                if it.kind == "doc_chunk"
+                and str(it.meta.get("provenance", "")).lower() == "online_fallback"
+            ]
+            doc_items.extend(auto_linked)
+            if auto_linked:
+                issues.append(
+                    VerificationIssue(
+                        code=IssueCode.DOC_AUTO_LINKED,
+                        detail=(
+                            f"risk cited no doc evidence; auto-linked "
+                            f"{len(auto_linked)} network doc evidence item(s)"
+                        ),
+                    )
+                )
 
         for item in code_items:
             if item.kind == "code_usage":
@@ -394,7 +440,7 @@ class EvidenceVerifier:
 
         status = self._decide_status(
             issues=issues,
-            has_code=bool(real_usages),
+            has_code=bool(real_usages) or (bool(auto_linked) and bundle_has_code),
             has_doc=bool(doc_items),
         )
 

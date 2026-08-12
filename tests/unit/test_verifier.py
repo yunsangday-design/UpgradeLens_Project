@@ -192,6 +192,47 @@ def test_missing_doc_evidence_downgrades_to_partial(repo, scanned, skill):
     assert IssueCode.NO_DOC_EVIDENCE in {i.code for i in risk.issues}
 
 
+def test_network_sourced_doc_is_verified_not_downgraded(repo, scanned, skill):
+    """S16: evidence fetched via online fallback (provenance=online_fallback)
+    must verify a risk instead of being downgraded for 'low trust'."""
+    bundle = build_bundle(scanned, [], dependency="pydantic")
+    code_id = _first_code_id(bundle, "validator")
+    net_doc = EvidenceItem(
+        evidence_id="doc:net:1",
+        kind="doc_chunk",
+        summary="validator was replaced by field_validator",
+        detail="In Pydantic v2 `validator` is deprecated in favour of `field_validator`.",
+        meta={
+            "source_id": "online:pydantic",
+            "chunk_id": "c1",
+            "provenance": "online_fallback",
+            "trust_level": "community",
+        },
+    )
+    bundle.add(net_doc)
+    report = _report(
+        [
+            RiskItem(
+                risk_id="r1",
+                title="validator is removed in v2",
+                severity="high",
+                evidence_ids=[code_id, "doc:net:1"],
+            )
+        ]
+    )
+
+    result = verify_report(report, repo_root=repo, bundle=bundle, code_report=scanned, skill=skill)
+
+    assert len(result.verified_risks) == 1
+    risk = result.verified_risks[0]
+    assert risk.status is EvidenceStatus.VERIFIED
+    codes = {i.code for i in risk.issues}
+    # Network origin is marked, but it does NOT downgrade the risk.
+    assert IssueCode.DOC_SOURCE_NETWORK in codes
+    assert IssueCode.DOC_SOURCE_UNTRUSTED not in codes
+    assert result.conclusion is Conclusion.IMPACTED
+
+
 # -- stale evidence --------------------------------------------------------
 
 

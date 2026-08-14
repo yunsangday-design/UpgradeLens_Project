@@ -325,7 +325,22 @@ DOCS_V3 = (
 )
 
 
-NO_DOCS_PYPI_JSON = json.dumps({"info": {"project_urls": None, "docs_url": None, "home_page": None}})
+NO_DOCS_PYPI_JSON = json.dumps(
+    {"info": {"project_urls": None, "docs_url": None, "home_page": None}}
+)
+
+_DDG_PARCEL_URL = (
+    "https://html.duckduckgo.com/html/"
+    "?q=parcel%20upgrade%20migration%20guide%20breaking%20changes"
+)
+_DDG_PARCEL_CHANGELOG_URL = (
+    "https://html.duckduckgo.com/html/"
+    "?q=parcel%20changelog%20release%20notes"
+)
+_DDG_NOBODY_URL = (
+    "https://html.duckduckgo.com/html/"
+    "?q=nobody-knows%20upgrade%20migration%20guide%20breaking%20changes"
+)
 
 
 class TestWebSearchProvider(TestCase):
@@ -339,11 +354,11 @@ class TestWebSearchProvider(TestCase):
     def test_discovers_urls_from_ddg_html(self):
         fetcher = _FakeFetcher(
             {
-                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                _DDG_PARCEL_URL: (
                     DDG_HTML,
                     "text/html",
                 ),
-                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                _DDG_PARCEL_CHANGELOG_URL: (
                     "",  # empty — no second-search results
                     "text/html",
                 ),
@@ -362,11 +377,11 @@ class TestWebSearchProvider(TestCase):
     def test_unwraps_ddg_redirect(self):
         fetcher = _FakeFetcher(
             {
-                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                _DDG_PARCEL_URL: (
                     DDG_HTML_UDDG,
                     "text/html",
                 ),
-                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                _DDG_PARCEL_CHANGELOG_URL: (
                     "",
                     "text/html",
                 ),
@@ -379,11 +394,11 @@ class TestWebSearchProvider(TestCase):
     def test_all_kinds_are_web_search(self):
         fetcher = _FakeFetcher(
             {
-                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                _DDG_PARCEL_URL: (
                     DDG_HTML,
                     "text/html",
                 ),
-                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                _DDG_PARCEL_CHANGELOG_URL: (
                     "",
                     "text/html",
                 ),
@@ -402,11 +417,11 @@ class TestWebSearchProvider(TestCase):
         same_html = DDG_HTML  # both queries return identical results
         fetcher = _FakeFetcher(
             {
-                "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes": (
+                _DDG_PARCEL_URL: (
                     same_html,
                     "text/html",
                 ),
-                "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes": (
+                _DDG_PARCEL_CHANGELOG_URL: (
                     same_html,
                     "text/html",
                 ),
@@ -471,7 +486,7 @@ class TestTwoStageFallback(TestCase):
                 # Stage 1: PyPI — no project_urls / docs_url / home_page
                 "https://pypi.org/pypi/nobody-knows/json": (NO_DOCS_PYPI_JSON, "application/json"),
                 # Stage 2: DuckDuckGo search
-                "https://html.duckduckgo.com/html/?q=nobody-knows%20upgrade%20migration%20guide%20breaking%20changes": (
+                _DDG_NOBODY_URL: (
                     DDG_HTML,
                     "text/html",
                 ),

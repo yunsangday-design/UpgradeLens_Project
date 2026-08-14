@@ -159,6 +159,7 @@ class DependencyUpgradeAgent:
         out_dir: str | Path | None = None,
         dry_run: bool = False,
         locale: str = "zh-CN",
+        plan_writer: Any = None,
     ) -> AgentResult:
         """Assess a dependency upgrade from a natural-language ``goal``.
 
@@ -267,17 +268,23 @@ class DependencyUpgradeAgent:
         )
         try:
             with ToolContext() as ctx:
+                # Compose plan writers: store persistence + external observer (SSE)
+                def _combined_plan_writer(p: Any) -> None:
+                    if store is not None:
+                        store.write_plan(intent=intent_dict, plan=p)
+                    if plan_writer is not None:
+                        try:
+                            plan_writer(p)
+                        except Exception:
+                            pass  # external observer failure must not crash the agent
+
                 outcome = run_agent(
                     request,
                     gateway,
                     ctx,
                     registry=self._registry,
                     plan=plan,
-                    plan_writer=(
-                        (lambda p: store.write_plan(intent=intent_dict, plan=p))
-                        if store is not None
-                        else None
-                    ),
+                    plan_writer=_combined_plan_writer,
                     max_turns=self._max_turns,
                     max_supplementary=self._max_supplementary,
                 )

@@ -37,6 +37,8 @@ __all__ = [
     "PYPROJECT_FILENAME",
     "parse_pyproject_toml",
     "parse_requirements_txt",
+    "parse_all_requirements_txt",
+    "parse_all_pyproject_toml",
 ]
 
 REQUIREMENTS_FILENAME = "requirements.txt"
@@ -385,3 +387,286 @@ def parse_pyproject_toml(
             )
 
     return outcome
+
+
+# ---------------------------------------------------------------------------
+# Full-scan variants: return ALL dependency declarations, not filtered by name.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AllDepsParseOutcome:
+    """Everything a single manifest contributed — all dependencies."""
+
+    manifest_type: ManifestType
+    path: str
+    declarations: list[DependencyDeclaration] = field(default_factory=list)
+    warnings: list[ParseIssue] = field(default_factory=list)
+    errors: list[ParseIssue] = field(default_factory=list)
+
+
+def parse_all_requirements_txt(
+    repo_root: Path, manifest_path: Path
+) -> AllDepsParseOutcome:
+    """Parse a ``requirements.txt`` and return ALL dependency declarations."""
+    path = to_posix_rel_path(repo_root, manifest_path)
+    declarations: list[DependencyDeclaration] = []
+    warnings: list[ParseIssue] = []
+    errors: list[ParseIssue] = []
+
+    try:
+        content = read_text_utf8(manifest_path)
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(
+            ParseIssue(
+                code=IssueCode.INVALID_DECLARATION,
+                message=f"Cannot read manifest: {exc.__class__.__name__}",
+                manifest_type=ManifestType.REQUIREMENTS_TXT,
+                path=path,
+            )
+        )
+        return AllDepsParseOutcome(
+            manifest_type=ManifestType.REQUIREMENTS_TXT,
+            path=path,
+            errors=errors,
+        )
+
+    for line_number, logical_line in _join_continuations(content.splitlines()):
+        text = _strip_comment(logical_line).strip()
+        if not text:
+            continue
+
+        location = f"line:{line_number}"
+
+        if _is_option_line(text) or _is_unsupported_target(text):
+            warnings.append(
+                ParseIssue(
+                    code=IssueCode.UNSUPPORTED_DECLARATION,
+                    message=f"Unsupported requirements entry is ignored: {text!r}",
+                    manifest_type=ManifestType.REQUIREMENTS_TXT,
+                    path=path,
+                    location=location,
+                )
+            )
+            continue
+
+        text = _HASH_OPTION_RE.sub("", text).strip()
+
+        try:
+            requirement = Requirement(text)
+        except InvalidRequirement as exc:
+            errors.append(
+                ParseIssue(
+                    code=IssueCode.INVALID_DECLARATION,
+                    message=f"Cannot parse requirement {text!r}: {exc}",
+                    manifest_type=ManifestType.REQUIREMENTS_TXT,
+                    path=path,
+                    location=location,
+                )
+            )
+            continue
+
+        if requirement.url:
+            warnings.append(
+                ParseIssue(
+                    code=IssueCode.UNSUPPORTED_DECLARATION,
+                    message=(
+                        "Dependency is installed from a direct URL reference, "
+                        "so no version can be derived from the manifest."
+                    ),
+                    manifest_type=ManifestType.REQUIREMENTS_TXT,
+                    path=path,
+                    location=location,
+                )
+            )
+            continue
+
+        declaration = _build_declaration(
+            requirement,
+            manifest_type=ManifestType.REQUIREMENTS_TXT,
+            path=path,
+            location=location,
+            raw=text,
+        )
+        declarations.append(declaration)
+        if declaration.marker is not None:
+            warnings.append(
+                _marker_warning(
+                    declaration, manifest_type=ManifestType.REQUIREMENTS_TXT, path=path
+                )
+            )
+
+    return AllDepsParseOutcome(
+        manifest_type=ManifestType.REQUIREMENTS_TXT,
+        path=path,
+        declarations=declarations,
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def parse_all_pyproject_toml(
+    repo_root: Path, manifest_path: Path
+) -> AllDepsParseOutcome:
+    """Parse ``[project].dependencies`` and return ALL dependency declarations."""
+    path = to_posix_rel_path(repo_root, manifest_path)
+    declarations: list[DependencyDeclaration] = []
+    warnings: list[ParseIssue] = []
+    errors: list[ParseIssue] = []
+
+    try:
+        with manifest_path.open("rb") as handle:
+            document = tomllib.load(handle)
+    except tomllib.TOMLDecodeError as exc:
+        errors.append(
+            ParseIssue(
+                code=IssueCode.INVALID_TOML,
+                message=f"Cannot parse TOML: {exc}",
+                manifest_type=ManifestType.PYPROJECT_TOML,
+                path=path,
+            )
+        )
+        return AllDepsParseOutcome(
+            manifest_type=ManifestType.PYPROJECT_TOML, path=path, errors=errors
+        )
+    except OSError as exc:
+        errors.append(
+            ParseIssue(
+                code=IssueCode.INVALID_TOML,
+                message=f"Cannot read manifest: {exc.__class__.__name__}",
+                manifest_type=ManifestType.PYPROJECT_TOML,
+                path=path,
+            )
+        )
+        return AllDepsParseOutcome(
+            manifest_type=ManifestType.PYPROJECT_TOML, path=path, errors=errors
+        )
+
+    project = document.get("project")
+    if not isinstance(project, dict):
+        warnings.append(
+            ParseIssue(
+                code=IssueCode.MISSING_PROJECT_TABLE,
+                message="No [project] table; PEP 621 dependencies cannot be read.",
+                manifest_type=ManifestType.PYPROJECT_TOML,
+                path=path,
+                location="[project]",
+            )
+        )
+        return AllDepsParseOutcome(
+            manifest_type=ManifestType.PYPROJECT_TOML, path=path, warnings=warnings
+        )
+
+    dependencies = project.get("dependencies")
+    if dependencies is None:
+        code = (
+            IssueCode.UNSUPPORTED_DECLARATION
+            if "dependencies" in project.get("dynamic", [])
+            else IssueCode.MISSING_PROJECT_DEPENDENCIES
+        )
+        message = (
+            "[project].dependencies is declared dynamic, "
+            "so it cannot be read statically."
+            if code is IssueCode.UNSUPPORTED_DECLARATION
+            else "[project].dependencies is absent."
+        )
+        warnings.append(
+            ParseIssue(
+                code=code,
+                message=message,
+                manifest_type=ManifestType.PYPROJECT_TOML,
+                path=path,
+                location="[project].dependencies",
+            )
+        )
+        return AllDepsParseOutcome(
+            manifest_type=ManifestType.PYPROJECT_TOML, path=path, warnings=warnings
+        )
+
+    if not isinstance(dependencies, list):
+        errors.append(
+            ParseIssue(
+                code=IssueCode.UNSUPPORTED_DEPENDENCIES_TYPE,
+                message=(
+                    "[project].dependencies must be an array of PEP 508 strings, "
+                    f"got {type(dependencies).__name__}."
+                ),
+                manifest_type=ManifestType.PYPROJECT_TOML,
+                path=path,
+                location="[project].dependencies",
+            )
+        )
+        return AllDepsParseOutcome(
+            manifest_type=ManifestType.PYPROJECT_TOML, path=path, errors=errors
+        )
+
+    for index, entry in enumerate(dependencies):
+        location = f"[project].dependencies[{index}]"
+
+        if not isinstance(entry, str):
+            errors.append(
+                ParseIssue(
+                    code=IssueCode.UNSUPPORTED_DEPENDENCIES_TYPE,
+                    message=(
+                        "Dependency entry must be a PEP 508 string, "
+                        f"got {type(entry).__name__}."
+                    ),
+                    manifest_type=ManifestType.PYPROJECT_TOML,
+                    path=path,
+                    location=location,
+                )
+            )
+            continue
+
+        text = entry.strip()
+        try:
+            requirement = Requirement(text)
+        except InvalidRequirement as exc:
+            errors.append(
+                ParseIssue(
+                    code=IssueCode.INVALID_DECLARATION,
+                    message=f"Cannot parse requirement {text!r}: {exc}",
+                    manifest_type=ManifestType.PYPROJECT_TOML,
+                    path=path,
+                    location=location,
+                )
+            )
+            continue
+
+        if requirement.url:
+            warnings.append(
+                ParseIssue(
+                    code=IssueCode.UNSUPPORTED_DECLARATION,
+                    message=(
+                        "Dependency is installed from a direct URL reference, "
+                        "so no version can be derived from the manifest."
+                    ),
+                    manifest_type=ManifestType.PYPROJECT_TOML,
+                    path=path,
+                    location=location,
+                )
+            )
+            continue
+
+        declaration = _build_declaration(
+            requirement,
+            manifest_type=ManifestType.PYPROJECT_TOML,
+            path=path,
+            location=location,
+            raw=text,
+        )
+        declarations.append(declaration)
+        if declaration.marker is not None:
+            warnings.append(
+                _marker_warning(
+                    declaration, manifest_type=ManifestType.PYPROJECT_TOML, path=path
+                )
+            )
+
+    return AllDepsParseOutcome(
+        manifest_type=ManifestType.PYPROJECT_TOML,
+        path=path,
+        declarations=declarations,
+        warnings=warnings,
+        errors=errors,
+    )

@@ -58,7 +58,6 @@ class IssueCode(StrEnum):
     CONTENT_HASH_CHANGED = "content_hash_changed"
     NO_DOC_EVIDENCE = "no_doc_evidence"
     DOC_VERSION_CONFLICT = "doc_version_conflict"
-    DOC_SOURCE_UNTRUSTED = "doc_source_untrusted"
     DOC_SOURCE_NETWORK = "doc_source_network"
     DOC_AUTO_LINKED = "doc_auto_linked"
     DYNAMIC_ONLY_EVIDENCE = "dynamic_only_evidence"
@@ -89,7 +88,7 @@ class RemediationKind(StrEnum):
     ``needs_human``.
     """
 
-    SUPPLEMENT = "supplement"  # 可补检索：缺文档 / 版本冲突 / 来源不可信
+    SUPPLEMENT = "supplement"  # 可补检索：缺文档 / 版本冲突
     RESCAN = "rescan"  # 需重新扫描：文件 / 行号 / hash 失效
     REANALYSE = "reanalyse"  # 可补分析：缺证据 id / 未知证据 id / symbol 不落地
     HUMAN = "human"  # 需人工 / 终止性：无代码证据、仅动态证据等
@@ -99,7 +98,6 @@ class RemediationKind(StrEnum):
 REMEDIATION_FOR_ISSUE: dict[IssueCode, RemediationKind] = {
     IssueCode.NO_DOC_EVIDENCE: RemediationKind.SUPPLEMENT,
     IssueCode.DOC_VERSION_CONFLICT: RemediationKind.SUPPLEMENT,
-    IssueCode.DOC_SOURCE_UNTRUSTED: RemediationKind.SUPPLEMENT,
     IssueCode.FILE_NOT_FOUND: RemediationKind.RESCAN,
     IssueCode.LINE_OUT_OF_RANGE: RemediationKind.RESCAN,
     IssueCode.CONTENT_HASH_CHANGED: RemediationKind.RESCAN,

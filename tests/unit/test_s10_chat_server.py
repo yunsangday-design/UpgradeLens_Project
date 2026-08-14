@@ -132,7 +132,7 @@ class TestChatServerSmoke(TestCase):
             "已验证问题",  # verified-findings zone
             "待确认问题",  # unconfirmed (yellow) zone
             "升级修改计划",  # upgrade plan
-            "分析过程",  # folded analysis process
+            "技术详情",  # folded technical details
             "renderBadges",  # RAG / source badges
             "renderFinding",  # finding cards
             "verified_risks",  # reads the separated risk list

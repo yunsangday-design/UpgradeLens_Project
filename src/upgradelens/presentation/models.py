@@ -41,6 +41,8 @@ class DocumentReferenceView(BaseModel):
     snippet: str = ""
     trust_level: str = ""
     trust_label: str = ""
+    provenance: str = ""
+    from_network: bool = False
     source_version_spec: str = ""
     target_version_spec: str = ""
 
@@ -70,6 +72,8 @@ class RagResolutionView(BaseModel):
     matched_query: str = ""
     trust_level: str = ""
     trust_label: str = ""
+    provenance: str = ""
+    from_network: bool = False
     version_range: str = ""
 
 

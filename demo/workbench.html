@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UpgradeLens Agent Workbench</title>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/responsive.css">
+</head>
+<body>
+<div class="app-shell">
+  <!-- ═══ Top Bar ═══ -->
+  <header class="top-bar">
+    <div class="top-bar__brand">⚡ UpgradeLens</div>
+    <div class="top-bar__spacer"></div>
+    <div class="top-bar__status" id="connection-status">
+      <span class="status-dot status-dot--succeeded"></span>
+      <span>就绪</span>
+    </div>
+    <div class="top-bar__actions">
+      <button class="btn btn--ghost btn--sm" id="theme-toggle" title="切换主题">◐</button>
+    </div>
+  </header>
+
+  <!-- ═══ Side Nav ═══ -->
+  <nav class="side-nav" aria-label="主导航">
+    <button class="side-nav__item active" data-view="home" title="首页">⌂</button>
+    <button class="side-nav__item" data-view="scan" title="依赖扫描">⊞</button>
+    <button class="side-nav__item" data-view="assess" title="新建评估">▶</button>
+    <button class="side-nav__item" data-view="history" title="历史">☰</button>
+    <div class="side-nav__spacer"></div>
+    <button class="side-nav__item" data-view="settings" title="设置">⚙</button>
+  </nav>
+
+  <!-- ═══ Main Content ═══ -->
+  <div class="main-content">
+    <main class="workspace" id="workspace">
+
+      <!-- ── Home View ── -->
+      <section id="view-home" class="view">
+        <div class="empty-state">
+          <div class="empty-state__icon">⚡</div>
+          <h2 class="empty-state__title">UpgradeLens Agent 工作台</h2>
+          <p class="empty-state__desc">
+            评估 Python 依赖升级风险：自动识别破坏性变更、受影响代码和迁移步骤。
+          </p>
+          <div style="display:flex; gap:var(--sp-3); margin-top:var(--sp-5);">
+            <button class="btn btn--primary btn--lg" data-view="assess">新建评估</button>
+            <button class="btn btn--lg" data-view="scan">扫描项目依赖</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Scan View ── -->
+      <section id="view-scan" class="view" style="display:none;">
+        <h2 style="margin-bottom:var(--sp-4);">依赖扫描</h2>
+        <div class="form-group" style="display:flex; gap:var(--sp-3);">
+          <input class="input input--lg" id="scan-repo" type="text" placeholder="仓库路径（如 /path/to/project）" style="flex:1;" />
+          <button class="btn btn--primary btn--lg" id="scan-btn">扫描</button>
+        </div>
+        <div id="scan-progress" style="display:none;">
+          <div class="progress"><div class="progress__fill" id="scan-progress-fill" style="width:0%"></div></div>
+          <div style="font-size:var(--fs-sm); color:var(--text-secondary); margin-top:var(--sp-2);" id="scan-status-text">准备中…</div>
+        </div>
+        <div id="scan-result"></div>
+      </section>
+
+      <!-- ── Assess View ── -->
+      <section id="view-assess" class="view" style="display:none;">
+        <h2 style="margin-bottom:var(--sp-4);">新建升级评估</h2>
+        <div class="card" style="max-width:560px;">
+          <div class="form-group">
+            <label class="form-label">升级目标描述</label>
+            <input class="input input--lg" id="assess-goal" type="text" placeholder="如：upgrade pydantic from 1.x to 2.7" />
+            <div class="form-hint">自然语言描述即可，Agent 会自动识别依赖和版本。</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3);">
+            <div class="form-group">
+              <label class="form-label">模式</label>
+              <select class="input select" id="assess-mode">
+                <option value="fake">fake（离线快速）</option>
+                <option value="live">live（真实 LLM）</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">依赖名（可选）</label>
+              <input class="input" id="assess-dep" type="text" placeholder="自动推断" />
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3);">
+            <div class="form-group">
+              <label class="form-label">源版本（可选）</label>
+              <input class="input" id="assess-source" type="text" placeholder="从 manifest 推断" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">目标版本（可选）</label>
+              <input class="input" id="assess-target" type="text" placeholder="如 2.7" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">仓库路径（可选）</label>
+            <input class="input" id="assess-repo" type="text" placeholder="默认使用内置示例仓库" />
+          </div>
+          <button class="btn btn--primary btn--lg" id="assess-submit" style="width:100%;">开始评估</button>
+        </div>
+      </section>
+
+      <!-- ── Running View ── -->
+      <section id="view-running" class="view" style="display:none;">
+        <div class="card" style="margin-bottom:var(--sp-4);">
+          <div style="display:flex; align-items:center; gap:var(--sp-3);">
+            <span class="status-dot status-dot--running"></span>
+            <h3 id="running-title" style="flex:1;">评估进行中…</h3>
+            <span style="font-size:var(--fs-sm); color:var(--text-muted);" id="running-elapsed"></span>
+          </div>
+          <div class="progress" style="margin-top:var(--sp-3);"><div class="progress__fill" id="running-progress-fill" style="width:5%"></div></div>
+          <div style="font-size:var(--fs-sm); color:var(--text-secondary); margin-top:var(--sp-2);" id="running-phase">准备中…</div>
+        </div>
+        <div id="running-plan"></div>
+        <div id="running-events" style="margin-top:var(--sp-4);"></div>
+      </section>
+
+      <!-- ── Result View ── -->
+      <section id="view-result" class="view" style="display:none;">
+        <div id="result-container"></div>
+      </section>
+
+      <!-- ── History View ── -->
+      <section id="view-history" class="view" style="display:none;">
+        <div class="empty-state">
+          <div class="empty-state__icon">☰</div>
+          <h2 class="empty-state__title">历史评估</h2>
+          <p class="empty-state__desc">评估结果会在此保存，方便回顾和对比。</p>
+        </div>
+      </section>
+
+      <!-- ── Settings View ── -->
+      <section id="view-settings" class="view" style="display:none;">
+        <h2 style="margin-bottom:var(--sp-4);">运行环境</h2>
+        <div class="card" style="max-width:480px;">
+          <p style="font-size:var(--fs-sm); color:var(--text-secondary);">
+            模型和 API 配置通过 .env 文件管理，页面不显示敏感信息。<br>
+            更改配置后重启 demo 服务即可生效。
+          </p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script type="module">
+import { submitScan, submitAssessment, connectSSE, getJobSnapshot } from "/static/js/api.js";
+import { getState, setState, updateNested, subscribe, clearActiveJob, getActiveJob } from "/static/js/store.js";
+import { esc, el, formatElapsed } from "/static/js/formatters.js";
+
+// ─── Theme Toggle ───
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  setState({ theme: next });
+});
+
+// ─── Navigation ───
+function navigate(view) {
+  document.querySelectorAll(".view").forEach(v => v.style.display = "none");
+  const target = document.getElementById("view-" + view);
+  if (target) target.style.display = "";
+  document.querySelectorAll(".side-nav__item").forEach(btn => btn.classList.toggle("active", btn.dataset.view === view));
+  setState({ view });
+}
+document.querySelectorAll("[data-view]").forEach(btn => {
+  btn.addEventListener("click", () => navigate(btn.dataset.view));
+});
+
+// ─── Scan ───
+document.getElementById("scan-btn").addEventListener("click", async () => {
+  const repo = document.getElementById("scan-repo").value.trim();
+  if (!repo) { toast("请输入仓库路径", "error"); return; }
+  const btn = document.getElementById("scan-btn");
+  btn.disabled = true;
+  document.getElementById("scan-progress").style.display = "";
+  document.getElementById("scan-status-text").textContent = "提交扫描…";
+  document.getElementById("scan-progress-fill").style.width = "5%";
+  document.getElementById("scan-result").innerHTML = "";
+
+  const { data } = await submitScan(repo);
+  if (data.error) {
+    toast(data.error, "error");
+    btn.disabled = false;
+    document.getElementById("scan-progress").style.display = "none";
+    return;
+  }
+  updateNested("scan", { status: "running", jobId: data.job_id });
+  connectSSE(data.job_id, {
+    onEvent(type, payload) {
+      if (type === "step_started") {
+        document.getElementById("scan-status-text").textContent = `阶段：${payload.step || ""}`;
+        document.getElementById("scan-progress-fill").style.width = "50%";
+      }
+    },
+    onDone(snap) {
+      document.getElementById("scan-progress-fill").style.width = "100%";
+      document.getElementById("scan-status-text").textContent = "完成 ✓";
+      btn.disabled = false;
+      updateNested("scan", { status: "done", result: snap.result });
+      clearActiveJob();
+      renderScanResult(snap.result);
+    },
+    onError(err) {
+      document.getElementById("scan-status-text").textContent = "失败：" + (err.error || "未知");
+      btn.disabled = false;
+      updateNested("scan", { status: "error" });
+      clearActiveJob();
+    },
+  });
+});
+
+function renderScanResult(result) {
+  const container = document.getElementById("scan-result");
+  container.innerHTML = "";
+  if (!result || !result.items || !result.items.length) {
+    container.appendChild(el("div", { class: "empty-state", style: "padding:var(--sp-5)" }, [
+      el("div", { class: "empty-state__title" }, "未发现依赖声明"),
+    ]));
+    return;
+  }
+  updateNested("scan", { result });
+  const items = result.items;
+
+  // ─── Filter Bar ───
+  const filterBar = el("div", { style: "display:flex; gap:var(--sp-3); margin-bottom:var(--sp-3); flex-wrap:wrap; align-items:center;" });
+  const searchInput = el("input", { class: "input", type: "text", placeholder: "搜索包名…", style: "width:180px; padding:var(--sp-1) var(--sp-3); font-size:var(--fs-sm);" });
+  const statusSelect = el("select", { class: "input select", style: "width:140px; padding:var(--sp-1) var(--sp-2); font-size:var(--fs-sm);" });
+  statusSelect.innerHTML = '<option value="">全部状态</option><option value="upgradable">可升级</option><option value="up_to_date">已最新</option><option value="unresolved">未解析</option><option value="lookup_failed">查询失败</option>';
+  const crossCheck = el("label", { style: "display:flex; align-items:center; gap:var(--sp-1); font-size:var(--fs-sm); color:var(--text-secondary); cursor:pointer;" });
+  const crossCb = el("input", { type: "checkbox" });
+  crossCheck.appendChild(crossCb);
+  crossCheck.appendChild(document.createTextNode("仅跨主版本"));
+  const countLabel = el("span", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-left:auto;" });
+  filterBar.appendChild(searchInput);
+  filterBar.appendChild(statusSelect);
+  filterBar.appendChild(crossCheck);
+  filterBar.appendChild(countLabel);
+  container.appendChild(filterBar);
+
+  // ─── Table ───
+  const table = el("table", { class: "table", id: "scan-table" });
+  table.innerHTML = `<thead><tr><th style="width:32px;"></th><th>包名</th><th>当前版本</th><th>最新稳定版</th><th>状态</th><th>目标版本</th></tr></thead>`;
+  const tbody = el("tbody");
+
+  function buildRows(filter) {
+    tbody.innerHTML = "";
+    let count = 0;
+    items.forEach((item, idx) => {
+      // Apply filters
+      if (filter.search && !item.package.toLowerCase().includes(filter.search.toLowerCase())) return;
+      if (filter.status && item.status !== filter.status) return;
+      if (filter.crossOnly && !item.cross_major) return;
+
+      count++;
+      const canSelect = item.status === "upgradable";
+      const cb = el("input", { type: "checkbox", "data-idx": String(idx) });
+      if (canSelect) cb.checked = true; else if (item.status !== "unresolved") cb.disabled = true;
+      const targetInput = el("input", { class: "input", type: "text", "data-idx": String(idx), value: canSelect ? (item.registry_latest || "") : "", placeholder: item.status === "unresolved" ? "手填版本" : "", style: "width:7em;padding:var(--sp-1) var(--sp-2);font-size:var(--fs-sm);" });
+      if (item.status === "up_to_date" || item.status === "lookup_failed") targetInput.disabled = true;
+      targetInput.addEventListener("input", () => {
+        if (item.status === "unresolved") cb.disabled = !targetInput.value.trim();
+        if (targetInput.value.trim()) cb.checked = true;
+      });
+      const statusBadgeCls = item.status === "upgradable" ? "badge--green" : item.status === "up_to_date" ? "" : item.status === "unresolved" ? "badge--amber" : "badge--red";
+      const cross = item.cross_major ? el("span", { class: "badge badge--red", style: "margin-left:var(--sp-1);" }, "跨主版本") : null;
+      const row = el("tr", { "data-idx": String(idx) }, [
+        el("td", null, [cb]),
+        el("td", null, el("code", { style: "font-size:var(--fs-sm);" }, item.package)),
+        el("td", { style: "font-size:var(--fs-sm);" }, item.current_version || item.current_specifier || "—"),
+        el("td", { style: "font-size:var(--fs-sm);" }, item.registry_latest || "—"),
+        el("td", null, [el("span", { class: "badge " + statusBadgeCls }, item.status), cross]),
+        el("td", null, [targetInput]),
+      ]);
+      tbody.appendChild(row);
+    });
+    countLabel.textContent = `显示 ${count} / ${items.length}`;
+  }
+
+  function getFilter() {
+    return { search: searchInput.value, status: statusSelect.value, crossOnly: crossCb.checked };
+  }
+  searchInput.addEventListener("input", () => buildRows(getFilter()));
+  statusSelect.addEventListener("change", () => buildRows(getFilter()));
+  crossCb.addEventListener("change", () => buildRows(getFilter()));
+
+  buildRows(getFilter());
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  // ─── Actions ───
+  const actions = el("div", { style: "margin-top:var(--sp-4); display:flex; gap:var(--sp-3); align-items:center;" });
+  const selectAllBtn = el("button", { class: "btn btn--sm btn--ghost" }, "全选可升级");
+  selectAllBtn.addEventListener("click", () => {
+    tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => { if (!cb.disabled) cb.checked = true; });
+  });
+  const deselectBtn = el("button", { class: "btn btn--sm btn--ghost" }, "取消全选");
+  deselectBtn.addEventListener("click", () => {
+    tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+  });
+  const assessBtn = el("button", { class: "btn btn--primary" }, "批量评估选中项");
+  assessBtn.addEventListener("click", () => assessFromScan(result));
+  actions.appendChild(selectAllBtn);
+  actions.appendChild(deselectBtn);
+  actions.appendChild(assessBtn);
+  container.appendChild(actions);
+
+  // ─── Batch Queue Container ───
+  container.appendChild(el("div", { id: "batch-queue", style: "margin-top:var(--sp-4);" }));
+}
+
+// ─── Batch Assessment with Queue ───
+async function assessFromScan(result) {
+  const tbody = document.querySelector("#scan-table tbody");
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll("tr");
+  const selected = [];
+  rows.forEach(row => {
+    const idx = parseInt(row.getAttribute("data-idx"));
+    const cb = row.querySelector('input[type="checkbox"]');
+    const target = row.querySelector('input[type="text"]');
+    if (cb && cb.checked && target && target.value.trim()) {
+      selected.push({ package: result.items[idx].package, target_version: target.value.trim(), idx });
+    }
+  });
+  if (!selected.length) { toast("请选择至少一个有目标版本的依赖", "error"); return; }
+
+  const mode = "fake"; // Use the default; for live user should go to assess form
+  const repo = document.getElementById("scan-repo").value.trim();
+  const queueContainer = document.getElementById("batch-queue");
+  queueContainer.innerHTML = "";
+  queueContainer.appendChild(el("h4", { style: "margin-bottom:var(--sp-3);" }, `批量评估队列（${selected.length} 项）`));
+
+  // Build queue UI
+  const queueItems = selected.map((item, i) => {
+    const row = el("div", { class: "card", style: "display:flex; align-items:center; gap:var(--sp-3); padding:var(--sp-3); margin-bottom:var(--sp-2);", id: `batch-item-${i}` });
+    row.appendChild(el("span", { style: "font-size:var(--fs-sm); font-weight:600; width:24px;" }, String(i + 1)));
+    row.appendChild(el("code", { style: "font-size:var(--fs-sm); flex:1;" }, `${item.package} → ${item.target_version}`));
+    row.appendChild(el("span", { class: "badge", id: `batch-status-${i}` }, "排队中"));
+    const retryBtn = el("button", { class: "btn btn--sm btn--ghost", style: "display:none;", id: `batch-retry-${i}` }, "重试");
+    row.appendChild(retryBtn);
+    queueContainer.appendChild(row);
+    return { ...item, element: row };
+  });
+
+  // Execute sequentially
+  for (let i = 0; i < queueItems.length; i++) {
+    const item = queueItems[i];
+    const statusEl = document.getElementById(`batch-status-${i}`);
+    const retryBtn = document.getElementById(`batch-retry-${i}`);
+    statusEl.textContent = "执行中";
+    statusEl.className = "badge badge--accent";
+
+    const success = await runBatchItem(item, mode, repo, i);
+    if (success) {
+      statusEl.textContent = "完成";
+      statusEl.className = "badge badge--green";
+    } else {
+      statusEl.textContent = "失败";
+      statusEl.className = "badge badge--red";
+      retryBtn.style.display = "";
+      retryBtn.addEventListener("click", async () => {
+        retryBtn.style.display = "none";
+        statusEl.textContent = "重试中";
+        statusEl.className = "badge badge--accent";
+        const ok = await runBatchItem(item, mode, repo, i);
+        if (ok) { statusEl.textContent = "完成"; statusEl.className = "badge badge--green"; }
+        else { statusEl.textContent = "失败"; statusEl.className = "badge badge--red"; retryBtn.style.display = ""; }
+      });
+    }
+  }
+
+  // Summary
+  queueContainer.appendChild(el("div", { style: "margin-top:var(--sp-3); font-size:var(--fs-sm); color:var(--text-secondary);" },
+    "批量评估完成。点击具体依赖查看详情，或重试失败项。"));
+}
+
+async function runBatchItem(item, mode, repo, idx) {
+  const goal = `upgrade ${item.package} to ${item.target_version}`;
+  try {
+    const { data } = await submitAssessment({ goal, mode, dependency: item.package, target_version: item.target_version, repo });
+    if (data.error) return false;
+    // Wait for job to complete
+    return await new Promise((resolve) => {
+      connectSSE(data.job_id, {
+        onEvent() {},
+        onDone(snap) {
+          // Store result for later viewing
+          if (snap.result) {
+            const viewBtn = el("button", { class: "btn btn--sm btn--ghost", style: "margin-left:var(--sp-2);" }, "查看");
+            viewBtn.addEventListener("click", () => showResult(snap.result));
+            const card = document.getElementById(`batch-item-${idx}`);
+            if (card) card.appendChild(viewBtn);
+          }
+          resolve(true);
+        },
+        onError() { resolve(false); },
+      });
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+// ─── Assessment ───
+document.getElementById("assess-submit").addEventListener("click", () => {
+  const goal = document.getElementById("assess-goal").value.trim();
+  if (!goal) { toast("请输入升级目标描述", "error"); return; }
+  startAssessment({
+    goal,
+    mode: document.getElementById("assess-mode").value,
+    dependency: document.getElementById("assess-dep").value.trim() || undefined,
+    target_version: document.getElementById("assess-target").value.trim() || undefined,
+    source_version: document.getElementById("assess-source").value.trim() || undefined,
+    repo: document.getElementById("assess-repo").value.trim() || undefined,
+  });
+});
+
+let _runStartTime = null;
+let _runTimer = null;
+
+async function startAssessment(params) {
+  navigate("running");
+  document.getElementById("running-title").textContent = `评估：${params.dependency || params.goal}`;
+  document.getElementById("running-phase").textContent = "提交中…";
+  document.getElementById("running-progress-fill").style.width = "5%";
+  document.getElementById("running-plan").innerHTML = "";
+  document.getElementById("running-events").innerHTML = "";
+  _runStartTime = Date.now();
+  if (_runTimer) clearInterval(_runTimer);
+  _runTimer = setInterval(() => {
+    document.getElementById("running-elapsed").textContent = formatElapsed(Date.now() - _runStartTime);
+  }, 1000);
+
+  const { data } = await submitAssessment(params);
+  if (data.error) {
+    toast(data.error, "error");
+    navigate("assess");
+    clearInterval(_runTimer);
+    return;
+  }
+  updateNested("assess", { status: "running", jobId: data.job_id });
+
+  connectSSE(data.job_id, {
+    onEvent(type, payload) {
+      const phase = document.getElementById("running-phase");
+      const fill = document.getElementById("running-progress-fill");
+      if (type === "step_started") {
+        phase.textContent = `阶段：${payload.step || payload.dependency || ""}`;
+        fill.style.width = Math.min(90, parseInt(fill.style.width) + 12) + "%";
+      } else if (type === "step_finished") {
+        fill.style.width = Math.min(95, parseInt(fill.style.width) + 8) + "%";
+      } else if (type === "plan.updated") {
+        renderRunningPlan(payload);
+      }
+      // Add to event log
+      const events = document.getElementById("running-events");
+      const label = payload.step || payload.plan_step_id || payload.tool || "";
+      events.appendChild(el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-bottom:2px;" },
+        `[${type}] ${label}`));
+      if (events.childElementCount > 50) events.firstChild.remove();
+      events.scrollTop = events.scrollHeight;
+    },
+    onDone(snap) {
+      clearInterval(_runTimer);
+      document.getElementById("running-progress-fill").style.width = "100%";
+      document.getElementById("running-phase").textContent = "完成 ✓";
+      updateNested("assess", { status: "done", result: snap.result });
+      clearActiveJob();
+      setTimeout(() => showResult(snap.result), 500);
+    },
+    onError(err) {
+      clearInterval(_runTimer);
+      document.getElementById("running-phase").textContent = "失败：" + (err.error || "未知");
+      document.getElementById("running-progress-fill").style.width = "100%";
+      document.getElementById("running-progress-fill").style.background = "var(--red)";
+      updateNested("assess", { status: "error" });
+      clearActiveJob();
+    },
+  });
+}
+
+function renderRunningPlan(payload) {
+  const container = document.getElementById("running-plan");
+  container.innerHTML = "";
+  const steps = payload.steps || [];
+  if (!steps.length) return;
+  const title = el("h4", { style: "margin-bottom:var(--sp-2); font-size:var(--fs-sm); color:var(--text-secondary);" }, "执行计划");
+  container.appendChild(title);
+  steps.forEach(step => {
+    const s = step.status || "pending";
+    const seqCls = s === "succeeded" || s === "done" ? "done" : s === "running" ? "running" : s === "failed" ? "failed" : "";
+    const card = el("div", { class: "plan-step-card" });
+    card.appendChild(el("div", { class: "plan-step-card__seq " + seqCls }, String(step.seq || "?")));
+    const content = el("div", { class: "plan-step-card__content" });
+    content.appendChild(el("div", { class: "plan-step-card__tool" }, esc(step.tool || "")));
+    if (step.reason) content.appendChild(el("div", { class: "plan-step-card__reason" }, esc(step.reason)));
+    if (step.observation) content.appendChild(el("div", { class: "plan-step-card__obs" }, esc(step.observation)));
+    card.appendChild(content);
+    const badgeCls = s === "succeeded" || s === "done" ? "badge--green" : s === "running" ? "badge--accent" : s === "failed" ? "badge--red" : "";
+    card.appendChild(el("span", { class: "badge " + badgeCls }, s));
+    container.appendChild(card);
+  });
+}
+
+function showResult(result) {
+  navigate("result");
+  const container = document.getElementById("result-container");
+  container.innerHTML = "";
+  if (!result) { container.textContent = "无结果"; return; }
+  const raw = result.assessment || {};
+  // Normalize field names: backend uses *_spec suffixes and target_dependency
+  const a = {
+    ...raw,
+    dependency: raw.dependency || raw.target_dependency || "",
+    source_version: raw.source_version || raw.source_version_spec || "",
+    target_version: raw.target_version || raw.target_version_spec || "",
+  };
+
+  // ═══ Hero Section ═══
+  const verdictMap = { needs_upgrade: "需要升级改造", safe: "安全升级", compatible: "兼容升级", impacted: "有破坏性影响", no_impact: "未发现影响" };
+  const verdictText = verdictMap[a.verdict] || verdictMap[a.conclusion] || a.verdict || a.conclusion || "评估完成";
+  const isRisky = a.verdict && (a.verdict.includes("needs") || a.verdict.includes("impacted"));
+
+  const hero = el("div", { class: "assessment-hero" });
+  hero.appendChild(el("div", { class: "assessment-hero__verdict", style: `color:${isRisky ? "var(--red)" : "var(--green)"}` }, verdictText));
+  hero.appendChild(el("div", { class: "assessment-hero__headline" },
+    `${esc(a.dependency || "—")}  ${esc(a.source_version || "?")} → ${esc(a.target_version || "?")}`));
+
+  const metrics = el("div", { class: "assessment-hero__metrics" });
+  const addMetric = (v, l, color) => {
+    const card = el("div", { class: "metric-card" });
+    card.appendChild(el("div", { class: "metric-card__value", style: color ? `color:${color}` : "" }, String(v)));
+    card.appendChild(el("div", { class: "metric-card__label" }, l));
+    metrics.appendChild(card);
+  };
+  addMetric((a.verified_risks || []).length, "已验证风险", isRisky ? "var(--red)" : null);
+  addMetric((a.degraded_risks || []).length, "待确认", "var(--amber)");
+  // Count affected files
+  const affectedFiles = new Set();
+  (a.verified_risks || []).forEach(f => (f.code_refs || []).forEach(r => { if (r.file) affectedFiles.add(r.file); }));
+  addMetric(affectedFiles.size, "受影响文件");
+  if (result.cost) addMetric(result.cost.call_count || 0, "模型调用");
+  // Evidence quality
+  const hasDegrade = a.degraded_risks && a.degraded_risks.length > 0;
+  addMetric(a.is_partial || hasDegrade ? "部分" : "充分", "证据质量", hasDegrade ? "var(--amber)" : "var(--green)");
+  hero.appendChild(metrics);
+
+  // Export buttons row
+  const exportRow = el("div", { style: "display:flex; gap:var(--sp-3); margin-top:var(--sp-4);" });
+  const btnJSON = el("button", { class: "btn btn--sm" }, "导出 JSON");
+  btnJSON.addEventListener("click", () => exportJSON(result));
+  const btnMD = el("button", { class: "btn btn--sm" }, "导出 Markdown");
+  btnMD.addEventListener("click", () => exportMarkdown(result));
+  const btnCopy = el("button", { class: "btn btn--sm" }, "复制摘要");
+  btnCopy.addEventListener("click", () => copySummary(a));
+  exportRow.appendChild(btnJSON);
+  exportRow.appendChild(btnMD);
+  exportRow.appendChild(btnCopy);
+  hero.appendChild(exportRow);
+  container.appendChild(hero);
+
+  // ═══ Verified Findings ═══
+  if (a.verified_risks && a.verified_risks.length) {
+    const section = el("div", { style: "margin-bottom:var(--sp-5);" });
+    section.appendChild(el("h3", { style: "margin-bottom:var(--sp-3);" }, `已验证风险（${a.verified_risks.length}）`));
+    a.verified_risks.forEach(f => section.appendChild(renderFindingCard(f, "verified")));
+    container.appendChild(section);
+  }
+
+  // ═══ Degraded Findings ═══
+  if (a.degraded_risks && a.degraded_risks.length) {
+    const section = el("div", { style: "margin-bottom:var(--sp-5);" });
+    section.appendChild(el("h3", { style: "margin-bottom:var(--sp-3);" }, `待确认问题（${a.degraded_risks.length}）`));
+    a.degraded_risks.forEach(f => section.appendChild(renderFindingCard(f, "degraded")));
+    container.appendChild(section);
+  }
+
+  // ═══ No risks ═══
+  if (!(a.verified_risks && a.verified_risks.length) && !(a.degraded_risks && a.degraded_risks.length)) {
+    container.appendChild(el("div", { class: "card", style: "text-align:center; padding:var(--sp-6); color:var(--green);" },
+      el("p", null, "未识别出破坏性变更风险。")));
+  }
+
+  // ═══ Recommended Tests ═══
+  if (a.recommended_tests && a.recommended_tests.length) {
+    const section = el("div", { style: "margin-bottom:var(--sp-5);" });
+    section.appendChild(el("h3", { style: "margin-bottom:var(--sp-3);" }, "推荐测试"));
+    const ul = el("ul", { style: "padding-left:var(--sp-5);" });
+    a.recommended_tests.forEach(t => ul.appendChild(el("li", { style: "font-size:var(--fs-sm); margin-bottom:var(--sp-1);" }, esc(t))));
+    section.appendChild(ul);
+    container.appendChild(section);
+  }
+
+  // ═══ Upgrade Plan ═══
+  if (result.upgrade_plan && result.upgrade_plan.steps && result.upgrade_plan.steps.length) {
+    const section = el("div", { style: "margin-bottom:var(--sp-5);" });
+    section.appendChild(el("h3", { style: "margin-bottom:var(--sp-3);" }, "升级修改计划"));
+    result.upgrade_plan.steps.forEach((s, i) => {
+      const card = el("div", { class: "plan-step-card" });
+      card.appendChild(el("div", { class: "plan-step-card__seq" }, String(i + 1)));
+      const content = el("div", { class: "plan-step-card__content" });
+      content.appendChild(el("div", { class: "plan-step-card__tool" }, esc(s.title || s.phase || `步骤 ${i+1}`)));
+      if (s.detail) content.appendChild(el("div", { class: "plan-step-card__reason" }, esc(s.detail)));
+      const meta = [
+        s.target_files && s.target_files.length ? `文件：${s.target_files.join(", ")}` : null,
+        s.api_symbols && s.api_symbols.length ? `API：${s.api_symbols.join(", ")}` : null,
+      ].filter(Boolean);
+      if (meta.length) content.appendChild(el("div", { class: "plan-step-card__obs", style: "font-family:var(--font-mono);" }, meta.join("  ·  ")));
+      card.appendChild(content);
+      section.appendChild(card);
+    });
+    container.appendChild(section);
+  }
+
+  // ═══ Agent Plan ═══
+  if (result.plan && result.plan.steps && result.plan.steps.length) {
+    const section = el("details", { class: "fold-section" });
+    section.appendChild(el("summary", null, `Agent 执行计划（${result.plan.steps.length} 步）`));
+    const body = el("div", { class: "fold-body" });
+    result.plan.steps.forEach((step, i) => {
+      const s = step.status || "pending";
+      const seqCls = s === "succeeded" || s === "done" ? "done" : s === "running" ? "running" : s === "failed" ? "failed" : "";
+      const card = el("div", { class: "plan-step-card" });
+      card.appendChild(el("div", { class: "plan-step-card__seq " + seqCls }, String(step.seq || i + 1)));
+      const content = el("div", { class: "plan-step-card__content" });
+      content.appendChild(el("div", { class: "plan-step-card__tool" }, esc(step.tool || step.name || `步骤 ${i+1}`)));
+      if (step.reason) content.appendChild(el("div", { class: "plan-step-card__reason" }, esc(step.reason)));
+      if (step.observation) content.appendChild(el("div", { class: "plan-step-card__obs" }, esc(step.observation)));
+      card.appendChild(content);
+      card.appendChild(el("span", { class: `badge ${s === "succeeded" || s === "done" ? "badge--green" : s === "failed" ? "badge--red" : ""}` }, s));
+      body.appendChild(card);
+    });
+    section.appendChild(body);
+    container.appendChild(section);
+  }
+
+  // ═══ Timeline ═══
+  if (result.trace && result.trace.length) {
+    const PHASE_MAP = { scan_code: "代码扫描", scan_dependency: "代码扫描", retrieve_for_package: "检索", retrieve: "检索", breaking_change_extractor: "分析", impact_analyzer: "分析", verify_report: "验证", online_fallback: "联网", discover_fetch_retrieve: "联网" };
+    const LANES = ["代码扫描", "检索", "分析", "验证", "联网"];
+    const section = el("details", { class: "fold-section" });
+    section.appendChild(el("summary", null, `工具时间轴（${result.trace.length} 次调用）`));
+    const body = el("div", { class: "fold-body" });
+    const tl = el("div", { class: "timeline-v2" });
+    const header = el("div", { class: "timeline-v2__header" });
+    LANES.forEach(l => header.appendChild(el("div", { class: "timeline-v2__lane-label" }, l)));
+    tl.appendChild(header);
+    result.trace.forEach(t => {
+      const tool = t.tool || "";
+      const lane = PHASE_MAP[tool] || LANES.find(l => tool.includes(l)) || null;
+      if (!lane) return;
+      const row = el("div", { class: "timeline-v2__row" });
+      LANES.forEach(l => {
+        const cell = el("div", { class: "timeline-v2__cell" });
+        if (l === lane) {
+          const cls = "timeline-v2__chip " + (t.status === "ok" ? "ok" : t.status === "error" ? "error" : "");
+          const label = tool.length > 16 ? tool.slice(0, 14) + "…" : tool;
+          cell.appendChild(el("span", { class: cls }, esc(label)));
+        }
+        row.appendChild(cell);
+      });
+      tl.appendChild(row);
+    });
+    body.appendChild(tl);
+    section.appendChild(body);
+    container.appendChild(section);
+  }
+
+  // ═══ Technical Details ═══
+  const techDetails = el("details", { class: "fold-section" });
+  techDetails.appendChild(el("summary", null, "技术详情"));
+  const techBody = el("div", { class: "fold-body" });
+  if (result.cost) techBody.appendChild(el("p", { style: "font-size:var(--fs-sm);" }, `模型调用 ${result.cost.call_count} 次，共 ${result.cost.total_tokens} tokens`));
+  if (result.degradations && result.degradations.length) {
+    techBody.appendChild(el("h4", { style: "margin-top:var(--sp-3); margin-bottom:var(--sp-2);" }, "降级说明"));
+    result.degradations.forEach(d => techBody.appendChild(el("div", { style: "font-size:var(--fs-sm); color:var(--text-muted); margin-bottom:2px;" }, esc(d))));
+  }
+  techDetails.appendChild(techBody);
+  container.appendChild(techDetails);
+
+  // ═══ Actions ═══
+  container.appendChild(el("div", { style: "margin-top:var(--sp-5); display:flex; gap:var(--sp-3);" }, [
+    el("button", { class: "btn btn--primary", onclick: "navigate('assess')" }, "新建评估"),
+    el("button", { class: "btn", onclick: "navigate('home')" }, "← 返回首页"),
+  ]));
+}
+
+// ─── Finding Card (full detail) ───
+function renderFindingCard(f, kind) {
+  const isVerified = kind === "verified";
+  const card = el("div", { class: `finding-card ${isVerified ? "severity-" + (f.severity || "low").toLowerCase() : "degraded"}` });
+
+  // Header
+  const header = el("div", { class: "finding-card__header" });
+  header.appendChild(el("span", { class: "finding-card__title" }, esc(f.title || "未命名问题")));
+  if (f.severity) header.appendChild(el("span", { class: `badge badge--${f.severity === "high" || f.severity === "critical" ? "red" : "amber"}` }, f.severity));
+  if (f.evidence_status) header.appendChild(el("span", { class: "badge" }, f.evidence_status));
+  card.appendChild(header);
+
+  // Detail
+  if (f.detail) card.appendChild(el("div", { class: "finding-card__body" }, esc(f.detail)));
+
+  // Recommendation
+  if (f.recommendation) {
+    card.appendChild(el("div", { style: "margin-top:var(--sp-2); font-size:var(--fs-sm); color:var(--accent);" }, [
+      el("strong", null, "建议："), document.createTextNode(" " + esc(f.recommendation))
+    ]));
+  }
+
+  // Code Refs
+  if (f.code_refs && f.code_refs.length) {
+    const refs = el("details", { style: "margin-top:var(--sp-3);" });
+    refs.appendChild(el("summary", { style: "font-size:var(--fs-sm); cursor:pointer; color:var(--text-secondary);" }, `代码位置（${f.code_refs.length}）`));
+    const refBody = el("div", { style: "margin-top:var(--sp-2);" });
+    f.code_refs.forEach(r => {
+      const loc = `${esc(r.file || "")}${r.line_start ? ":" + r.line_start : ""}`;
+      const line = el("div", { style: "display:flex; align-items:center; gap:var(--sp-2); margin-bottom:var(--sp-1);" });
+      line.appendChild(el("code", { style: "font-size:var(--fs-xs); background:var(--bg-surface-2); padding:2px 6px; border-radius:4px; cursor:pointer;", title: "点击复制" }, loc));
+      if (r.symbol) line.appendChild(el("span", { style: "font-size:var(--fs-xs); color:var(--text-muted);" }, esc(r.symbol)));
+      line.addEventListener("click", () => { navigator.clipboard.writeText(loc); });
+      refBody.appendChild(line);
+      if (r.snippet) refBody.appendChild(el("pre", { style: "font-size:var(--fs-xs); margin:var(--sp-1) 0 var(--sp-2); max-height:80px; overflow:auto;" }, esc(r.snippet)));
+    });
+    refs.appendChild(refBody);
+    card.appendChild(refs);
+  }
+
+  // Doc Evidence
+  if (f.docs && f.docs.length) {
+    const docs = el("details", { style: "margin-top:var(--sp-2);" });
+    docs.appendChild(el("summary", { style: "font-size:var(--fs-sm); cursor:pointer; color:var(--text-secondary);" }, `文档证据（${f.docs.length}）`));
+    const docBody = el("div", { style: "margin-top:var(--sp-2);" });
+    f.docs.forEach(d => {
+      const item = el("div", { style: "margin-bottom:var(--sp-2); padding:var(--sp-2); background:var(--bg-surface-2); border-radius:var(--radius-sm);" });
+      const titleEl = d.url
+        ? el("a", { href: d.url, target: "_blank", rel: "noopener", style: "font-size:var(--fs-sm);" }, esc(d.title || d.url))
+        : el("span", { style: "font-size:var(--fs-sm);" }, esc(d.title || "文档"));
+      const meta = el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-top:2px;" });
+      if (d.trust) meta.appendChild(el("span", { class: `badge badge--${d.trust === "official" ? "green" : "amber"}`, style: "margin-right:var(--sp-2);" }, d.trust));
+      if (d.source) meta.appendChild(document.createTextNode(d.source + "  "));
+      if (d.version_range) meta.appendChild(document.createTextNode(d.version_range));
+      item.appendChild(titleEl);
+      item.appendChild(meta);
+      if (d.snippet) item.appendChild(el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-top:var(--sp-1); font-style:italic;" }, esc(d.snippet.slice(0, 200))));
+      docBody.appendChild(item);
+    });
+    docs.appendChild(docBody);
+    card.appendChild(docs);
+  }
+
+  // Migration steps
+  if (f.migration) {
+    const m = f.migration;
+    const mig = el("details", { style: "margin-top:var(--sp-2);" });
+    mig.appendChild(el("summary", { style: "font-size:var(--fs-sm); cursor:pointer; color:var(--accent);" }, "迁移步骤"));
+    const migBody = el("div", { style: "margin-top:var(--sp-2);" });
+    if (m.before) {
+      migBody.appendChild(el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-bottom:2px;" }, "修改前："));
+      migBody.appendChild(el("pre", { style: "font-size:var(--fs-xs); margin-bottom:var(--sp-2);" }, esc(m.before)));
+    }
+    if (m.after) {
+      migBody.appendChild(el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-bottom:2px;" }, "修改后："));
+      migBody.appendChild(el("pre", { style: "font-size:var(--fs-xs); margin-bottom:var(--sp-2);" }, esc(m.after)));
+    }
+    if (m.steps && m.steps.length) {
+      migBody.appendChild(el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted); margin-bottom:2px;" }, "步骤："));
+      const ol = el("ol", { style: "padding-left:var(--sp-4); font-size:var(--fs-sm);" });
+      m.steps.forEach(s => ol.appendChild(el("li", { style: "margin-bottom:2px;" }, esc(s))));
+      migBody.appendChild(ol);
+    }
+    if (m.verification) migBody.appendChild(el("div", { style: "font-size:var(--fs-sm); margin-top:var(--sp-2);" }, [el("strong", null, "验证："), document.createTextNode(" " + esc(m.verification))]));
+    mig.appendChild(migBody);
+    card.appendChild(mig);
+  }
+
+  // Degraded warning
+  if (!isVerified) {
+    card.appendChild(el("div", { style: "margin-top:var(--sp-3); padding:var(--sp-2) var(--sp-3); background:var(--amber-subtle); border-radius:var(--radius-sm); font-size:var(--fs-xs); color:var(--amber);" },
+      "⚠ 证据不足：此问题尚未充分验证，建议补齐文档或代码证据后再确认。"));
+  }
+
+  return card;
+}
+
+// ─── Export: JSON ───
+function exportJSON(result) {
+  const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `upgradelens-assessment-${Date.now()}.json`;
+  a.click(); URL.revokeObjectURL(url);
+  toast("已导出 JSON", "success");
+}
+
+// ─── Export: Markdown ───
+function exportMarkdown(result) {
+  const as = result.assessment || {};
+  const dep = as.dependency || as.target_dependency || "—";
+  const srcVer = as.source_version || as.source_version_spec || "?";
+  const tgtVer = as.target_version || as.target_version_spec || "?";
+  let md = `# 升级评估报告\n\n`;
+  md += `**依赖**: ${dep}  \n`;
+  md += `**版本**: ${srcVer} → ${tgtVer}  \n`;
+  md += `**结论**: ${as.verdict || as.conclusion || "—"}  \n\n`;
+  if (as.verified_risks && as.verified_risks.length) {
+    md += `## 已验证风险（${as.verified_risks.length}）\n\n`;
+    as.verified_risks.forEach((f, i) => {
+      md += `### ${i+1}. ${f.title || "问题"} [${f.severity || ""}]\n\n`;
+      if (f.detail) md += `${f.detail}\n\n`;
+      if (f.recommendation) md += `**建议**: ${f.recommendation}\n\n`;
+      if (f.code_refs && f.code_refs.length) {
+        md += `**代码位置**:\n`;
+        f.code_refs.forEach(r => { md += `- \`${r.file || ""}${r.line_start ? ":" + r.line_start : ""}\` ${r.symbol || ""}\n`; });
+        md += `\n`;
+      }
+      if (f.migration && f.migration.steps) {
+        md += `**迁移步骤**:\n`;
+        f.migration.steps.forEach((s, j) => { md += `${j+1}. ${s}\n`; });
+        md += `\n`;
+      }
+    });
+  }
+  if (as.degraded_risks && as.degraded_risks.length) {
+    md += `## 待确认（${as.degraded_risks.length}）\n\n`;
+    as.degraded_risks.forEach((f, i) => { md += `${i+1}. ${f.title || "问题"}：${f.detail || ""}\n`; });
+    md += `\n`;
+  }
+  if (as.recommended_tests && as.recommended_tests.length) {
+    md += `## 推荐测试\n\n`;
+    as.recommended_tests.forEach(t => { md += `- ${t}\n`; });
+    md += `\n`;
+  }
+  if (result.cost) md += `---\n\n_模型调用 ${result.cost.call_count} 次，共 ${result.cost.total_tokens} tokens_\n`;
+  const blob = new Blob([md], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `upgradelens-report-${Date.now()}.md`;
+  a.click(); URL.revokeObjectURL(url);
+  toast("已导出 Markdown 报告", "success");
+}
+
+// ─── Copy Summary ───
+function copySummary(a) {
+  const dep = a.dependency || a.target_dependency || "";
+  const srcVer = a.source_version || a.source_version_spec || "?";
+  const tgtVer = a.target_version || a.target_version_spec || "?";
+  const text = `[升级评估] ${dep} ${srcVer} → ${tgtVer}\n结论：${a.verdict || a.conclusion || "—"}\n已验证风险：${(a.verified_risks || []).length}\n待确认：${(a.degraded_risks || []).length}`;
+  navigator.clipboard.writeText(text).then(() => toast("已复制到剪贴板", "success"));
+}
+// Expose navigate globally for inline onclick
+window.navigate = navigate;
+
+// ─── Toast ───
+function toast(msg, type = "info") {
+  const t = el("div", { class: "toast" + (type === "error" ? " toast--error" : type === "success" ? " toast--success" : "") }, esc(msg));
+  document.getElementById("toast-container").appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// ─── Refresh Recovery ───
+(function recover() {
+  const { jobId, kind } = getActiveJob();
+  if (!jobId) return;
+  getJobSnapshot(jobId).then(snap => {
+    if (!snap || snap.error) { clearActiveJob(); return; }
+    if (snap.status === "succeeded") {
+      clearActiveJob();
+      if (kind === "run") showResult(snap.result);
+      else if (kind === "scan") { navigate("scan"); renderScanResult(snap.result); }
+    } else if (snap.status === "failed") {
+      clearActiveJob();
+      toast("上次任务失败：" + (snap.error || "未知"), "error");
+    } else {
+      // Still running
+      if (kind === "run") {
+        navigate("running");
+        _runStartTime = Date.now() - ((snap.started_at ? (Date.now()/1000 - snap.started_at) * 1000 : 0));
+        _runTimer = setInterval(() => { document.getElementById("running-elapsed").textContent = formatElapsed(Date.now() - _runStartTime); }, 1000);
+        document.getElementById("running-phase").textContent = "恢复中…";
+        connectSSE(jobId, {
+          onEvent(type, payload) { document.getElementById("running-phase").textContent = `阶段：${payload.step || ""}`; },
+          onDone(s) { clearInterval(_runTimer); clearActiveJob(); showResult(s.result); },
+          onError() { clearInterval(_runTimer); clearActiveJob(); toast("任务失败", "error"); },
+        });
+      } else {
+        navigate("scan");
+        document.getElementById("scan-progress").style.display = "";
+        document.getElementById("scan-status-text").textContent = "恢复中…";
+        connectSSE(jobId, {
+          onEvent() {},
+          onDone(s) { clearActiveJob(); renderScanResult(s.result); document.getElementById("scan-progress").style.display = "none"; },
+          onError() { clearActiveJob(); document.getElementById("scan-status-text").textContent = "失败"; },
+        });
+      }
+    }
+  }).catch(() => clearActiveJob());
+})();
+
+// Apply saved theme
+document.documentElement.setAttribute("data-theme", getState().theme);
+</script>
+</body>
+</html>

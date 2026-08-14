@@ -90,6 +90,7 @@ def test_registry_lookup() -> None:
         "impact_report",
         "router",
         "query_rewriter",
+        "agent_decide",
     }
     assert get_prompt("planner") is PLANNER
     with pytest.raises(KeyError):

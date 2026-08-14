@@ -324,14 +324,21 @@ def temporary_retrieve(
     chunks: list[DocChunk],
     *,
     top_k: int = 4,
+    source_trust_map: dict[str, str] | None = None,
 ) -> list[DocEvidence]:
     """Lexically retrieve the best temporary chunks and wrap them as evidence.
 
     The scoring is intentionally simple and deterministic (no model call): it
     counts query-term hits so the result is reproducible and testable.
+
+    ``source_trust_map`` maps ``source_id`` (== source URL) to the trust hint
+    determined during discovery (``"official"`` or ``"community"``). When not
+    provided or a chunk's source_id is missing from the map, falls back to
+    ``"community"``.
     """
     if not chunks:
         return []
+    trust_map = source_trust_map or {}
     target_major = target_version.split(".")[0]
     terms: list[str] = [t.lower() for t in (user_intent or "").split()]
     terms += [s.lower() for s in code_symbols]
@@ -342,6 +349,7 @@ def temporary_retrieve(
     evidence: list[DocEvidence] = []
     for chunk in picked:
         snippet = chunk.content.strip().replace("\n", " ")[:280]
+        trust = trust_map.get(chunk.source_id, "community")
         evidence.append(
             DocEvidence(
                 evidence_id=f"online-{uuid.uuid4().hex[:12]}",
@@ -357,7 +365,7 @@ def temporary_retrieve(
                 package_name=package,
                 source_version_spec=source_version,
                 target_version_spec=target_version,
-                trust_level="community",
+                trust_level=trust,
                 chunk_content_hash=chunk.content_hash,
                 provenance="online_fallback",
             )
@@ -434,6 +442,10 @@ def _discover_fetch_retrieve(
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(capped), 8)) as ex:
         results = list(ex.map(_fetch_one, capped))
 
+    # Build a map from source URL (== chunk.source_id) to trust_hint so that
+    # temporary_retrieve can assign the correct trust_level per chunk.
+    source_trust_map: dict[str, str] = {src.url: src.trust_hint for src in capped}
+
     for src, (src_chunks, exc) in zip(capped, results, strict=True):
         if exc is not None:
             if trace is not None:
@@ -458,7 +470,14 @@ def _discover_fetch_retrieve(
         chunks.extend(src_chunks)
 
     evidence = temporary_retrieve(
-        package, source_version, target_version, user_intent, code_symbols, chunks, top_k=top_k
+        package,
+        source_version,
+        target_version,
+        user_intent,
+        code_symbols,
+        chunks,
+        top_k=top_k,
+        source_trust_map=source_trust_map,
     )
     if trace is not None:
         trace.record(

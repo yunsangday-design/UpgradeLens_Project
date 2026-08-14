@@ -165,6 +165,71 @@
   .loading { color: var(--muted); font-style: italic; }
   footer { color: var(--muted); font-size: 0.75rem; text-align: center;
     padding: 1rem; }
+  .scan-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .scan-bar input { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 0.7rem 0.9rem; font-size: 0.95rem; }
+  .scan-bar button { background: var(--purple); color: #fff; border: none;
+    border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.95rem; cursor: pointer; white-space: nowrap; }
+  .scan-bar button:disabled { opacity: 0.5; cursor: default; }
+  .scan-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.5rem; }
+  .scan-table th, .scan-table td { padding: 0.5rem 0.6rem; border: 1px solid var(--border);
+    text-align: left; }
+  .scan-table th { background: var(--panel-2); color: var(--muted); font-weight: 600; }
+  .scan-table tr:hover { background: var(--panel-2); }
+  .scan-table .status-upgradable { color: var(--green); font-weight: 600; }
+  .scan-table .status-up_to_date { color: var(--muted); }
+  .scan-table .status-unresolved { color: var(--amber); }
+  .scan-table .status-lookup_failed { color: var(--red); }
+  .scan-table .cross-major { color: var(--red); font-weight: 600; }
+  .scan-table input[type="text"] { background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 0.3rem 0.5rem; width: 7em; font-size: 0.85rem; }
+  .scan-actions { margin-top: 0.8rem; display: flex; gap: 0.5rem; }
+  .scan-actions button { background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 0.6rem 1.2rem; cursor: pointer; font-size: 0.9rem; }
+  .scan-actions button:disabled { opacity: 0.5; cursor: default; }
+  /* E2: Progress bar */
+  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; margin: 0.5rem 0; overflow: hidden; }
+  .progress-bar .fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+  .job-status { font-size: 0.82rem; color: var(--muted); margin: 0.3rem 0; }
+  .job-status .running { color: var(--accent); }
+  .job-status .succeeded { color: var(--green); }
+  .job-status .failed { color: var(--red); }
+  /* E2: Timeline (swimlane) */
+  .timeline { margin-top: 1rem; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .timeline-header { display: flex; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+  .timeline-header .lane-label { flex: 1; padding: 0.4rem 0.6rem; font-size: 0.75rem;
+    color: var(--muted); text-align: center; border-right: 1px solid var(--border); font-weight: 600; }
+  .timeline-header .lane-label:last-child { border-right: none; }
+  .timeline-body { position: relative; min-height: 60px; }
+  .timeline-row { display: flex; border-bottom: 1px solid var(--border); }
+  .timeline-row:last-child { border-bottom: none; }
+  .lane-cell { flex: 1; min-height: 32px; border-right: 1px solid var(--border); padding: 0.2rem; display: flex; align-items: center; justify-content: center; }
+  .lane-cell:last-child { border-right: none; }
+  .lane-card { font-size: 0.72rem; padding: 0.2rem 0.5rem; border-radius: 4px;
+    background: var(--panel); border: 1px solid var(--border); white-space: nowrap; }
+  .lane-card.ok { border-color: var(--green); color: var(--green); }
+  .lane-card.error { border-color: var(--red); color: var(--red); }
+  .lane-card.running { border-color: var(--accent); color: var(--accent); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  /* E2: Plan panel */
+  .plan-panel { margin-top: 1rem; }
+  .plan-panel h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+  .plan-card { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.8rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.5rem; }
+  .plan-card .seq { width: 1.6rem; height: 1.6rem; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700;
+    background: var(--panel-2); color: var(--muted); flex-shrink: 0; }
+  .plan-card .seq.done { background: var(--green); color: #fff; }
+  .plan-card .seq.running { background: var(--accent); color: #fff; }
+  .plan-card .seq.failed { background: var(--red); color: #fff; }
+  .plan-card .info { flex: 1; }
+  .plan-card .info .name { font-weight: 600; font-size: 0.88rem; }
+  .plan-card .info .desc { font-size: 0.78rem; color: var(--muted); }
+  .plan-card .status-pill { font-size: 0.72rem; padding: 0.15rem 0.5rem; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); }
+  .plan-card .status-pill.succeeded { color: var(--green); border-color: var(--green); }
+  .plan-card .status-pill.running { color: var(--accent); border-color: var(--accent); }
+  .plan-card .status-pill.failed { color: var(--red); border-color: var(--red); }
 </style>
 </head>
 <body>
@@ -193,6 +258,11 @@
       <option value="sqlalchemy">sqlalchemy</option>
     </select>
   </div>
+  <div class="scan-bar">
+    <input id="scan-repo" type="text" placeholder="仓库路径（如 /path/to/project）" />
+    <button id="scan-btn">扫描可升级依赖</button>
+  </div>
+  <div id="scan-result" style="display:none;"></div>
   <div id="log"></div>
 </div>
 
@@ -324,7 +394,74 @@ function renderSummary(a) {
   return dl;
 }
 
-// --------------------------------------------------------------------- result
+// ----------------------------------------------------------------------- Plan panel (aligned with AgentPlanStep)
+function renderPlanPanel(plan) {
+  if (!plan || !plan.steps || !plan.steps.length) return null;
+  const panel = el("div", { class: "plan-panel" });
+  panel.appendChild(el("h3", null, "Agent 执行计划"));
+  plan.steps.forEach((step, i) => {
+    const s = step.status || "pending";
+    const statusCls = s === "succeeded" || s === "done" ? "done" :
+                      s === "running" ? "running" :
+                      s === "failed" ? "failed" : "";
+    const card = el("div", { class: "plan-card" }, [
+      el("div", { class: "seq " + statusCls }, String(step.seq || i + 1)),
+      el("div", { class: "info" }, [
+        el("div", { class: "name" }, esc(step.tool || step.name || "步骤 " + (i + 1))),
+        el("div", { class: "desc" }, esc(step.reason || step.purpose || step.description || "")),
+      ]),
+      el("span", { class: "status-pill " + s }, esc(s)),
+    ]);
+    // Show observation if available
+    if (step.observation) {
+      card.appendChild(el("div", { class: "desc", style: "margin-top:0.3rem;font-size:0.78rem;color:var(--muted)" },
+        "结果：" + esc(step.observation)));
+    }
+    panel.appendChild(card);
+  });
+  return panel;
+}
+
+// ----------------------------------------------------------------------- Timeline (aligned with real trace tool field)
+const _PHASE_MAP = {
+  scan_code: "代码扫描", scan_dependency: "代码扫描",
+  retrieve_for_package: "检索", retrieve: "检索",
+  breaking_change_extractor: "分析", impact_analyzer: "分析", analyse: "分析",
+  verify_report: "验证", verify: "验证",
+  online_fallback: "联网", discover_fetch_retrieve: "联网",
+};
+const _LANE_ORDER = ["代码扫描", "检索", "分析", "验证", "联网"];
+
+function renderTimeline(trace) {
+  if (!trace || !trace.length) return null;
+  const container = el("div", { class: "timeline" });
+  const header = el("div", { class: "timeline-header" });
+  _LANE_ORDER.forEach(lane => {
+    header.appendChild(el("div", { class: "lane-label" }, lane));
+  });
+  container.appendChild(header);
+  const body = el("div", { class: "timeline-body" });
+  trace.forEach(t => {
+    const tool = t.tool || "";
+    const lane = _PHASE_MAP[tool] || _LANE_ORDER.find(l => tool.includes(l)) || null;
+    if (!lane) return;
+    const row = el("div", { class: "timeline-row" });
+    _LANE_ORDER.forEach(l => {
+      const cell = el("div", { class: "lane-cell" });
+      if (l === lane) {
+        const cls = "lane-card " + (t.status === "ok" ? "ok" : t.status === "error" ? "error" : "");
+        const label = tool.length > 18 ? tool.slice(0, 16) + "…" : tool;
+        cell.appendChild(el("span", { class: cls }, esc(label)));
+      }
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  container.appendChild(body);
+  return container;
+}
+
+// --------------------------------------------------------------------- result (no monkey-patch)
 function renderResult(result) {
   const a = result.assessment || {};
   const section = el("div", { class: "result-section" });
@@ -387,34 +524,27 @@ function renderResult(result) {
         el("div", null, [esc(s.phase || "") + (s.title ? "： " + esc(s.title) : "")]),
         el("div", { class: "meta" }, meta),
         s.detail ? el("div", { class: "detail" }, esc(s.detail)) : null,
-        s.completion_criteria ? el("div", { class: "loc" }, "完成条件：" + esc(s.completion_criteria)) : null,
-        s.recommended_tests && s.recommended_tests.length
-          ? el("div", { class: "loc" }, "推荐测试：" + esc(s.recommended_tests.join("；"))) : null,
       ];
       blk.appendChild(el("div", { class: "plan-step" }, children.filter(Boolean)));
     });
     section.appendChild(blk);
   }
 
-  // 7) analysis process (folded): plan / trace / cost / degradations
-  const fold = el("details", { class: "fold" }, [el("summary", null, "分析过程（执行计划 / 工具 trace / 成本 / 降级）")]);
+  // 7) Plan panel (Agent execution plan)
+  if (result.plan && result.plan.steps) {
+    const planEl = renderPlanPanel(result.plan);
+    if (planEl) section.appendChild(planEl);
+  }
+
+  // 8) Timeline
+  if (result.trace && result.trace.length) {
+    const timelineEl = renderTimeline(result.trace);
+    if (timelineEl) section.appendChild(timelineEl);
+  }
+
+  // 9) analysis process (folded): cost / degradations / raw trace
+  const fold = el("details", { class: "fold" }, [el("summary", null, "技术详情（成本 / 降级 / 原始 Trace）")]);
   const body = el("div", { class: "fold-body" });
-  if (result.plan && result.plan.steps && result.plan.steps.length) {
-    body.appendChild(el("h4", null, "Agent 执行计划"));
-    result.plan.steps.forEach((s) =>
-      body.appendChild(el("div", { class: "plan-row" },
-        esc(s.seq) + ". " + esc(s.name) + " — " + esc(s.description || "") + " [" + esc(s.status) + "]"))
-    );
-  }
-  if (result.trace && Array.isArray(result.trace) && result.trace.length) {
-    body.appendChild(el("h4", null, "工具调用 Trace"));
-    result.trace.forEach((t) =>
-      body.appendChild(el("div", { class: "trace-item" }, [
-        el("span", { class: "t" }, esc(t.tool)),
-        document.createTextNode("：" + esc(t.target || "") + " [" + esc(t.status || "") + "]"),
-      ]))
-    );
-  }
   if (result.cost) {
     const c = result.cost;
     body.appendChild(el("h4", null, "成本"));
@@ -429,13 +559,22 @@ function renderResult(result) {
     result.degradations.forEach((d) => ul.appendChild(el("li", { class: "degrade" }, esc(d))));
     body.appendChild(ul);
   }
+  if (result.trace && Array.isArray(result.trace) && result.trace.length) {
+    body.appendChild(el("h4", null, "工具调用 Trace"));
+    result.trace.forEach((t) =>
+      body.appendChild(el("div", { class: "trace-item" }, [
+        el("span", { class: "t" }, esc(t.tool)),
+        document.createTextNode("：" + esc(t.target || "") + " [" + esc(t.status || "") + "]"),
+      ]))
+    );
+  }
   fold.appendChild(body);
   section.appendChild(fold);
 
   return section;
 }
 
-// ----------------------------------------------------------------------- send
+// ----------------------------------------------------------------------- message log
 function addMsg(who, content) {
   const log = document.getElementById("log");
   const msg = el("div", { class: "msg" }, [
@@ -447,6 +586,64 @@ function addMsg(who, content) {
   return msg;
 }
 
+// ----------------------------------------------------------------------- SSE helpers
+function createProgressUI(container) {
+  const statusEl = el("div", { class: "job-status" }, "排队中…");
+  const bar = el("div", { class: "progress-bar" }, [el("div", { class: "fill", style: "width:0%" })]);
+  container.appendChild(statusEl);
+  container.appendChild(bar);
+  return { statusEl, bar, fill: bar.firstChild };
+}
+
+function connectSSE(jobId, progressUI, onDone) {
+  const es = new EventSource("/api/jobs/" + jobId + "/events");
+  es.addEventListener("job_started", () => {
+    progressUI.statusEl.innerHTML = '<span class="running">执行中…</span>';
+    progressUI.fill.style.width = "10%";
+  });
+  es.addEventListener("step_started", (e) => {
+    const d = JSON.parse(e.data);
+    progressUI.statusEl.innerHTML = '<span class="running">阶段：' + esc(d.step || d.dependency || "") + '</span>';
+    const w = Math.min(90, parseInt(progressUI.fill.style.width) + 12);
+    progressUI.fill.style.width = w + "%";
+  });
+  es.addEventListener("step_finished", (e) => {
+    const w = Math.min(95, parseInt(progressUI.fill.style.width) + 8);
+    progressUI.fill.style.width = w + "%";
+  });
+  es.addEventListener("job_succeeded", (e) => {
+    progressUI.statusEl.innerHTML = '<span class="succeeded">完成 ✓</span>';
+    progressUI.fill.style.width = "100%";
+    es.close();
+    sessionStorage.removeItem("active_job_id");
+    sessionStorage.removeItem("active_job_kind");
+    if (onDone) fetchJobResult(jobId, onDone);
+  });
+  es.addEventListener("job_failed", (e) => {
+    const d = JSON.parse(e.data);
+    progressUI.statusEl.innerHTML = '<span class="failed">失败：' + esc(d.error || "") + '</span>';
+    progressUI.fill.style.width = "100%";
+    progressUI.fill.style.background = "var(--red)";
+    es.close();
+    sessionStorage.removeItem("active_job_id");
+    sessionStorage.removeItem("active_job_kind");
+  });
+  es.onerror = () => {
+    es.close();
+    setTimeout(() => fetchJobResult(jobId, onDone), 1000);
+  };
+  return es;
+}
+
+async function fetchJobResult(jobId, callback) {
+  try {
+    const resp = await fetch("/api/jobs/" + jobId);
+    const snap = await resp.json();
+    if (snap.status === "succeeded" && callback) callback(snap.result);
+  } catch (e) { /* ignore */ }
+}
+
+// ----------------------------------------------------------------------- send (async assessment)
 async function send() {
   const input = document.getElementById("input");
   const goal = input.value.trim();
@@ -457,23 +654,33 @@ async function send() {
   input.value = "";
   const btn = document.getElementById("send");
   btn.disabled = true;
-  const loading = addMsg("助手", el("span", { class: "loading" }, "分析中…"));
+
+  const msgEl = addMsg("助手", "");
+  const bubble = msgEl.querySelector(".bubble");
+  bubble.innerHTML = "";
+  const progressUI = createProgressUI(bubble);
+
   try {
-    const resp = await fetch("/api/run", {
+    const resp = await fetch("/api/run-async", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ goal, mode, dependency: dep }),
     });
     const data = await resp.json();
-    loading.remove();
     if (data.error) {
-      addMsg("助手", el("div", { class: "error" }, esc(data.error)));
-    } else {
-      addMsg("助手", renderResult(data));
+      progressUI.statusEl.innerHTML = '<span class="failed">' + esc(data.error) + '</span>';
+      btn.disabled = false;
+      return;
     }
+    // Save for refresh recovery
+    sessionStorage.setItem("active_job_id", data.job_id);
+    sessionStorage.setItem("active_job_kind", "run");
+    connectSSE(data.job_id, progressUI, (result) => {
+      bubble.innerHTML = "";
+      bubble.appendChild(renderResult(result));
+    });
   } catch (e) {
-    loading.remove();
-    addMsg("助手", el("div", { class: "error" }, "请求失败：" + esc(String(e))));
+    progressUI.statusEl.innerHTML = '<span class="failed">请求失败：' + esc(String(e)) + '</span>';
   } finally {
     btn.disabled = false;
   }
@@ -483,6 +690,206 @@ document.getElementById("send").addEventListener("click", send);
 document.getElementById("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") send();
 });
+
+// ----------------------------------------------------------------------- scan (async)
+let _scanResult = null;
+
+function renderScanTable(result) {
+  _scanResult = result;
+  const container = document.getElementById("scan-result");
+  container.style.display = "block";
+  container.innerHTML = "";
+
+  const header = el("div", { class: "result-header" }, [
+    el("h2", null, "依赖扫描结果"),
+    el("span", { class: "badge" }, result.scope || ""),
+    el("span", { class: "badge" }, "共 " + (result.items || []).length + " 个依赖"),
+  ]);
+  container.appendChild(header);
+
+  if (!result.items || !result.items.length) {
+    container.appendChild(el("div", { style: "padding:1rem;color:var(--muted)" }, "未发现任何依赖声明。"));
+    return;
+  }
+
+  const table = el("table", { class: "scan-table" });
+  const thead = el("thead", null, [el("tr", null, [
+    el("th", null, ""), el("th", null, "包名"), el("th", null, "当前版本"),
+    el("th", null, "最新稳定版"), el("th", null, "状态"), el("th", null, "目标版本"),
+  ])]);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  result.items.forEach((item, idx) => {
+    const canSelect = item.status === "upgradable";
+    const cb = el("input", { type: "checkbox", "data-idx": String(idx) });
+    if (canSelect) cb.checked = true; else cb.disabled = true;
+    const targetInput = el("input", {
+      type: "text", "data-idx": String(idx),
+      value: canSelect ? (item.registry_latest || "") : "",
+      placeholder: item.status === "unresolved" ? "手填版本" : "",
+    });
+    if (item.status === "up_to_date" || item.status === "lookup_failed") targetInput.disabled = true;
+    targetInput.addEventListener("input", () => {
+      if (item.status === "unresolved") cb.disabled = !targetInput.value.trim();
+      if (targetInput.value.trim()) cb.checked = true;
+    });
+    const statusCls = "status-" + item.status;
+    const crossMajor = item.cross_major ? el("span", { class: "cross-major" }, " ⚠ 跨主版本") : null;
+    const row = el("tr", null, [
+      el("td", null, [cb]), el("td", null, item.package),
+      el("td", null, item.current_version || (item.current_specifier || "—")),
+      el("td", null, item.registry_latest || "—"),
+      el("td", null, [el("span", { class: statusCls }, item.status), crossMajor]),
+      el("td", null, [targetInput]),
+    ]);
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  const actions = el("div", { class: "scan-actions" });
+  const assessBtn = el("button", { id: "assess-selected" }, "评估选中项");
+  assessBtn.addEventListener("click", assessSelected);
+  actions.appendChild(assessBtn);
+  container.appendChild(actions);
+}
+
+async function doScan() {
+  const repoInput = document.getElementById("scan-repo");
+  const repo = repoInput.value.trim();
+  if (!repo) { alert("请输入仓库路径"); return; }
+  const btn = document.getElementById("scan-btn");
+  btn.disabled = true;
+  btn.textContent = "扫描中…";
+
+  const container = document.getElementById("scan-result");
+  container.style.display = "block";
+  container.innerHTML = "";
+  const progressUI = createProgressUI(container);
+
+  try {
+    const resp = await fetch("/api/scan-async", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      progressUI.statusEl.innerHTML = '<span class="failed">' + esc(data.error) + '</span>';
+      return;
+    }
+    sessionStorage.setItem("active_job_id", data.job_id);
+    sessionStorage.setItem("active_job_kind", "scan");
+    connectSSE(data.job_id, progressUI, (result) => {
+      container.innerHTML = "";
+      renderScanTable(result);
+    });
+  } catch (e) {
+    progressUI.statusEl.innerHTML = '<span class="failed">请求失败：' + esc(String(e)) + '</span>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "扫描可升级依赖";
+  }
+}
+
+async function assessSelected() {
+  if (!_scanResult) return;
+  const repo = document.getElementById("scan-repo").value.trim();
+  const mode = document.getElementById("mode").value;
+  const rows = document.querySelectorAll(".scan-table tbody tr");
+  const selected = [];
+  rows.forEach((row, idx) => {
+    const cb = row.querySelector('input[type="checkbox"]');
+    const target = row.querySelector('input[type="text"]');
+    if (cb && cb.checked && target && target.value.trim()) {
+      selected.push({ package: _scanResult.items[idx].package, target_version: target.value.trim() });
+    }
+  });
+  if (!selected.length) { alert("请选择至少一个可评估的依赖"); return; }
+  for (const item of selected) {
+    const goal = "upgrade " + item.package + " to " + item.target_version;
+    addMsg("你", goal + "（来自扫描选择）");
+    const msgEl = addMsg("助手", "");
+    const bubble = msgEl.querySelector(".bubble");
+    bubble.innerHTML = "";
+    const progressUI = createProgressUI(bubble);
+    try {
+      const resp = await fetch("/api/run-async", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal, mode, dependency: item.package, target_version: item.target_version, repo }),
+      });
+      const data = await resp.json();
+      if (data.error) {
+        progressUI.statusEl.innerHTML = '<span class="failed">' + esc(data.error) + '</span>';
+        continue;
+      }
+      // Wait for this job to complete before starting next
+      await new Promise((resolve) => {
+        connectSSE(data.job_id, progressUI, (result) => {
+          bubble.innerHTML = "";
+          bubble.appendChild(renderResult(result));
+          resolve();
+        });
+      });
+    } catch (e) {
+      progressUI.statusEl.innerHTML = '<span class="failed">请求失败：' + esc(String(e)) + '</span>';
+    }
+  }
+}
+
+document.getElementById("scan-btn").addEventListener("click", doScan);
+
+// ----------------------------------------------------------------------- P0.5: Refresh recovery
+(function recoverActiveJob() {
+  const jobId = sessionStorage.getItem("active_job_id");
+  const jobKind = sessionStorage.getItem("active_job_kind");
+  if (!jobId) return;
+
+  fetch("/api/jobs/" + jobId)
+    .then(r => r.json())
+    .then(snap => {
+      if (snap.error) { sessionStorage.removeItem("active_job_id"); return; }
+      if (snap.status === "succeeded") {
+        sessionStorage.removeItem("active_job_id");
+        if (jobKind === "scan" && snap.result) {
+          renderScanTable(snap.result);
+        } else if (jobKind === "run" && snap.result) {
+          addMsg("助手（恢复）", renderResult(snap.result));
+        }
+        return;
+      }
+      if (snap.status === "failed") {
+        sessionStorage.removeItem("active_job_id");
+        addMsg("助手（恢复）", el("div", { class: "error" }, "上次任务失败：" + esc(snap.error || "未知")));
+        return;
+      }
+      // Still running — reconnect SSE
+      if (jobKind === "scan") {
+        const container = document.getElementById("scan-result");
+        container.style.display = "block";
+        container.innerHTML = "";
+        const progressUI = createProgressUI(container);
+        progressUI.statusEl.innerHTML = '<span class="running">恢复中…</span>';
+        connectSSE(jobId, progressUI, (result) => {
+          container.innerHTML = "";
+          renderScanTable(result);
+        });
+      } else {
+        const msgEl = addMsg("助手（恢复）", "");
+        const bubble = msgEl.querySelector(".bubble");
+        bubble.innerHTML = "";
+        const progressUI = createProgressUI(bubble);
+        progressUI.statusEl.innerHTML = '<span class="running">恢复中…</span>';
+        connectSSE(jobId, progressUI, (result) => {
+          bubble.innerHTML = "";
+          bubble.appendChild(renderResult(result));
+        });
+      }
+    })
+    .catch(() => sessionStorage.removeItem("active_job_id"));
+})();
 </script>
 </body>
 </html>

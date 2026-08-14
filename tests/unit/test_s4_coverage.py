@@ -236,6 +236,60 @@ def test_summarize() -> None:
     assert summary.gaps == ["a"]
 
 
+def _run_with_snippet(run_id: str, snippet: str) -> RetrievalRun:
+    ev = DocEvidence(
+        evidence_id=f"e-{run_id}",
+        source_id="src1",
+        url="http://example.com/docs",
+        title="section",
+        chunk_title="chunk",
+        heading_path=["migration"],
+        snapshot_hash="snap",
+        snippet=snippet,
+        score=1.0,
+        matched_query="x",
+        package_name="pydantic",
+        target_version_spec="2.0",
+        chunk_content_hash="h",
+    )
+    return RetrievalRun(run_id=run_id, source_id="src1", query="x", top_doc_evidence=[ev])
+
+
+def test_symbol_matches_across_naming_styles() -> None:
+    code = _code_report(["declarative_base"])
+    # Doc uses CamelCase / kebab-case / space variants of the same identifier.
+    for variant in [
+        "Use DeclarativeBase for the model.",
+        "see declarative-base usage.",
+        "the declarative base pattern is common.",
+    ]:
+        result = compute_coverage(code, [_run_with_snippet("r", variant)])
+        assert result.covered_symbols == 1, variant
+
+
+def test_symbol_semantic_gap_still_unmatched() -> None:
+    code = _code_report(["sessionmaker"])
+    result = compute_coverage(code, [_run_with_snippet("r", "a session factory is provided")])
+    assert result.uncovered_symbols == 1
+    assert result.gaps[0].symbol == "sessionmaker"
+
+
+def test_short_symbol_does_not_match_longer_word() -> None:
+    code = _code_report(["get"])
+    result = compute_coverage(code, [_run_with_snippet("r", "the target function is called")])
+    assert result.uncovered_symbols == 1
+
+
+def test_components_scattered_in_prose_do_not_match() -> None:
+    code = _code_report(["declarative_base"])
+    # Unrelated words sit between the two components -> not the same identifier.
+    result = compute_coverage(
+        code,
+        [_run_with_snippet("r", "the declarative pattern is common; the base module handles it")],
+    )
+    assert result.uncovered_symbols == 1
+
+
 # --- supplementary loop via mock registry ----------------------------------- #
 
 

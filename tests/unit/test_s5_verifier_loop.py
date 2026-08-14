@@ -208,7 +208,6 @@ def _plan() -> AgentPlan:
 def test_classify_issue_maps_supplement() -> None:
     assert classify_issue(IssueCode.NO_DOC_EVIDENCE) is RemediationKind.SUPPLEMENT
     assert classify_issue(IssueCode.DOC_VERSION_CONFLICT) is RemediationKind.SUPPLEMENT
-    assert classify_issue(IssueCode.DOC_SOURCE_UNTRUSTED) is RemediationKind.SUPPLEMENT
 
 
 def test_classify_issue_maps_rescan() -> None:

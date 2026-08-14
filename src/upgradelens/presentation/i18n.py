@@ -120,7 +120,6 @@ _ISSUE_CODE_LABELS: dict[str, dict[str, str]] = {
         "content_hash_changed": "内容哈希已变化",
         "no_doc_evidence": "缺少文档证据",
         "doc_version_conflict": "文档版本冲突",
-        "doc_source_untrusted": "文档来源不可信",
         "dynamic_only_evidence": "仅动态证据",
         "symbol_not_in_evidence": "符号未落到证据",
         "unknown_test_path": "测试路径未知",
@@ -134,7 +133,6 @@ _ISSUE_CODE_LABELS: dict[str, dict[str, str]] = {
         "content_hash_changed": "Content hash changed",
         "no_doc_evidence": "No doc evidence",
         "doc_version_conflict": "Doc version conflict",
-        "doc_source_untrusted": "Untrusted doc source",
         "dynamic_only_evidence": "Dynamic-only evidence",
         "symbol_not_in_evidence": "Symbol not in evidence",
         "unknown_test_path": "Unknown test path",
@@ -202,6 +200,22 @@ def execution_status_label(status: StrEnum | str, locale: str = DEFAULT_LOCALE) 
 
 def trust_label(level: str, locale: str = DEFAULT_LOCALE) -> str:
     return _pick(_TRUST_LABELS, level or "", locale)
+
+
+def trust_label_with_provenance(
+    level: str, provenance: str, locale: str = DEFAULT_LOCALE
+) -> str:
+    """Return trust label, appending a network marker when provenance is online.
+
+    Examples:
+        official + online_fallback → "官方（网络）"
+        community + local_corpus  → "社区"
+    """
+    base = trust_label(level, locale)
+    if provenance == "online_fallback":
+        suffix = "（网络）" if locale.startswith("zh") else " (network)"
+        return base + suffix
+    return base
 
 
 def issue_code_label(code: StrEnum | str, locale: str = DEFAULT_LOCALE) -> str:

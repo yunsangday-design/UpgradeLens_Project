@@ -36,7 +36,7 @@ def test_i18n_zh_cn_labels():
     assert evidence_status_label(EvidenceStatus.VERIFIED) == "已验证"
     assert plan_mode_label("patch_draft") == "补丁草稿"
     assert trust_label("official") == "官方"
-    assert issue_code_label("doc_source_untrusted") == "文档来源不可信"
+    assert issue_code_label("no_doc_evidence") == "缺少文档证据"
 
 
 def test_i18n_en_fallback():

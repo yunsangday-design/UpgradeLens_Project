@@ -39,8 +39,9 @@ from upgradelens.agent.plan import (
 from upgradelens.agent.planner import build_agent_plan
 from upgradelens.domain.code_evidence import CodeEvidenceReport
 from upgradelens.domain.dependency import DependencyScanResult, ResolutionStatus
-from upgradelens.domain.doc_evidence import RetrievalRun
+from upgradelens.domain.doc_evidence import DocEvidence, RetrievalRun
 from upgradelens.llm.gateway import ModelGateway, ModelMode
+from upgradelens.llm.prompts import AGENT_DECISION
 from upgradelens.pipeline import (
     COVERAGE_INSUFFICIENT,
     NO_DOC_INDEX,
@@ -75,6 +76,16 @@ _MAX_REPLANS = 3
 # still kept on ctx.tool_history (useful for trace/debug) but not sent to the
 # model to stay within a reasonable prompt size.  Each entry is ~50-150 tokens.
 _MAX_HISTORY_ENTRIES = 12
+
+# step12-C: bounds for the evidence summary injected into _decide so the model
+# decides from what was *found*, not by reading the repo through the prompt.
+_EVIDENCE_DELIM_OPEN = "<<EVIDENCE>>"
+_EVIDENCE_DELIM_CLOSE = "<</EVIDENCE>>"
+_MAX_CODE_USAGES_IN_PROMPT = 10
+_MAX_CODE_SNIPPET_CHARS = 120
+_MAX_DOC_CHUNKS_IN_PROMPT = 5
+_MAX_DOC_SNIPPET_CHARS = 200
+_MAX_EVIDENCE_SUMMARY_CHARS = 4000
 
 
 class ToolCallDecision(BaseModel):
@@ -121,6 +132,59 @@ def _collection_tool_specs(
     return specs
 
 
+def _build_evidence_summary(acc: _Accumulator) -> str:
+    """Bounded, data-tagged summary of collected evidence for the decision prompt.
+
+    Only *summaries* and short snippets are shown (never whole files), so the
+    model decides from what was found rather than reading the repo through the
+    prompt. The block is wrapped in delimiters; ``AGENT_CONTRACT`` forbids obeying
+    any instructions inside it. An interim coverage line is added only when both
+    code and doc evidence already exist.
+    """
+    if acc.code_report is None and not acc.doc_runs:
+        return "none yet"
+
+    lines: list[str] = []
+    cr = acc.code_report
+    if cr is not None and cr.usages:
+        lines.append(
+            f"## Code usage ({len(cr.usages)} found, showing up to {_MAX_CODE_USAGES_IN_PROMPT})"
+        )
+        for u in cr.usages[:_MAX_CODE_USAGES_IN_PROMPT]:
+            snippet = u.snippet.replace("\n", " ")
+            if len(snippet) > _MAX_CODE_SNIPPET_CHARS:
+                snippet = snippet[:_MAX_CODE_SNIPPET_CHARS] + " …"
+            lines.append(
+                f"- {u.symbol} ({u.kind.value}) @ {u.path}:{u.start_line}: {snippet}"
+            )
+
+    if acc.doc_runs:
+        docs: list[DocEvidence] = [e for r in acc.doc_runs for e in r.top_doc_evidence]
+        if docs:
+            lines.append(
+                f"## Doc chunks ({len(docs)} found, showing up to {_MAX_DOC_CHUNKS_IN_PROMPT})"
+            )
+            for e in docs[:_MAX_DOC_CHUNKS_IN_PROMPT]:
+                snippet = e.snippet.replace("\n", " ")
+                if len(snippet) > _MAX_DOC_SNIPPET_CHARS:
+                    snippet = snippet[:_MAX_DOC_SNIPPET_CHARS] + " …"
+                head = " / ".join(e.heading_path) if e.heading_path else e.title
+                lines.append(f"- {e.title} [{head}]: {snippet}")
+
+    # Interim coverage: only meaningful once both code and doc evidence exist.
+    if cr is not None and acc.doc_runs:
+        cov = compute_coverage(cr, acc.doc_runs)
+        lines.append(
+            f"## Interim coverage: {cov.covered_symbols}/{cov.total_symbols} symbols "
+            f"covered, {cov.uncovered_symbols} gap(s)"
+        )
+
+    body = "\n".join(lines)
+    if len(body) > _MAX_EVIDENCE_SUMMARY_CHARS:
+        body = body[:_MAX_EVIDENCE_SUMMARY_CHARS] + "\n… (evidence summary truncated)"
+    return f"{_EVIDENCE_DELIM_OPEN}\n{body}\n{_EVIDENCE_DELIM_CLOSE}"
+
+
 def _decide(
     gateway: ModelGateway,
     specs: list[dict[str, Any]],
@@ -147,32 +211,30 @@ def _decide(
     )
     # Build conversation history from ctx so the model sees prior tool results.
     # Only include the most recent entries to stay within a reasonable prompt size.
-    history_section = ""
+    history_lines: list[str] = []
     recent = ctx.tool_history[-_MAX_HISTORY_ENTRIES:]
-    if recent:
-        lines: list[str] = []
-        for entry in recent:
-            lines.append(f"[Turn {entry['turn']}] {entry['tool']} → {entry['observation']}")
-        history_section = "# Previous actions\n" + "\n".join(lines) + "\n\n"
+    for entry in recent:
+        history_lines.append(f"[Turn {entry['turn']}] {entry['tool']} → {entry['observation']}")
+    history = "\n".join(history_lines)
 
     # If no tools remain, force done immediately without asking the model.
     if not active_specs:
         return ToolCallDecision(tool=None, done=True, thought="all collection tools completed")
 
-    prompt = (
-        "You are a senior dependency-upgrade analyst collecting evidence before a "
-        "structured assessment. Choose the NEXT tool to call (or finish).\n\n"
-        "Return JSON: {tool: str|null, arguments: object, done: bool, thought: str}\n"
-        "- When all needed evidence is collected, set done=true immediately.\n"
-        "- If scan_result=yes AND code_report=yes AND (doc_runs>0 OR no doc store), "
-        "you MUST set done=true.\n"
-        "- Do NOT repeat a tool that already succeeded (see Previous actions).\n"
-        "- Only call `retrieve_for_package` if it is listed in Available tools.\n\n"
-        f"# Run state (turn {turn})\n{collected}\n\n"
-        f"{history_section}"
-        f"# Available tools\n{spec_lines}\n\n"
-        f"# Request\nrepo={request.repo}\ndependency={request.dependency}\n"
-        f"target_version={request.target_version}\nsource_version={request.source_version}\n"
+    request_block = (
+        f"repo={request.repo}\n"
+        f"dependency={request.dependency}\n"
+        f"target version: {request.target_version}\n"
+        f"source version: {request.source_version}\n"
+    )
+    evidence_summary = _build_evidence_summary(acc)
+    prompt = AGENT_DECISION.render(
+        turn=turn,
+        run_state=collected,
+        evidence_summary=evidence_summary,
+        history=history,
+        available_tools=spec_lines,
+        request=request_block,
     )
     decision, _ = gateway.complete_structured(
         prompt=prompt, schema=ToolCallDecision, name=f"agent_loop__{turn}"
@@ -877,6 +939,12 @@ def _run_driven(
     max_supplementary: int = _MAX_SUPPLEMENTARY,
 ) -> AssessmentOutcome:
     acc = _Accumulator()
+    # Pre-fill target_version_spec from the request; source_version_spec is
+    # refined by scan_dependency later, but target is always user-supplied.
+    if request.target_version:
+        acc.target_version_spec = request.target_version
+    if request.source_version:
+        acc.source_version_spec = request.source_version
     ctx.gateway = gateway
     ctx.embedding = getattr(gateway, "embedding", None)
     if not repo_is_url:

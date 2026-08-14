@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from packaging.version import InvalidVersion, Version
+
 from upgradelens.tools.fetcher import RestrictedFetcher
 
 _PYPI_BASE = "https://pypi.org/pypi"
@@ -41,6 +43,31 @@ class PyPIClient:
     def latest_version(self, name: str) -> str:
         data = self._json(f"{_PYPI_BASE}/{name}/json")
         return str(data["info"]["version"])
+
+    def latest_stable_version(self, name: str) -> str | None:
+        """Return the latest stable, non-yanked version from PyPI.
+
+        Parses the ``releases`` mapping to exclude pre-release and fully-yanked
+        versions. Returns ``None`` if no suitable release exists.
+        """
+        data = self._json(f"{_PYPI_BASE}/{name}/json")
+        releases = data.get("releases", {})
+        candidates: list[Version] = []
+        for version_str, files in releases.items():
+            try:
+                v = Version(version_str)
+            except InvalidVersion:
+                continue
+            if v.is_prerelease or v.is_devrelease:
+                continue
+            # A release is considered yanked only if ALL its files are yanked
+            if files and all(f.get("yanked", False) for f in files):
+                continue
+            candidates.append(v)
+        if not candidates:
+            return None
+        candidates.sort(reverse=True)
+        return str(candidates[0])
 
     def changelog(self, name: str, since_version: str | None = None) -> list[ChangelogEntry]:
         """Return published releases, newest first.

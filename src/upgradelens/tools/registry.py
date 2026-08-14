@@ -446,8 +446,8 @@ def _handle_retrieve_for_package(args: RetrieveForPackageInput, ctx: ToolContext
             embedding=ctx.embedding,
         )
     else:
-        runs: list[RetrievalRun] = []
-        session = None  # type: ignore[assignment]
+        runs = []
+        session = None
     # S16: when the local shared corpus misses, supplement the *current* request
     # with keyless online discovery. This is gated hard: only live model mode and
     # only when the network policy allows it. fake/replay runs never touch the

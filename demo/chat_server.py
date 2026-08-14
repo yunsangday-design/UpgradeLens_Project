@@ -21,12 +21,19 @@ import threading
 import traceback
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from typing import Any
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from demo.jobs import Job, JobManager
 from upgradelens.presentation.projector import project_assessment
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle each request in a new thread (needed for SSE long-polling)."""
+    daemon_threads = True
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = Path(__file__).resolve().parent
@@ -125,6 +132,12 @@ PROJECT_INFO = {
         "WebView 内不支持 Streamlit（WebSocket），对话页用零依赖 HTTP server 实现。",
     ],
 }
+
+
+# --------------------------------------------------------------------------- #
+# Job Manager (E1: async task execution)
+# --------------------------------------------------------------------------- #
+_JOB_MANAGER = JobManager(max_workers=2)
 
 
 # --------------------------------------------------------------------------- #
@@ -235,17 +248,35 @@ class ChatHandler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", ""):
             self.path = "/index.html"
+        elif path == "/workbench":
+            self.path = "/workbench.html"
         elif path == "/api/project":
             self._handle_project()
             return
         elif path == "/api/comparison":
             self._handle_comparison()
             return
+        elif path.startswith("/api/jobs/") and path.endswith("/events"):
+            self._handle_job_events(path)
+            return
+        elif path.startswith("/api/jobs/"):
+            self._handle_job_status(path)
+            return
+        elif path.startswith("/static/"):
+            # Serve from demo/static/
+            pass
         super().do_GET()
 
     def do_POST(self):
-        if self.path == "/api/run":
+        path = urlparse(self.path).path
+        if path == "/api/run":
             self._handle_run()
+        elif path == "/api/run-async":
+            self._handle_run_async()
+        elif path == "/api/scan":
+            self._handle_scan()
+        elif path == "/api/scan-async":
+            self._handle_scan_async()
         else:
             self.send_error(404)
 
@@ -336,6 +367,298 @@ class ChatHandler(SimpleHTTPRequestHandler):
             traceback.print_exc()
             self._json_response({"error": str(exc)}, 500)
 
+    def _handle_scan(self):
+        """POST /api/scan — scan MVP manifests for upgradable dependencies."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as exc:
+            self._json_response({"error": f"bad request: {exc}"}, 400)
+            return
+
+        repo = body.get("repo", "")
+        if not repo:
+            self._json_response({"error": "repo is required"}, 400)
+            return
+
+        repo_path = Path(repo).resolve()
+        if not repo_path.is_dir():
+            self._json_response({"error": f"repo is not a directory: {repo}"}, 400)
+            return
+
+        # Security: only allow paths under the project root or common workspace
+        try:
+            repo_path.relative_to(ROOT.parent)
+        except ValueError:
+            self._json_response(
+                {"error": "repo path must be within the workspace"}, 403
+            )
+            return
+
+        try:
+            from upgradelens.analyzers.upgradable_scan import (
+                scan_upgradable_dependencies,
+            )
+            from upgradelens.tools.fetcher import RestrictedFetcher
+            from upgradelens.tools.pypi import PyPIClient
+
+            fetcher = RestrictedFetcher()
+            pypi = PyPIClient(fetcher)
+            result = scan_upgradable_dependencies(repo_path, pypi)
+            self._json_response(result.model_dump(mode="json"))
+        except Exception as exc:
+            traceback.print_exc()
+            self._json_response({"error": str(exc)}, 500)
+
+    def _handle_scan_async(self):
+        """POST /api/scan-async → 202 {job_id} for async scan."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as exc:
+            self._json_response({"error": f"bad request: {exc}"}, 400)
+            return
+
+        repo = body.get("repo", "")
+        if not repo:
+            self._json_response({"error": "repo is required"}, 400)
+            return
+
+        repo_path = Path(repo).resolve()
+        if not repo_path.is_dir():
+            self._json_response({"error": f"repo is not a directory: {repo}"}, 400)
+            return
+
+        try:
+            repo_path.relative_to(ROOT.parent)
+        except ValueError:
+            self._json_response(
+                {"error": "repo path must be within the workspace"}, 403
+            )
+            return
+
+        job = self._submit_scan_job(repo_path)
+        self._json_response({"job_id": job.job_id}, 202)
+
+    def _handle_run_async(self):
+        """POST /api/run-async → 202 {job_id} for async assessment."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as exc:
+            self._json_response({"error": f"bad request: {exc}"}, 400)
+            return
+
+        goal = body.get("goal", "")
+        if not goal:
+            self._json_response({"error": "goal is required"}, 400)
+            return
+
+        repo = body.get("repo") or None
+        dependency = body.get("dependency") or None
+        target_version = body.get("target_version") or None
+        source_version = body.get("source_version") or None
+        mode = body.get("mode", "fake")
+
+        if not repo:
+            inferred = _infer_dep(goal, dependency)
+            repo = _DEFAULT_REPO_BY_DEP.get(inferred) if inferred else None
+
+        job = self._submit_run_job(
+            goal, mode, repo, dependency, target_version, source_version
+        )
+        self._json_response({"job_id": job.job_id}, 202)
+
+    def _handle_job_status(self, path: str):
+        """GET /api/jobs/{job_id} → job snapshot."""
+        job_id = path.removeprefix("/api/jobs/").strip("/")
+        job = _JOB_MANAGER.get(job_id)
+        if job is None:
+            self._json_response({"error": "job not found"}, 404)
+            return
+        self._json_response(job.snapshot())
+
+    def _handle_job_events(self, path: str):
+        """GET /api/jobs/{job_id}/events → SSE stream."""
+        job_id = path.removeprefix("/api/jobs/").removesuffix("/events").strip("/")
+        job = _JOB_MANAGER.get(job_id)
+        if job is None:
+            self._json_response({"error": "job not found"}, 404)
+            return
+
+        # Parse Last-Event-ID for reconnection
+        last_id = 0
+        last_event_id = self.headers.get("Last-Event-ID")
+        if last_event_id:
+            try:
+                last_id = int(last_event_id)
+            except ValueError:
+                pass
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        try:
+            # Send any buffered events first
+            for event in job.events_since(last_id):
+                self.wfile.write(event.to_sse().encode("utf-8"))
+                self.wfile.flush()
+                last_id = event.id
+
+            # Stream new events until job is terminal
+            while not job.is_terminal:
+                with job._condition:
+                    job._condition.wait(timeout=15.0)
+                new_events = job.events_since(last_id)
+                if new_events:
+                    for event in new_events:
+                        self.wfile.write(event.to_sse().encode("utf-8"))
+                        self.wfile.flush()
+                        last_id = event.id
+                else:
+                    # Heartbeat to keep connection alive
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+
+            # Send any remaining events after terminal
+            for event in job.events_since(last_id):
+                self.wfile.write(event.to_sse().encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Client disconnected
+
+    # -- async job submission helpers --------------------------------------- #
+
+    def _submit_scan_job(self, repo_path: Path) -> Job:
+        """Submit a scan as an async job, return the Job."""
+        def _do_scan(job: Job) -> dict:
+            from upgradelens.analyzers.upgradable_scan import (
+                scan_upgradable_dependencies,
+            )
+            from upgradelens.tools.fetcher import RestrictedFetcher
+            from upgradelens.tools.pypi import PyPIClient
+
+            job.emit("step_started", {"step": "scan", "repo": str(repo_path)})
+            fetcher = RestrictedFetcher()
+            pypi = PyPIClient(fetcher)
+            result = scan_upgradable_dependencies(repo_path, pypi)
+            job.emit("step_finished", {"step": "scan", "items": len(result.items)})
+            return result.model_dump(mode="json")
+
+        return _JOB_MANAGER.submit("scan", {"repo": str(repo_path)}, _do_scan)
+
+    def _submit_run_job(
+        self,
+        goal: str,
+        mode: str,
+        repo: str | None,
+        dependency: str | None,
+        target_version: str | None,
+        source_version: str | None,
+    ) -> Job:
+        """Submit an assessment as an async job, return the Job."""
+        params = {
+            "goal": goal,
+            "mode": mode,
+            "repo": repo,
+            "dependency": dependency,
+            "target_version": target_version,
+        }
+
+        def _do_run(job: Job) -> dict:
+            from upgradelens import DependencyUpgradeAgent
+            from upgradelens.agent.plan import AgentPlan
+            from upgradelens.db.database import DEFAULT_DB_PATH
+
+            job.emit("step_started", {"step": "agent_init", "mode": mode})
+
+            # Build a plan_writer that emits SSE events on every plan change
+            def _plan_event_writer(plan: AgentPlan) -> None:
+                """Emit a plan_updated event with step summaries."""
+                steps_summary = []
+                for s in plan.steps:
+                    steps_summary.append({
+                        "id": s.id,
+                        "tool": s.tool,
+                        "seq": s.seq,
+                        "status": s.status,
+                        "reason": s.reason or "",
+                        "observation": (s.observation or "")[:120],
+                    })
+                job.emit("plan.updated", {"steps": steps_summary, "status": plan.status})
+                # Also emit step-level events for running/completed transitions
+                for s in plan.steps:
+                    if s.status == "running":
+                        job.emit("step_started", {
+                            "step": s.tool,
+                            "plan_step_id": s.id,
+                            "reason": s.reason or "",
+                        })
+
+            job.emit("step_started", {"step": "agent_run", "dependency": dependency or ""})
+            agent = DependencyUpgradeAgent(mode=mode)
+            result = agent.run(
+                goal,
+                repo=repo,
+                dependency=dependency,
+                target_version=target_version,
+                source_version=source_version,
+                db=str(DEFAULT_DB_PATH),
+                plan_writer=_plan_event_writer,
+            )
+
+            job.emit("step_started", {"step": "projecting"})
+            response = {
+                "intent": result.intent.model_dump(mode="json"),
+                "plan": result.plan.to_dict() if result.plan else None,
+                "verified": (
+                    result.outcome.verified.model_dump(mode="json")
+                    if result.outcome
+                    else None
+                ),
+                "degradations": list(result.degradations),
+                "trace": (
+                    [e.to_dict() for e in result.trace.events] if result.trace else []
+                ),
+                "cost": {
+                    "total_tokens": (
+                        sum(
+                            r.prompt_tokens + r.completion_tokens
+                            for r in result.gateway.ledger
+                        )
+                        if result.gateway
+                        else 0
+                    ),
+                    "call_count": (
+                        len(result.gateway.ledger) if result.gateway else 0
+                    ),
+                },
+                "error": result.error,
+                "badges": _build_badges(result),
+                "assessment": (
+                    result.assessment.model_dump(mode="json")
+                    if result.assessment is not None
+                    else (
+                        project_assessment(result.outcome).model_dump(mode="json")
+                        if result.outcome is not None
+                        else None
+                    )
+                ),
+                "upgrade_plan": (
+                    result.upgrade_plan.model_dump(mode="json")
+                    if result.upgrade_plan is not None
+                    else None
+                ),
+            }
+            job.emit("step_finished", {"step": "complete"})
+            return response
+
+        return _JOB_MANAGER.submit("run", params, _do_run)
+
     def _json_response(self, data: dict, status: int = 200):
         payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
@@ -350,15 +673,17 @@ class ChatHandler(SimpleHTTPRequestHandler):
 
 
 def main():
-    server = HTTPServer(("127.0.0.1", PORT), ChatHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), ChatHandler)
     _ensure_comparison_started()  # 后台预热 S8 对照
     print(f"UpgradeLens Demo: http://127.0.0.1:{PORT}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nStopping...")
+        _JOB_MANAGER.stop(timeout=10.0)
         server.shutdown()
+        print("Stopped.")
 
 
 if __name__ == "__main__":

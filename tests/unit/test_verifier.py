@@ -229,7 +229,6 @@ def test_network_sourced_doc_is_verified_not_downgraded(repo, scanned, skill):
     codes = {i.code for i in risk.issues}
     # Network origin is marked, but it does NOT downgrade the risk.
     assert IssueCode.DOC_SOURCE_NETWORK in codes
-    assert IssueCode.DOC_SOURCE_UNTRUSTED not in codes
     assert result.conclusion is Conclusion.IMPACTED
 
 

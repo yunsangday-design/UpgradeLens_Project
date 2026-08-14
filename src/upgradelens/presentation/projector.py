@@ -22,7 +22,7 @@ from .i18n import (
     conclusion_label,
     evidence_status_label,
     severity_label,
-    trust_label,
+    trust_label_with_provenance,
     verdict_label,
 )
 from .models import (
@@ -59,6 +59,7 @@ def _code_view(item: EvidenceItem) -> CodeLocationView:
 def _doc_view(item: EvidenceItem, locale: str = "zh-CN") -> DocumentReferenceView:
     m = item.meta
     trust = str(m.get("trust_level", ""))
+    provenance = str(m.get("provenance", ""))
     return DocumentReferenceView(
         evidence_id=item.evidence_id,
         title=str(m.get("title", "")),
@@ -66,7 +67,9 @@ def _doc_view(item: EvidenceItem, locale: str = "zh-CN") -> DocumentReferenceVie
         heading_path=list(m.get("heading_path") or []),
         snippet=str(m.get("snippet", "")),
         trust_level=trust,
-        trust_label=trust_label(trust, locale),
+        trust_label=trust_label_with_provenance(trust, provenance, locale),
+        provenance=provenance,
+        from_network=provenance == "online_fallback",
         source_version_spec=str(m.get("source_version", "")),
         target_version_spec=str(m.get("target_version", "")),
     )
@@ -77,6 +80,7 @@ def _rag_view(item: EvidenceItem, locale: str = "zh-CN") -> RagResolutionView:
     src = str(m.get("source_version", ""))
     tgt = str(m.get("target_version", ""))
     trust = str(m.get("trust_level", ""))
+    provenance = str(m.get("provenance", ""))
     return RagResolutionView(
         evidence_id=item.evidence_id,
         source_id=str(m.get("source_id", "")),
@@ -88,7 +92,9 @@ def _rag_view(item: EvidenceItem, locale: str = "zh-CN") -> RagResolutionView:
         score=float(m.get("score") or 0.0),
         matched_query=str(m.get("matched_query", "")),
         trust_level=trust,
-        trust_label=trust_label(trust, locale),
+        trust_label=trust_label_with_provenance(trust, provenance, locale),
+        provenance=provenance,
+        from_network=provenance == "online_fallback",
         version_range=f"{src}->{tgt}" if (src or tgt) else "",
     )
 

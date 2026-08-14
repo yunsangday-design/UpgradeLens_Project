@@ -39,7 +39,22 @@ from upgradelens.tools.errors import OutOfNetworkError
 from upgradelens.tools.fetcher import RestrictedFetcher
 from upgradelens.tools.live_repo import parse_repo_slug
 
-IntentKind = Literal["upgrade_task", "not_upgrade", "invalid_url", "need_clarification"]
+IntentKind = Literal[
+    "upgrade_task", "scan_upgradable", "not_upgrade", "invalid_url", "need_clarification"
+]
+
+# Words that signal the user wants to scan ALL dependencies for upgrades.
+_SCAN_KEYWORDS = (
+    "扫描依赖",
+    "扫描所有依赖",
+    "检查所有依赖",
+    "哪些可以升级",
+    "哪些能升级",
+    "scan dependencies",
+    "scan upgradable",
+    "check all dependencies",
+    "which can be upgraded",
+)
 
 # Words that signal the user wants *some* repository analysis but has not given
 # enough to run it. Distinct from an explicit upgrade keyword.
@@ -291,6 +306,14 @@ class Router:
             dependency = llm.dependency or dependency
             target = llm.target_version or target
             source = llm.source_version or source
+
+        # Check for scan intent before general assembly
+        if _has_keyword(text, _SCAN_KEYWORDS) and repo is not None:
+            return Intent(
+                kind="scan_upgradable",
+                repo=repo,
+                confidence=0.9,
+            )
 
         return self._assemble(repo, dependency, target, source, text)
 

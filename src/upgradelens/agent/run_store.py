@@ -24,6 +24,10 @@ from pathlib import Path
 from typing import Any
 
 from upgradelens.agent.plan import AgentPlan
+from upgradelens.core.action import ActionProposal
+from upgradelens.core.finding import Finding
+from upgradelens.core.task import SoftwareTask
+from upgradelens.core.verification import VerificationResult
 from upgradelens.report.render import render_markdown, render_plan_markdown
 from upgradelens.tools.trace import ToolTrace
 from upgradelens.verify.models import VerifiedReport
@@ -190,6 +194,45 @@ class RunStore:
         self._write_text(
             "RUN.md", _render_run_md(self.run_id, intent, mode, verified, degradations)
         )
+
+    # -- S1 integration: generic SoftwareTask artifacts --------------------- #
+
+    def write_software_task(self, task: SoftwareTask) -> None:
+        """Persist a :class:`SoftwareTask` (the generic task contract)."""
+        self._write_json("task.json", task.model_dump(mode="json"))
+
+    def read_software_task(self) -> SoftwareTask | None:
+        path = self.run_dir / "task.json"
+        if not path.exists():
+            return None
+        return SoftwareTask(**json.loads(path.read_text(encoding="utf-8")))
+
+    def write_findings(self, findings: list[Finding]) -> None:
+        self._write_json("findings.json", [f.model_dump(mode="json") for f in findings])
+
+    def read_findings(self) -> list[Finding]:
+        path = self.run_dir / "findings.json"
+        if not path.exists():
+            return []
+        return [Finding(**d) for d in json.loads(path.read_text(encoding="utf-8"))]
+
+    def write_actions(self, actions: list[ActionProposal]) -> None:
+        self._write_json("actions.json", [a.model_dump(mode="json") for a in actions])
+
+    def read_actions(self) -> list[ActionProposal]:
+        path = self.run_dir / "actions.json"
+        if not path.exists():
+            return []
+        return [ActionProposal(**d) for d in json.loads(path.read_text(encoding="utf-8"))]
+
+    def write_verification(self, verification: VerificationResult) -> None:
+        self._write_json("verification.json", verification.model_dump(mode="json"))
+
+    def read_verification(self) -> VerificationResult | None:
+        path = self.run_dir / "verification.json"
+        if not path.exists():
+            return None
+        return VerificationResult(**json.loads(path.read_text(encoding="utf-8")))
 
 
 def _render_run_md(

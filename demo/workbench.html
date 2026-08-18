@@ -30,6 +30,7 @@
     <button class="side-nav__item active" data-view="home" title="首页">⌂</button>
     <button class="side-nav__item" data-view="scan" title="依赖扫描">⊞</button>
     <button class="side-nav__item" data-view="assess" title="新建评估">▶</button>
+    <button class="side-nav__item" data-view="capability" title="能力工作台">▦</button>
     <button class="side-nav__item" data-view="history" title="历史">☰</button>
     <div class="side-nav__spacer"></div>
     <button class="side-nav__item" data-view="settings" title="设置">⚙</button>
@@ -108,6 +109,78 @@
         </div>
       </section>
 
+      <!-- ── Capability View ── -->
+      <section id="view-capability" class="view" style="display:none;">
+        <h2 style="margin-bottom:var(--sp-4);">能力工作台 (Workbench)</h2>
+        <p style="font-size:var(--fs-sm); color:var(--text-secondary); margin-bottom:var(--sp-4);">
+          同一界面切换不同能力（依赖升级 / PR 审查 / Issue 修复 / 安全审查 / 破坏性变更），所有结果统一渲染为通用视图。
+        </p>
+
+        <!-- 自然语言统一入口 (M1a 端到端：一句话 → 分诊 → 统一能力) -->
+        <div class="card" style="max-width:640px; margin-bottom:var(--sp-5); border-color:var(--primary);">
+          <h3 style="margin-bottom:var(--sp-2);">自然语言任务（一句话分诊）</h3>
+          <p style="font-size:var(--fs-sm); color:var(--text-secondary); margin-bottom:var(--sp-3);">
+            输入一句话，路由会自动分诊到正确的能力（PR 审查 / Issue 修复 / 安全审查 / 破坏性变更 / 依赖升级），再走统一执行与验证闸。
+          </p>
+          <div class="form-group">
+            <label class="form-label">任务描述（自然语言）</label>
+            <textarea class="input" id="cap-nl-text" rows="3" placeholder="例如：帮我 review 这个 PR https://github.com/x/y 的改动；或：扫描这个仓库的安全性"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">模式</label>
+            <select class="input select" id="cap-nl-mode">
+              <option value="fake">fake（离线快速）</option>
+              <option value="live">live（真实 LLM）</option>
+            </select>
+          </div>
+          <details style="margin-bottom:var(--sp-3);">
+            <summary style="cursor:pointer; font-size:var(--fs-sm); color:var(--text-secondary);">补充参数（自然语言带不动时填，可选）</summary>
+            <div style="margin-top:var(--sp-2); display:flex; flex-direction:column; gap:var(--sp-2);">
+              <textarea class="input" id="cap-nl-diff" rows="3" placeholder="unified diff（PR / 安全 / 破坏性变更需要）"></textarea>
+              <input class="input" id="cap-nl-issue" type="text" placeholder="issue_text（Issue 修复需要）" />
+              <div style="display:flex; gap:var(--sp-2);">
+                <input class="input" id="cap-nl-from" type="text" placeholder="from_version" />
+                <input class="input" id="cap-nl-to" type="text" placeholder="to_version" />
+              </div>
+            </div>
+          </details>
+          <button class="btn btn--primary btn--lg" id="cap-nl-submit" style="width:100%;">分诊并运行</button>
+          <div id="cap-nl-result" style="margin-top:var(--sp-4);"></div>
+        </div>
+
+        <div class="card" style="max-width:640px;">
+          <div class="form-group">
+            <label class="form-label">能力 (Capability)</label>
+            <select class="input select" id="cap-kind">
+              <option value="dependency_upgrade">依赖升级审查 (Dependency Upgrade)</option>
+              <option value="pr_review">PR 审查 (PR Review)</option>
+              <option value="issue_repair">Issue 诊断与修复 (Issue Repair)</option>
+              <option value="security_review">安全审查 (Security Review)</option>
+              <option value="breaking_change">破坏性变更分析 (Breaking Change)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">模式</label>
+            <select class="input select" id="cap-mode">
+              <option value="fake">fake（离线快速）</option>
+              <option value="live">live（真实 LLM）</option>
+            </select>
+          </div>
+          <div id="cap-dynamic"></div>
+          <div class="form-group">
+            <label class="form-label">仓库路径（可选，默认内置示例）</label>
+            <input class="input" id="cap-repo" type="text" placeholder="默认使用内置示例仓库" />
+          </div>
+          <button class="btn btn--primary btn--lg" id="cap-submit" style="width:100%;">运行</button>
+          <div id="cap-presets" style="margin-top:var(--sp-3); display:flex; flex-wrap:wrap; gap:var(--sp-2);">
+            <button class="btn btn--sm" data-preset="upgrade">演示：依赖升级</button>
+            <button class="btn btn--sm" data-preset="issue">演示：Issue 修复</button>
+            <button class="btn btn--sm" data-preset="pr_security">演示：PR + 安全审查</button>
+          </div>
+        </div>
+        <div id="cap-result" style="margin-top:var(--sp-5);"></div>
+      </section>
+
       <!-- ── Running View ── -->
       <section id="view-running" class="view" style="display:none;">
         <div class="card" style="margin-bottom:var(--sp-4);">
@@ -156,7 +229,7 @@
 <div class="toast-container" id="toast-container"></div>
 
 <script type="module">
-import { submitScan, submitAssessment, connectSSE, getJobSnapshot } from "/static/js/api.js";
+import { submitScan, submitAssessment, submitCapability, submitTask, connectSSE, getJobSnapshot } from "/static/js/api.js";
 import { getState, setState, updateNested, subscribe, clearActiveJob, getActiveJob } from "/static/js/store.js";
 import { esc, el, formatElapsed } from "/static/js/formatters.js";
 
@@ -697,6 +770,256 @@ function showResult(result) {
     el("button", { class: "btn", onclick: "navigate('home')" }, "← 返回首页"),
   ]));
 }
+
+// ─── Unified Capability Workbench (S9) ───
+const CAP_DEFAULT_DIFF = [
+  "diff --git a/src/app.py b/src/app.py",
+  "--- a/src/app.py",
+  "+++ b/src/app.py",
+  "@@ -10,8 +10,8 @@ def handler(req):",
+  "-    user = get_user(req.id)",
+  "-    if user.is_admin:",
+  "+    user = get_user(req.id)",
+  "+    if user and user.is_admin:",
+  "         grant_access(user)",
+].join("\n");
+
+function _capLine(label, field, ph) {
+  const g = el("div", { class: "form-group" });
+  g.appendChild(el("label", { class: "form-label" }, label));
+  g.appendChild(el("input", { class: "input", type: "text", placeholder: ph, "data-cap-field": field }));
+  return g;
+}
+
+function _capText(label, field, ph, rows) {
+  const g = el("div", { class: "form-group" });
+  g.appendChild(el("label", { class: "form-label" }, label));
+  g.appendChild(el("textarea", { class: "input", rows: String(rows || 5), placeholder: ph, "data-cap-field": field }));
+  return g;
+}
+
+function _capGrid(a, b) {
+  const d = el("div", { style: "display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3);" });
+  d.appendChild(a); d.appendChild(b);
+  return d;
+}
+
+function _renderCapabilityInputs(kind) {
+  const box = document.getElementById("cap-dynamic");
+  box.innerHTML = "";
+  if (kind === "dependency_upgrade") {
+    box.appendChild(_capLine("升级目标描述", "goal", "如：upgrade pydantic from 1.x to 2.7"));
+    box.appendChild(_capLine("依赖名（可选）", "dependency", "pydantic"));
+    box.appendChild(_capGrid(_capLine("源版本", "source_version", "1.10"), _capLine("目标版本", "target_version", "2.7")));
+  } else if (kind === "pr_review") {
+    box.appendChild(_capText("PR 差异 (unified diff)", "diff", "粘贴 git diff 内容…"));
+  } else if (kind === "issue_repair") {
+    box.appendChild(_capText("Issue 描述", "issue_text", "描述遇到的问题…"));
+  } else if (kind === "security_review") {
+    box.appendChild(_capText("PR 差异 (unified diff)", "diff", "粘贴 git diff 内容…"));
+    box.appendChild(_capLine("依赖名（可选）", "dependency", "pydantic"));
+  } else if (kind === "breaking_change") {
+    box.appendChild(_capText("差异 (unified diff)", "diff", "粘贴 git diff 内容…"));
+    box.appendChild(_capGrid(_capLine("源版本", "from_version", "1.10"), _capLine("目标版本", "to_version", "2.7")));
+  }
+}
+
+function _setCapField(field, value) {
+  const inp = document.querySelector("#cap-dynamic [data-cap-field=\"" + field + "\"]");
+  if (inp) inp.value = value;
+}
+
+async function runCapability() {
+  const kind = document.getElementById("cap-kind").value;
+  const mode = document.getElementById("cap-mode").value;
+  const repo = document.getElementById("cap-repo").value.trim();
+  const payload = { kind, mode };
+  if (repo) payload.repo = repo;
+  document.querySelectorAll("#cap-dynamic [data-cap-field]").forEach(inp => {
+    const v = (inp.value || "").trim();
+    if (v) payload[inp.dataset.capField] = v;
+  });
+  const container = document.getElementById("cap-result");
+  container.innerHTML = "";
+  container.appendChild(el("div", { class: "card", style: "padding:var(--sp-4); display:flex; gap:var(--sp-2); align-items:center;" }, [
+    el("span", { class: "status-dot status-dot--running" }),
+    document.createTextNode("运行中…"),
+  ]));
+  try {
+    const { data } = await submitCapability(payload);
+    if (data && data.error) { toast(data.error, "error"); container.innerHTML = ""; return; }
+    renderCapabilityResult(data, container);
+  } catch (e) {
+    toast("请求失败：" + (e && e.message ? e.message : e), "error");
+  }
+}
+
+function renderGenericFinding(f) {
+  const sev = (f.severity || "low").toLowerCase();
+  const card = el("div", { class: "finding-card severity-" + sev });
+  const header = el("div", { class: "finding-card__header" });
+  header.appendChild(el("span", { class: "finding-card__title" }, esc(f.summary || f.title || "未命名发现")));
+  if (f.severity) header.appendChild(el("span", { class: "badge badge--" + (f.severity === "high" || f.severity === "critical" ? "red" : "amber") }, f.severity));
+  if (f.status) header.appendChild(el("span", { class: "badge" }, f.status));
+  card.appendChild(header);
+  if (f.detail) card.appendChild(el("div", { class: "finding-card__body" }, esc(f.detail)));
+  if (f.recommendation) card.appendChild(el("div", { style: "margin-top:var(--sp-2); font-size:var(--fs-sm); color:var(--accent);" }, [
+    el("strong", null, "建议："), document.createTextNode(" " + esc(f.recommendation)),
+  ]));
+  if (f.evidence_ids && f.evidence_ids.length) {
+    const ev = el("details", { style: "margin-top:var(--sp-2);" });
+    ev.appendChild(el("summary", { style: "font-size:var(--fs-sm); cursor:pointer; color:var(--text-secondary);" }, "证据（" + f.evidence_ids.length + "）"));
+    const body = el("div", { style: "margin-top:var(--sp-1); font-family:var(--font-mono); font-size:var(--fs-xs);" });
+    f.evidence_ids.forEach(id => body.appendChild(el("div", null, esc(id))));
+    ev.appendChild(body);
+    card.appendChild(ev);
+  }
+  return card;
+}
+
+function renderCapabilityResult(result, container) {
+  container.innerHTML = "";
+  if (!result) { container.textContent = "无结果"; return; }
+  if (result.status === "failed") {
+    container.appendChild(el("div", { class: "card", style: "color:var(--red); padding:var(--sp-4);" }, "运行失败：" + esc(result.error || "未知错误")));
+    return;
+  }
+  const overview = el("div", { class: "card", style: "margin-bottom:var(--sp-4);" });
+  overview.appendChild(el("h3", { style: "margin-bottom:var(--sp-2);" }, "能力：" + esc(result.capability)));
+  overview.appendChild(el("div", { style: "font-size:var(--fs-sm); color:var(--text-secondary);" }, esc(result.summary || "")));
+  container.appendChild(overview);
+
+  if (result.findings && result.findings.length) {
+    const sec = el("div", { style: "margin-bottom:var(--sp-4);" });
+    sec.appendChild(el("h3", { style: "margin-bottom:var(--sp-3);" }, "发现（" + result.findings.length + "）"));
+    result.findings.forEach(f => sec.appendChild(renderGenericFinding(f)));
+    container.appendChild(sec);
+  }
+
+  if (result.verification) {
+    const v = result.verification;
+    const sec = el("div", { class: "card", style: "margin-bottom:var(--sp-4);" });
+    sec.appendChild(el("h3", { style: "margin-bottom:var(--sp-2);" }, "验证（" + (v.passed ? "通过" : "未通过") + "）"));
+    if (v.summary) sec.appendChild(el("div", { style: "font-size:var(--fs-sm);" }, esc(v.summary)));
+    if (v.checks) v.checks.forEach(c => sec.appendChild(el("div", { class: "plan-step-card__obs", style: "font-size:var(--fs-sm);" }, esc(c.name) + ": " + (c.passed ? "✓" : "✗") + " " + esc(c.detail || ""))));
+    container.appendChild(sec);
+  }
+
+  if (result.coverage) {
+    const sec = el("div", { class: "card", style: "margin-bottom:var(--sp-4);" });
+    sec.appendChild(el("h3", { style: "margin-bottom:var(--sp-2);" }, "证据覆盖"));
+    const rate = result.coverage.coverage_rate != null ? result.coverage.coverage_rate : "n/a";
+    sec.appendChild(el("div", { style: "font-size:var(--fs-sm);" }, "覆盖率：" + esc(String(rate))));
+    if (result.coverage.gaps) result.coverage.gaps.forEach(g => sec.appendChild(el("div", { class: "plan-step-card__obs", style: "font-size:var(--fs-sm);" }, esc(g))));
+    container.appendChild(sec);
+  }
+
+  if (result.patch) {
+    const sec = el("div", { style: "margin-bottom:var(--sp-4);" });
+    sec.appendChild(el("h3", { style: "margin-bottom:var(--sp-2);" }, "补丁 (Patch)"));
+    const patchText = result.patch.diff ? result.patch.diff : (typeof result.patch === "string" ? result.patch : JSON.stringify(result.patch, null, 2));
+    sec.appendChild(el("pre", { style: "font-size:var(--fs-xs); max-height:240px; overflow:auto; background:var(--bg-surface-2); padding:var(--sp-3); border-radius:var(--radius-sm);" }, esc(patchText)));
+    container.appendChild(sec);
+  }
+
+  if (result.test_results && result.test_results.length) {
+    const sec = el("div", { style: "margin-bottom:var(--sp-4);" });
+    sec.appendChild(el("h3", { style: "margin-bottom:var(--sp-3);" }, "测试建议（" + result.test_results.length + "）"));
+    result.test_results.forEach(t => {
+      const card = el("div", { class: "card", style: "margin-bottom:var(--sp-2); padding:var(--sp-3);" });
+      card.appendChild(el("div", { style: "font-weight:600;" }, esc(t.title || t.proposal_id || "测试")));
+      if (t.description) card.appendChild(el("div", { style: "font-size:var(--fs-sm); color:var(--text-secondary);" }, esc(t.description)));
+      if (t.test_code) card.appendChild(el("pre", { style: "font-size:var(--fs-xs); margin-top:var(--sp-2); max-height:160px; overflow:auto; background:var(--bg-surface-2); padding:var(--sp-2); border-radius:var(--radius-sm);" }, esc(t.test_code)));
+      sec.appendChild(card);
+    });
+    container.appendChild(sec);
+  }
+
+  if (result.degradations && result.degradations.length) {
+    const sec = el("div", { class: "card", style: "margin-bottom:var(--sp-4);" });
+    sec.appendChild(el("h3", { style: "margin-bottom:var(--sp-2);" }, "降级说明"));
+    result.degradations.forEach(d => sec.appendChild(el("div", { style: "font-size:var(--fs-sm); color:var(--text-muted);" }, esc(d))));
+    container.appendChild(sec);
+  }
+
+  const raw = el("details", { class: "fold-section" });
+  raw.appendChild(el("summary", null, "原始结果 (JSON)"));
+  const rb = el("div", { class: "fold-body" });
+  rb.appendChild(el("pre", { style: "font-size:var(--fs-xs); max-height:300px; overflow:auto;" }, esc(JSON.stringify(result.raw || result, null, 2))));
+  raw.appendChild(rb);
+  container.appendChild(raw);
+}
+
+function loadPreset(name) {
+  const setKind = (k) => { document.getElementById("cap-kind").value = k; _renderCapabilityInputs(k); };
+  if (name === "upgrade") {
+    setKind("dependency_upgrade");
+    _setCapField("goal", "upgrade pydantic from 1.x to 2.7");
+    _setCapField("dependency", "pydantic");
+    _setCapField("source_version", "1.10");
+    _setCapField("target_version", "2.7");
+  } else if (name === "issue") {
+    setKind("issue_repair");
+    _setCapField("issue_text", "App crashes on startup with AttributeError: 'NoneType' object has no attribute 'is_admin'");
+  } else if (name === "pr_security") {
+    setKind("security_review");
+    _setCapField("diff", CAP_DEFAULT_DIFF);
+  }
+  runCapability();
+}
+
+async function runTask() {
+  const text = document.getElementById("cap-nl-text").value.trim();
+  const mode = document.getElementById("cap-nl-mode").value;
+  if (!text) { toast("请先输入任务描述", "error"); return; }
+  const payload = { text, mode };
+  const diff = document.getElementById("cap-nl-diff").value.trim();
+  const issue = document.getElementById("cap-nl-issue").value.trim();
+  const fromV = document.getElementById("cap-nl-from").value.trim();
+  const toV = document.getElementById("cap-nl-to").value.trim();
+  if (diff) payload.diff = diff;
+  if (issue) payload.issue_text = issue;
+  if (fromV) payload.from_version = fromV;
+  if (toV) payload.to_version = toV;
+  const container = document.getElementById("cap-nl-result");
+  container.innerHTML = "";
+  container.appendChild(el("div", { class: "card", style: "padding:var(--sp-4); display:flex; gap:var(--sp-2); align-items:center;" }, [
+    el("span", { class: "status-dot status-dot--running" }),
+    document.createTextNode("分诊并运行中…"),
+  ]));
+  try {
+    const { data } = await submitTask(payload);
+    if (data && data.error) { toast(data.error, "error"); container.innerHTML = ""; return; }
+    if (data.orchestration === "multi-agent" && data.sub_results && data.sub_results.length) {
+      // M3: Supervisor + Handoff multi-agent collaboration view.
+      const kinds = data.capability_kinds || [];
+      container.appendChild(el("div", { class: "card", style: "margin-bottom:var(--sp-4); padding:var(--sp-3); border-color:var(--primary);" }, [
+        el("strong", null, "编排模式：多能力协作 (Supervisor + Handoff)"),
+        document.createTextNode(" " + (kinds.join(" → ") || "")),
+      ]));
+      data.sub_results.forEach((r, i) => {
+        const sub = el("div", { style: "margin-bottom:var(--sp-4); border-left:3px solid var(--primary); padding-left:var(--sp-3);" });
+        const label = "Sub-agent " + (i + 1) + (kinds[i] ? " · " + kinds[i] : "");
+        sub.appendChild(el("div", { style: "font-size:var(--fs-sm); color:var(--text-secondary); margin-bottom:var(--sp-2);" }, label));
+        renderCapabilityResult(r, sub);
+        container.appendChild(sub);
+      });
+    } else if (data.result) {
+      renderCapabilityResult(data.result, container);
+    } else {
+      container.appendChild(el("div", { class: "card", style: "padding:var(--sp-4);" }, "未分诊出任何能力。"));
+    }
+  } catch (e) {
+    toast("请求失败：" + (e && e.message ? e.message : e), "error");
+    container.innerHTML = "";
+  }
+}
+
+document.getElementById("cap-kind").addEventListener("change", (e) => _renderCapabilityInputs(e.target.value));
+document.getElementById("cap-submit").addEventListener("click", runCapability);
+document.getElementById("cap-nl-submit").addEventListener("click", runTask);
+document.querySelectorAll("#cap-presets [data-preset]").forEach(btn => btn.addEventListener("click", () => loadPreset(btn.dataset.preset)));
+_renderCapabilityInputs("dependency_upgrade");
 
 // ─── Finding Card (full detail) ───
 function renderFindingCard(f, kind) {

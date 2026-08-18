@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from upgradelens.agent.router import Intent, Router, route
+from upgradelens.agent.router import Intent, Router, route, route_task
+from upgradelens.core.task import TaskKind
 from upgradelens.llm.gateway import ModelMode
 
 
@@ -91,3 +92,46 @@ def test_llm_invented_invalid_repo_is_discarded():
     assert intent.repo is None
     assert "repo" in intent.missing
     assert intent.kind == "need_clarification"
+
+
+# --- M1a: the router must triage free text into the right capability TaskKind ---
+
+
+def test_route_task_triages_pr_review():
+    task = route_task("帮我 review 这个 PR https://github.com/x/y")
+    assert task.kind == TaskKind.PR_REVIEW
+    assert task.context.repo == "https://github.com/x/y"
+
+
+def test_route_task_triages_security_review():
+    task = route_task("扫描这个仓库 https://github.com/x/y 的安全漏洞")
+    assert task.kind == TaskKind.SECURITY_REVIEW
+
+
+def test_route_task_triages_issue_repair():
+    task = route_task("修复这个 issue：登录时报错 traceback")
+    assert task.kind == TaskKind.ISSUE_REPAIR
+
+
+def test_route_task_triages_breaking_change():
+    task = route_task(
+        "Analyze the breaking change when upgrading requests from 2 to 3 "
+        "in https://github.com/x/y"
+    )
+    assert task.kind == TaskKind.BREAKING_CHANGE
+
+
+def test_route_task_triages_dependency_upgrade_unchanged():
+    task = route_task("把 https://github.com/x/y 的 pandas 升到 2.x")
+    assert task.kind == TaskKind.DEPENDENCY_UPGRADE
+
+
+def test_route_task_chit_chat_stays_unknown():
+    task = route_task("今天天气怎么样")
+    assert task.kind == TaskKind.UNKNOWN
+
+
+def test_route_task_security_beats_generic_review():
+    # "review" alone must not mask an explicit security intent when a repo is given.
+    task = route_task("review 这个仓库 https://github.com/x/y 的安全性")
+    assert task.kind == TaskKind.SECURITY_REVIEW

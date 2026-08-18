@@ -1,0 +1,177 @@
+# Capability gold set (research report M1c).
+#
+# Each case names a `kind` (one of the four non-upgrade capabilities), the inputs
+# it needs (unified_diff / issue_text / from_version / to_version / dependency),
+# and the `expect` block scored against the unified CapabilityRunResult produced
+# by `run_capability` in `fake` mode. Because the analyzers are deterministic in
+# `fake` mode, these expectations are stable and reproducible.
+#
+# The default evaluation repo is tests/fixtures/eval/capabilities/repo (contains
+# src/app.py so the issue_repair patch target is real).
+
+- name: pr-remove-null-check
+  kind: pr_review
+  inputs:
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -10,7 +10,7 @@ def handle(req):
+           user = req.user
+      -    if user is None:
+      -        return None
+           value = process(user)
+           return value
+  expect:
+    min_findings: 2
+    must_include_severities: [high]
+    must_include_keywords: ["null check"]
+    verification_passed: true
+
+- name: pr-add-branch
+  kind: pr_review
+  inputs:
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -10,7 +10,9 @@ def handle(req):
+           user = req.user
+           value = process(user)
+      +    if value is None:
+      +        value = default_value()
+           return value
+  expect:
+    min_findings: 1
+    must_include_severities: [medium]
+    verification_passed: true
+
+- name: pr-remove-auth
+  kind: pr_review
+  inputs:
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -20,9 +20,6 @@ def process(user):
+      -    if not user.is_admin:
+      -        raise PermissionError("forbidden")
+           return user.name
+  expect:
+    min_findings: 1
+    must_include_keywords: ["removed"]
+    verification_passed: true
+
+- name: security-hardcoded-secret
+  kind: security_review
+  inputs:
+    dependency: pydantic
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -40,6 +40,7 @@ CONFIG = {
+      +    "api_key": "sk-live-1234567890abcdef",
+       }
+  expect:
+    min_findings: 1
+    must_include_severities: [high]
+    must_include_keywords: ["secret"]
+    verification_passed: true
+
+- name: security-requests
+  kind: security_review
+  inputs:
+    dependency: requests
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -40,6 +40,7 @@ CONFIG = {
+      +    "token": "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+       }
+  expect:
+    min_findings: 1
+    must_include_keywords: ["secret"]
+    verification_passed: true
+
+- name: issue-startup-crash
+  kind: issue_repair
+  inputs:
+    issue_text: "App crashes on startup: Null dereference when config is missing in handle()"
+  expect:
+    min_findings: 1
+    must_include_keywords: ["Null dereference", "src/app.py"]
+    verification_passed: true
+
+- name: issue-typeerror
+  kind: issue_repair
+  inputs:
+    issue_text: "TypeError after upgrade: handle() got unexpected keyword 'timeout'"
+  expect:
+    min_findings: 1
+    must_include_keywords: ["Null dereference"]
+    verification_passed: true
+
+- name: breaking-pydantic
+  kind: breaking_change
+  inputs:
+    from_version: "1.10"
+    to_version: "2.0"
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -10,7 +10,7 @@ def handle(req):
+           user = req.user
+      -    data = user.model_dump()
+      +    data = user.model_dump(mode="json")
+           return data
+  expect:
+    min_findings: 1
+    must_include_severities: [critical, high]
+    must_include_keywords: ["model_dump", "old_helper"]
+    verification_passed: true
+
+- name: breaking-django
+  kind: breaking_change
+  inputs:
+    from_version: "3.2"
+    to_version: "4.0"
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -12,7 +12,7 @@ def handle(req):
+      -    data = req.model_dump()
+      +    data = req.model_dump(mode="json")
+           return data
+  expect:
+    min_findings: 1
+    must_include_keywords: ["model_dump"]
+    verification_passed: true
+
+- name: breaking-flask
+  kind: breaking_change
+  inputs:
+    from_version: "1.1"
+    to_version: "2.0"
+    unified_diff: |
+      diff --git a/src/app.py b/src/app.py
+      index 1111111..2222222 100644
+      --- a/src/app.py
+      +++ b/src/app.py
+      @@ -20,7 +20,7 @@ def process(user):
+      -    return old_helper()
+      +    return new_helper()
+  expect:
+    min_findings: 1
+    must_include_keywords: ["old_helper"]
+    verification_passed: true

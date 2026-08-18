@@ -17,5 +17,17 @@ from __future__ import annotations
 from upgradelens.capabilities.base import CapabilityPack
 from upgradelens.capabilities.registry import CapabilityRegistry
 from upgradelens.capabilities.transformation import TransformationPack
+from upgradelens.capabilities.workbench import (
+    CapabilityRunResult,
+    list_capabilities,
+    run_capability,
+)
 
-__all__ = ["CapabilityPack", "TransformationPack", "CapabilityRegistry"]
+__all__ = [
+    "CapabilityPack",
+    "TransformationPack",
+    "CapabilityRegistry",
+    "CapabilityRunResult",
+    "run_capability",
+    "list_capabilities",
+]

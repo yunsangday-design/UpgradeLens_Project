@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import uuid
 from collections.abc import Iterable
 from typing import Literal
 from urllib.parse import urlparse
@@ -32,6 +33,7 @@ from urllib.parse import urlparse
 from packaging.utils import canonicalize_name
 from pydantic import BaseModel, Field
 
+from upgradelens.core.task import SoftwareTask, TaskContext, TaskKind
 from upgradelens.llm.gateway import ModelGateway, ModelMode
 from upgradelens.llm.prompts import get_prompt
 from upgradelens.skills import builtin_registry
@@ -88,6 +90,66 @@ _UPGRADE_KEYWORDS = (
     "upgrade",
     "bump",
     "update",
+)
+
+# Words that signal a security review / vulnerability scan (capability triage).
+_SECURITY_KEYWORDS = (
+    "安全审查",
+    "安全扫描",
+    "安全分析",
+    "安全性",
+    "漏洞",
+    "vulnerability",
+    "vulnerabilities",
+    "security",
+    "cve",
+    "安全",
+)
+
+# Words that signal a pull-request review specifically (capability triage).
+_PR_KEYWORDS = (
+    "review pr",
+    "pr review",
+    "review 这个 pr",
+    "审查这个 pr",
+    "pr 审查",
+    "review pull request",
+    "pull request review",
+    "review 这个 pull request",
+    "审查这个 pull request",
+    "code review",
+    "审查代码",
+    "pull request",
+    "review",
+)
+
+# Words that signal an issue / bug repair (capability triage).
+_ISSUE_KEYWORDS = (
+    "修复 issue",
+    "repair issue",
+    "issue repair",
+    "修复 bug",
+    "fix bug",
+    "这个 bug",
+    "bug 修复",
+    "这个 issue",
+    "报错",
+    "堆栈",
+    "traceback",
+    "崩溃",
+    "修复",
+    "issue",
+)
+
+# Words that signal a breaking-change analysis distinct from a plain upgrade.
+_BREAKING_KEYWORDS = (
+    "破坏性",
+    "不兼容",
+    "兼容性",
+    "breaking change",
+    "breaking",
+    "破坏性变更",
+    "破坏性改动",
 )
 
 # Tokens that must never be mistaken for a dependency name.
@@ -160,6 +222,11 @@ class Intent(BaseModel):
     missing: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     clarification: str | None = None
+    # Triaged capability, set by the router so a single :class:`SoftwareTask` can
+    # carry the right :class:`TaskKind` for the unified dispatcher. ``intent.kind``
+    # stays as the upgrade-era front-door signal consumed by ``cli``/``api``; this
+    # field is additive and never changes that contract.
+    task_kind: TaskKind = TaskKind.UNKNOWN
 
 
 def _is_github_host(host: str) -> bool:
@@ -313,9 +380,96 @@ class Router:
                 kind="scan_upgradable",
                 repo=repo,
                 confidence=0.9,
+                task_kind=TaskKind.DEPENDENCY_UPGRADE,
             )
 
-        return self._assemble(repo, dependency, target, source, text)
+        intent = self._assemble(repo, dependency, target, source, text)
+        intent.task_kind = self._classify_task_kind(
+            text, repo, dependency, target, source, intent.kind
+        )
+        return intent
+
+    def _classify_task_kind(
+        self,
+        text: str,
+        repo: str | None,
+        dependency: str | None,
+        target: str | None,
+        source: str | None,
+        fallback: IntentKind,
+    ) -> TaskKind:
+        """Map a resolved intent to a capability ``TaskKind``.
+
+        The rules run identically for fake and live routing so the two modes yield
+        the same :class:`SoftwareTask` (research report M1a: fake keyword rules and
+        live LLM must produce the same triage). The deterministic rules take
+        precedence over the LLM so a non-upgrade capability is never silently
+        downgraded to ``DEPENDENCY_UPGRADE``.
+        """
+        if _has_keyword(text, _SECURITY_KEYWORDS) and repo:
+            return TaskKind.SECURITY_REVIEW
+        if _has_keyword(text, _PR_KEYWORDS) and repo:
+            return TaskKind.PR_REVIEW
+        if _has_keyword(text, _ISSUE_KEYWORDS):
+            return TaskKind.ISSUE_REPAIR
+        if _has_keyword(text, _BREAKING_KEYWORDS) and (dependency or target or source):
+            return TaskKind.BREAKING_CHANGE
+        return _INTENT_KIND_TO_TASK_KIND.get(fallback, TaskKind.UNKNOWN)
+
+    def classify_capabilities(
+        self,
+        text: str,
+        repo: str | None = None,
+        dependency: str | None = None,
+        target: str | None = None,
+        source: str | None = None,
+    ) -> list[TaskKind]:
+        """Return EVERY capability kind the text signals (multi-agent aware).
+
+        Unlike :meth:`_classify_task_kind` (which returns the single
+        highest-priority kind for one :class:`SoftwareTask`), this accumulates all
+        capabilities the text implies -- the basis for the M3 Supervisor's handoff
+        decomposition. The rules are identical to the single classifier and run the
+        same in fake/live, so the decomposition is deterministic and
+        offline-reproducible.
+        """
+        kinds: list[TaskKind] = []
+        has_repo = bool(repo)
+        if _has_keyword(text, _SECURITY_KEYWORDS) and has_repo:
+            kinds.append(TaskKind.SECURITY_REVIEW)
+        if _has_keyword(text, _PR_KEYWORDS) and has_repo:
+            kinds.append(TaskKind.PR_REVIEW)
+        if _has_keyword(text, _ISSUE_KEYWORDS):
+            kinds.append(TaskKind.ISSUE_REPAIR)
+        if _has_keyword(text, _BREAKING_KEYWORDS) and (dependency or target or source):
+            kinds.append(TaskKind.BREAKING_CHANGE)
+        # Upgrade is only added when no more-specific capability was signalled and
+        # an upgrade intent is present (parity with _classify_task_kind's fallback).
+        if not kinds:
+            if _has_keyword(text, _UPGRADE_KEYWORDS) and (dependency or target or source):
+                kinds.append(TaskKind.DEPENDENCY_UPGRADE)
+        # Dedupe while preserving priority order.
+        seen: set[TaskKind] = set()
+        ordered: list[TaskKind] = []
+        for k in kinds:
+            if k not in seen:
+                seen.add(k)
+                ordered.append(k)
+        return ordered
+
+    def route_task(
+        self, text: str, *, task_id: str | None = None
+    ) -> SoftwareTask:
+        """Route ``text`` and wrap the resulting :class:`Intent` in a SoftwareTask.
+
+        Fully offline in ``fake`` mode -- the underlying router skips the model and
+        relies on rule extraction. A live gateway only refines extraction (the
+        validated repo still wins), so the SSRF gate is never weakened.
+        """
+        intent = self.route(text)
+        if task_id is None:
+            task_id = uuid.uuid4().hex[:12]
+        return _intent_to_task(intent, text, task_id)
 
     def _use_llm(self) -> bool:
         return self._gateway is not None and self._gateway.mode != ModelMode.FAKE
@@ -379,3 +533,34 @@ class Router:
 def route(text: str, *, gateway: ModelGateway | None = None) -> Intent:
     """Convenience wrapper: route ``text`` with an optional live ``gateway``."""
     return Router(gateway=gateway).route(text)
+
+
+_INTENT_KIND_TO_TASK_KIND: dict[str, TaskKind] = {
+    "upgrade_task": TaskKind.DEPENDENCY_UPGRADE,
+    "scan_upgradable": TaskKind.DEPENDENCY_UPGRADE,
+    "not_upgrade": TaskKind.UNKNOWN,
+    "invalid_url": TaskKind.UNKNOWN,
+    "need_clarification": TaskKind.UNKNOWN,
+}
+
+
+def _intent_to_task(intent: Intent, text: str, task_id: str) -> SoftwareTask:
+    kind: TaskKind
+    if intent.task_kind != TaskKind.UNKNOWN:
+        kind = intent.task_kind
+    else:
+        kind = _INTENT_KIND_TO_TASK_KIND.get(intent.kind, TaskKind.UNKNOWN)
+    context = TaskContext(
+        repo=intent.repo or "",
+        dependency=intent.dependency or "",
+        target_version=intent.target_version or "",
+        source_version=intent.source_version or "",
+    )
+    return SoftwareTask(task_id=task_id, kind=kind, goal=text, context=context)
+
+
+def route_task(
+    text: str, *, gateway: ModelGateway | None = None, task_id: str | None = None
+) -> SoftwareTask:
+    """Convenience wrapper: route ``text`` into a :class:`SoftwareTask`."""
+    return Router(gateway=gateway).route_task(text, task_id=task_id)

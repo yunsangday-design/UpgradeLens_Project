@@ -60,6 +60,14 @@ export async function submitAssessment({ goal, mode, dependency, target_version,
   return postJSON("/api/run-async", { goal, mode, dependency, target_version, source_version, repo });
 }
 
+export async function submitCapability(payload) {
+  return postJSON("/api/capability/run", payload);
+}
+
+export async function submitTask(payload) {
+  return postJSON("/api/task/run", payload);
+}
+
 export async function getJobSnapshot(jobId) {
   return getJSON(`/api/jobs/${jobId}`);
 }

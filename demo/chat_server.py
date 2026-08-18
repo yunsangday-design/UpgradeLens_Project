@@ -26,8 +26,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 让 `demo` 包可被导入
 
 from demo.jobs import Job, JobManager
+from upgradelens.core.task import SoftwareTask, TaskContext, TaskKind
 from upgradelens.presentation.projector import project_assessment
 
 
@@ -271,6 +273,10 @@ class ChatHandler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/run":
             self._handle_run()
+        elif path == "/api/capability/run":
+            self._handle_capability_run()
+        elif path == "/api/task/run":
+            self._handle_task_run()
         elif path == "/api/run-async":
             self._handle_run_async()
         elif path == "/api/scan":
@@ -367,7 +373,133 @@ class ChatHandler(SimpleHTTPRequestHandler):
             traceback.print_exc()
             self._json_response({"error": str(exc)}, 500)
 
-    def _handle_scan(self):
+    def _handle_capability_run(self):
+        """POST /api/capability/run — run any capability, return a normalized result.
+
+        The body selects a capability ``kind`` and supplies the inputs it needs
+        (``diff`` for pr/security/breaking, ``issue_text`` for issue repair,
+        ``dependency``/``source_version``/``target_version`` for upgrades). With no
+        ``repo`` the server falls back to a built-in eval fixture so a preset can be
+        replayed offline.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as exc:
+            self._json_response({"error": f"bad request: {exc}"}, 400)
+            return
+        try:
+            from upgradelens.capabilities.workbench import run_capability
+
+            kind = str(body.get("kind") or "dependency_upgrade")
+            repo = str(body.get("repo") or "").strip()
+            if not repo:
+                if kind == "dependency_upgrade":
+                    dep = body.get("dependency") or _infer_dep(
+                        str(body.get("goal", "")), None
+                    )
+                    default = _DEFAULT_REPO_BY_DEP.get(
+                        dep, "tests/fixtures/eval/pydantic_field_validator/repo"
+                    )
+                else:
+                    default = "tests/fixtures/eval/pydantic_field_validator/repo"
+                repo = str((ROOT / default).resolve().as_posix())
+            mode = str(body.get("mode") or "fake")
+            context = TaskContext(
+                repo=repo,
+                dependency=str(body.get("dependency") or ""),
+                source_version=str(body.get("source_version") or ""),
+                target_version=str(body.get("target_version") or ""),
+                unified_diff=str(body.get("diff") or ""),
+                issue_text=str(body.get("issue_text") or ""),
+                from_version=str(body.get("from_version") or ""),
+                to_version=str(body.get("to_version") or ""),
+            )
+            task = SoftwareTask(
+                task_id="workbench",
+                kind=TaskKind(kind),
+                goal=str(body.get("goal") or ""),
+                context=context,
+            )
+            result = run_capability(task, mode=mode)
+            self._json_response(result.model_dump(mode="json"))
+        except Exception as exc:
+            traceback.print_exc()
+            self._json_response({"error": str(exc)}, 500)
+
+    def _handle_task_run(self):
+        """POST /api/task/run — natural-language entry: triage text, then dispatch.
+
+        This is the M1a end-to-end bridge: a single free-text message is routed to the
+        correct capability via :func:`route_task` and executed through the unified
+        :func:`run_capability` dispatcher. Optional ``diff`` / ``issue_text`` /
+        ``from_version`` / ``to_version`` inputs can be supplied in the body for PR /
+        security / issue / breaking-change capabilities (which need more than NL can carry).
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as exc:
+            self._json_response({"error": f"bad request: {exc}"}, 400)
+            return
+        try:
+            from upgradelens.agent.router import route_task
+            from upgradelens.agent.supervisor import AgentContext, run_supervisor
+
+            text = str(body.get("text") or "").strip()
+            if not text:
+                self._json_response({"error": "text is required"}, 400)
+                return
+
+            mode = str(body.get("mode") or "fake")
+            task = route_task(text)
+            ctx = task.context
+
+            # Resolve a usable repo (mirror /api/capability/run fallback).
+            repo = ctx.repo
+            if not repo:
+                default = "tests/fixtures/eval/pydantic_field_validator/repo"
+                repo = str((ROOT / default).resolve().as_posix())
+
+            # Merge capability-specific inputs that natural language cannot provide.
+            # ``TaskContext`` is frozen, so rebuild it (do not mutate in place).
+            from upgradelens.core.task import SoftwareTask, TaskContext
+
+            merged = TaskContext(
+                repo=repo,
+                dependency=ctx.dependency,
+                source_version=ctx.source_version,
+                target_version=ctx.target_version,
+                unified_diff=str(body.get("diff") or ""),
+                issue_text=str(body.get("issue_text") or ""),
+                from_version=str(body.get("from_version") or ""),
+                to_version=str(body.get("to_version") or ""),
+            )
+            task = SoftwareTask(
+                task_id=task.task_id,
+                kind=task.kind,
+                goal=text,
+                context=merged,
+            )
+
+            # Route through the controlled Supervisor + Handoff layer (M3). A
+            # single-capability request short-circuits to dispatch_by_task; a
+            # multi-capability request fans out to isolated sub-agents.
+            agent_ctx = AgentContext(mode=mode)
+            sup = run_supervisor(task, agent_ctx, mode=mode)
+            self._json_response(
+                {
+                    "kind": task.kind.value,
+                    "goal": text,
+                    "orchestration": sup.orchestration,
+                    "capability_kinds": sup.capability_kinds,
+                    "result": sup.result.model_dump(mode="json") if sup.result else None,
+                    "sub_results": [r.model_dump(mode="json") for r in sup.sub_results],
+                }
+            )
+        except Exception as exc:
+            traceback.print_exc()
+            self._json_response({"error": str(exc)}, 500)
         """POST /api/scan — scan MVP manifests for upgradable dependencies."""
         try:
             length = int(self.headers.get("Content-Length", 0))

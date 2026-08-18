@@ -18,8 +18,7 @@ from upgradelens.capabilities.workbench import (
 from upgradelens.core.task import SoftwareTask, TaskContext, TaskKind
 
 _FIXTURE_REPO = (
-    Path(__file__).resolve().parents[2]
-    / "tests/fixtures/eval/pydantic_field_validator/repo"
+    Path(__file__).resolve().parents[2] / "tests/fixtures/eval/pydantic_field_validator/repo"
 )
 REPO = str(_FIXTURE_REPO.resolve())
 DIFF = (
@@ -78,9 +77,7 @@ def test_issue_repair_normalizes_patch_and_repro_tests() -> None:
 
 
 def test_security_review_normalizes_coverage_and_report() -> None:
-    result = run_capability(
-        _task("security_review", unified_diff=DIFF, dependency="pydantic")
-    )
+    result = run_capability(_task("security_review", unified_diff=DIFF, dependency="pydantic"))
     assert result.status == "succeeded"
     assert result.findings
     assert result.coverage, "security_review should report coverage"
@@ -120,9 +117,7 @@ def test_dependency_upgrade_normalizes_patch_and_verification() -> None:
 def test_failure_is_surfaced_not_raised() -> None:
     # A non-existent repo still yields a failed (not crashed) result for the
     # capability kinds that read from disk.
-    result = run_capability(
-        _task("pr_review", repo="/no/such/repo/here", unified_diff=DIFF)
-    )
+    result = run_capability(_task("pr_review", repo="/no/such/repo/here", unified_diff=DIFF))
     assert result.status in {"succeeded", "failed"}
     if result.status == "failed":
         assert result.error

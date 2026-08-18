@@ -89,6 +89,7 @@ class TestRunAsyncJobEmitsPlanEvents:
     def test_plan_updated_events_emitted(self):
         """Verify Job receives plan.updated events in fake mode."""
         import sys
+
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "demo"))
         from demo.jobs import Job, JobManager
 
@@ -106,9 +107,13 @@ class TestRunAsyncJobEmitsPlanEvents:
                 def _plan_event_writer(plan: AgentPlan) -> None:
                     steps_summary = []
                     for s in plan.steps:
-                        steps_summary.append({
-                            "tool": s.tool, "seq": s.seq, "status": s.status,
-                        })
+                        steps_summary.append(
+                            {
+                                "tool": s.tool,
+                                "seq": s.seq,
+                                "status": s.status,
+                            }
+                        )
                     job.emit("plan.updated", {"steps": steps_summary})
 
                 agent = DependencyUpgradeAgent(mode="fake")

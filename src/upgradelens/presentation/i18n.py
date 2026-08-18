@@ -202,9 +202,7 @@ def trust_label(level: str, locale: str = DEFAULT_LOCALE) -> str:
     return _pick(_TRUST_LABELS, level or "", locale)
 
 
-def trust_label_with_provenance(
-    level: str, provenance: str, locale: str = DEFAULT_LOCALE
-) -> str:
+def trust_label_with_provenance(level: str, provenance: str, locale: str = DEFAULT_LOCALE) -> str:
     """Return trust label, appending a network marker when provenance is online.
 
     Examples:

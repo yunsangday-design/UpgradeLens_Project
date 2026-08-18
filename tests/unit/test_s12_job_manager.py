@@ -99,6 +99,7 @@ class TestJobManager:
     def test_job_failure(self):
         mgr = JobManager(max_workers=1)
         try:
+
             def failing(j: Job):
                 raise ValueError("boom")
 
@@ -115,6 +116,7 @@ class TestJobManager:
     def test_emits_lifecycle_events(self):
         mgr = JobManager(max_workers=1)
         try:
+
             def work(j: Job):
                 j.emit("step_started", {"step": "x"})
                 return 42

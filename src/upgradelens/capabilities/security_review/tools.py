@@ -40,9 +40,7 @@ class BuildRepoContextInput(BaseModel):
 
 class SemgrepScanInput(BaseModel):
     repo_root: str = Field(description="Path to the repository root.")
-    fake: bool = Field(
-        default=True, description="Use the deterministic regex scanner (offline)."
-    )
+    fake: bool = Field(default=True, description="Use the deterministic regex scanner (offline).")
 
 
 class DependencyCveCheckInput(BaseModel):

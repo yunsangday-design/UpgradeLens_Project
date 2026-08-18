@@ -29,9 +29,7 @@ def _match_tests(change_path: str, existing: list[str]) -> list[str]:
     return [
         t
         for t in existing
-        if f"test_{stem}" in Path(t).name
-        or f"{stem}_test" in Path(t).name
-        or stem in Path(t).stem
+        if f"test_{stem}" in Path(t).name or f"{stem}_test" in Path(t).name or stem in Path(t).stem
     ]
 
 

@@ -88,9 +88,7 @@ def build_agent_plan(
     )
 
 
-def _steps_from_capability(
-    plan: CapabilityPlan, repo_is_url: bool
-) -> list[AgentPlanStep]:
+def _steps_from_capability(plan: CapabilityPlan, repo_is_url: bool) -> list[AgentPlanStep]:
     """Convert a capability's ordered ``steps`` (tool names) into plan steps."""
     seq = 0
     out: list[AgentPlanStep] = []

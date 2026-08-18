@@ -157,9 +157,7 @@ def test_live_loop_dedups_redundant_scan_calls(monkeypatch: Any) -> None:
         target_version="2.0",
         repo_is_url=is_repo_url(str(repo_dir)),
     )
-    gateway = ModelGateway(
-        ModelConfig(model="live", mode=ModelMode.LIVE, api_key="", base_url="")
-    )
+    gateway = ModelGateway(ModelConfig(model="live", mode=ModelMode.LIVE, api_key="", base_url=""))
     # The model insists on calling scan_dependency even after it succeeded.
     # After the first real run + 2 redundant hits, the loop forces convergence.
     decisions = iter(
@@ -231,9 +229,7 @@ def test_react_policy_feeds_history_to_decide(monkeypatch: Any) -> None:
         target_version="2.0",
         repo_is_url=is_repo_url(str(repo_dir)),
     )
-    gateway = ModelGateway(
-        ModelConfig(model="live", mode=ModelMode.LIVE, api_key="", base_url="")
-    )
+    gateway = ModelGateway(ModelConfig(model="live", mode=ModelMode.LIVE, api_key="", base_url=""))
 
     # Track all prompts the model receives.
     received_prompts: list[str] = []

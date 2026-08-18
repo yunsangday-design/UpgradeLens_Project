@@ -163,9 +163,7 @@ def test_tool_registry_enforces_active_capability() -> None:
 
 def test_fake_gateway_serves_canned_analyzer_response() -> None:
     gw = _fake_gateway()
-    report, used = gw.complete_structured(
-        prompt="x", schema=ImpactReport, name="analyse"
-    )
+    report, used = gw.complete_structured(prompt="x", schema=ImpactReport, name="analyse")
     assert isinstance(report, ImpactReport)
     # Fake mode never calls a real model -- the response was served from the
     # pre-generated fixture, not a network request.

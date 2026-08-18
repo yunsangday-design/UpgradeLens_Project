@@ -25,9 +25,7 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
-def collect_git_diff(
-    repo: Path, refspec: str = "HEAD~1..HEAD", *, unified: int = 3
-) -> ChangeSet:
+def collect_git_diff(repo: Path, refspec: str = "HEAD~1..HEAD", *, unified: int = 3) -> ChangeSet:
     """Parse the diff for ``refspec`` (default: the last commit)."""
     out = _git(
         repo,
@@ -43,9 +41,7 @@ def collect_git_diff(
 
 def collect_workspace_diff(repo: Path, *, unified: int = 3) -> ChangeSet:
     """Parse uncommitted changes: both unstaged and staged working-tree diffs."""
-    unstaged = _git(
-        repo, "diff", f"--unified={unified}", "--no-color", "-M", "--no-ext-diff"
-    )
+    unstaged = _git(repo, "diff", f"--unified={unified}", "--no-color", "-M", "--no-ext-diff")
     staged = _git(
         repo,
         "diff",

@@ -175,9 +175,7 @@ def score_case(
     if exp.verification_passed is not None:
         if verification_passed != exp.verification_passed:
             passed = False
-            reasons.append(
-                f"验证 passed={verification_passed} ≠ 期望 {exp.verification_passed}"
-            )
+            reasons.append(f"验证 passed={verification_passed} ≠ 期望 {exp.verification_passed}")
         else:
             reasons.append("验证满足")
 
@@ -206,8 +204,7 @@ def _render_scoreboard(
     lines = [
         "# Capability Gold-Set Evaluation",
         "",
-        f"Overall: **{total_passed}/{total}** cases passed | "
-        f"no-hallucination: **{hf}/{total}**",
+        f"Overall: **{total_passed}/{total}** cases passed | no-hallucination: **{hf}/{total}**",
         "",
         "| Capability | Cases | Passed | Pass% | Findings | Verified | "
         "Verification% | Halluc-free% |",

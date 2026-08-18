@@ -27,9 +27,7 @@ def _cites_changed_code(evidence_ids: list[str], changed_paths: set[str]) -> boo
     return False
 
 
-def security_review_verifier(
-    findings: list[Finding], change_set: ChangeSet
-) -> VerificationResult:
+def security_review_verifier(findings: list[Finding], change_set: ChangeSet) -> VerificationResult:
     """Verify evidence and enforce the high/critical security gate."""
     changed_paths = {c.path for c in change_set.files}
     checks: list[VerificationCheck] = []
@@ -46,9 +44,7 @@ def security_review_verifier(
                         if citable
                         else "verified finding does not cite changed code"
                     ),
-                    evidence_id=(
-                        finding.evidence_ids[0] if finding.evidence_ids else None
-                    ),
+                    evidence_id=(finding.evidence_ids[0] if finding.evidence_ids else None),
                 )
             )
 
@@ -69,9 +65,7 @@ def security_review_verifier(
                     if ok
                     else "high/critical finding not verified against changed code"
                 ),
-                evidence_id=(
-                    finding.evidence_ids[0] if finding.evidence_ids else None
-                ),
+                evidence_id=(finding.evidence_ids[0] if finding.evidence_ids else None),
             )
         )
 

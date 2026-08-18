@@ -330,12 +330,10 @@ NO_DOCS_PYPI_JSON = json.dumps(
 )
 
 _DDG_PARCEL_URL = (
-    "https://html.duckduckgo.com/html/"
-    "?q=parcel%20upgrade%20migration%20guide%20breaking%20changes"
+    "https://html.duckduckgo.com/html/?q=parcel%20upgrade%20migration%20guide%20breaking%20changes"
 )
 _DDG_PARCEL_CHANGELOG_URL = (
-    "https://html.duckduckgo.com/html/"
-    "?q=parcel%20changelog%20release%20notes"
+    "https://html.duckduckgo.com/html/?q=parcel%20changelog%20release%20notes"
 )
 _DDG_NOBODY_URL = (
     "https://html.duckduckgo.com/html/"
@@ -349,6 +347,7 @@ class TestWebSearchProvider(TestCase):
     @staticmethod
     def _provider():
         from upgradelens.docs.online_fallback import WebSearchProvider
+
         return WebSearchProvider()
 
     def test_discovers_urls_from_ddg_html(self):

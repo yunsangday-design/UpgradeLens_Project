@@ -48,9 +48,7 @@ def _detect_pytest_config(root: Path) -> PytestConfig:
     pyproject = root / "pyproject.toml"
     if pyproject.is_file():
         try:
-            data = tomllib.loads(
-                pyproject.read_text(encoding="utf-8", errors="replace")
-            )
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8", errors="replace"))
         except tomllib.TOMLDecodeError:
             data = {}
         tool = data.get("tool", {}) or {}

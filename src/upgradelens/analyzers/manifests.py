@@ -405,9 +405,7 @@ class AllDepsParseOutcome:
     errors: list[ParseIssue] = field(default_factory=list)
 
 
-def parse_all_requirements_txt(
-    repo_root: Path, manifest_path: Path
-) -> AllDepsParseOutcome:
+def parse_all_requirements_txt(repo_root: Path, manifest_path: Path) -> AllDepsParseOutcome:
     """Parse a ``requirements.txt`` and return ALL dependency declarations."""
     path = to_posix_rel_path(repo_root, manifest_path)
     declarations: list[DependencyDeclaration] = []
@@ -491,9 +489,7 @@ def parse_all_requirements_txt(
         declarations.append(declaration)
         if declaration.marker is not None:
             warnings.append(
-                _marker_warning(
-                    declaration, manifest_type=ManifestType.REQUIREMENTS_TXT, path=path
-                )
+                _marker_warning(declaration, manifest_type=ManifestType.REQUIREMENTS_TXT, path=path)
             )
 
     return AllDepsParseOutcome(
@@ -505,9 +501,7 @@ def parse_all_requirements_txt(
     )
 
 
-def parse_all_pyproject_toml(
-    repo_root: Path, manifest_path: Path
-) -> AllDepsParseOutcome:
+def parse_all_pyproject_toml(repo_root: Path, manifest_path: Path) -> AllDepsParseOutcome:
     """Parse ``[project].dependencies`` and return ALL dependency declarations."""
     path = to_posix_rel_path(repo_root, manifest_path)
     declarations: list[DependencyDeclaration] = []
@@ -565,8 +559,7 @@ def parse_all_pyproject_toml(
             else IssueCode.MISSING_PROJECT_DEPENDENCIES
         )
         message = (
-            "[project].dependencies is declared dynamic, "
-            "so it cannot be read statically."
+            "[project].dependencies is declared dynamic, so it cannot be read statically."
             if code is IssueCode.UNSUPPORTED_DECLARATION
             else "[project].dependencies is absent."
         )
@@ -608,8 +601,7 @@ def parse_all_pyproject_toml(
                 ParseIssue(
                     code=IssueCode.UNSUPPORTED_DEPENDENCIES_TYPE,
                     message=(
-                        "Dependency entry must be a PEP 508 string, "
-                        f"got {type(entry).__name__}."
+                        f"Dependency entry must be a PEP 508 string, got {type(entry).__name__}."
                     ),
                     manifest_type=ManifestType.PYPROJECT_TOML,
                     path=path,
@@ -658,9 +650,7 @@ def parse_all_pyproject_toml(
         declarations.append(declaration)
         if declaration.marker is not None:
             warnings.append(
-                _marker_warning(
-                    declaration, manifest_type=ManifestType.PYPROJECT_TOML, path=path
-                )
+                _marker_warning(declaration, manifest_type=ManifestType.PYPROJECT_TOML, path=path)
             )
 
     return AllDepsParseOutcome(

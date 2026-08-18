@@ -657,18 +657,12 @@ def build_parser() -> argparse.ArgumentParser:
     capability_run.add_argument(
         "--dependency", default="", help="Dependency name for upgrade/CVE checks."
     )
-    capability_run.add_argument(
-        "--source-version", default="", help="Current dependency version."
-    )
-    capability_run.add_argument(
-        "--target-version", default="", help="Target dependency version."
-    )
+    capability_run.add_argument("--source-version", default="", help="Current dependency version.")
+    capability_run.add_argument("--target-version", default="", help="Target dependency version.")
     capability_run.add_argument(
         "--mode", default="fake", choices=["fake", "live"], help="Gateway mode."
     )
-    capability_run.add_argument(
-        "--out", default="", help="Write the JSON result to this path."
-    )
+    capability_run.add_argument("--out", default="", help="Write the JSON result to this path.")
 
     run_cmd = subparsers.add_parser(
         _RUN_COMMAND,
@@ -694,23 +688,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--dependency", default=None, help="Dependency name (upgrade / CVE context)."
     )
-    run_cmd.add_argument(
-        "--source-version", default=None, help="Current dependency version."
-    )
-    run_cmd.add_argument(
-        "--target-version", default=None, help="Target dependency version."
-    )
+    run_cmd.add_argument("--source-version", default=None, help="Current dependency version.")
+    run_cmd.add_argument("--target-version", default=None, help="Target dependency version.")
     run_cmd.add_argument(
         "--issue-text",
         default="",
         help="Issue/bug report text (inline) or a path to a text file (issue repair).",
     )
-    run_cmd.add_argument(
-        "--from-version", default=None, help="Breaking-change baseline version."
-    )
-    run_cmd.add_argument(
-        "--to-version", default=None, help="Breaking-change target version."
-    )
+    run_cmd.add_argument("--from-version", default=None, help="Breaking-change baseline version.")
+    run_cmd.add_argument("--to-version", default=None, help="Breaking-change target version.")
     run_cmd.add_argument(
         "--mode",
         default="fake",
@@ -718,15 +704,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Gateway mode (default: fake, offline).",
     )
     run_cmd.add_argument("--model", default=None, help="Model name (live mode).")
-    run_cmd.add_argument(
-        "--api-key", default=None, help="API key (live mode, overrides env)."
-    )
-    run_cmd.add_argument(
-        "--base-url", default=None, help="OpenAI-compatible base url (live mode)."
-    )
-    run_cmd.add_argument(
-        "--budget-tokens", type=int, default=None, help="Maximum total tokens."
-    )
+    run_cmd.add_argument("--api-key", default=None, help="API key (live mode, overrides env).")
+    run_cmd.add_argument("--base-url", default=None, help="OpenAI-compatible base url (live mode).")
+    run_cmd.add_argument("--budget-tokens", type=int, default=None, help="Maximum total tokens.")
     run_cmd.add_argument(
         "--replay-dir",
         metavar="DIR",
@@ -744,9 +724,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only route + decompose capabilities; do not execute.",
     )
-    run_cmd.add_argument(
-        "--out", default="", help="Write the JSON result to this path."
-    )
+    run_cmd.add_argument("--out", default="", help="Write the JSON result to this path.")
 
     eval_capability = subparsers.add_parser(
         _EVAL_CAPABILITY_COMMAND,
@@ -806,31 +784,44 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     eval_issue_repair.add_argument(
-        "--cases", metavar="YAML", default=None,
+        "--cases",
+        metavar="YAML",
+        default=None,
         help="Path to the B2 cases.yaml (defaults to the bundled fixture).",
     )
     eval_issue_repair.add_argument(
-        "--repo", default=None,
+        "--repo",
+        default=None,
         help="Repository root for the cases (defaults to the bundled fixture repo).",
     )
     eval_issue_repair.add_argument(
-        "--mode", default="fake", choices=["fake", "live"],
+        "--mode",
+        default="fake",
+        choices=["fake", "live"],
         help="Gateway mode (default: fake, offline).",
     )
     eval_issue_repair.add_argument(
-        "--skip-repro", action="store_true",
+        "--skip-repro",
+        action="store_true",
         help="Skip the repro-tests-red subprocess check.",
     )
     eval_issue_repair.add_argument(
-        "--json", metavar="PATH", default="",
+        "--json",
+        metavar="PATH",
+        default="",
         help="Write the full JSON report to this path.",
     )
     eval_issue_repair.add_argument(
-        "--md", metavar="PATH", default="",
+        "--md",
+        metavar="PATH",
+        default="",
         help="Write the Markdown scoreboard to this path.",
     )
     eval_issue_repair.add_argument(
-        "--fail-under", type=float, default=None, metavar="RATE",
+        "--fail-under",
+        type=float,
+        default=None,
+        metavar="RATE",
         help="Exit non-zero when the root-cause hit rate is below RATE (CI gate).",
     )
 
@@ -1956,9 +1947,7 @@ def _cmd_run(args: Any) -> int:
     out = getattr(args, "out", "")
     if out:
         with open(out, "w", encoding="utf-8") as fh:
-            _json.dump(
-                result.model_dump(mode="json"), fh, indent=2, ensure_ascii=False
-            )
+            _json.dump(result.model_dump(mode="json"), fh, indent=2, ensure_ascii=False)
         _emit({"ok": True, "out": out})
     else:
         _emit(result)

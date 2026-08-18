@@ -499,10 +499,7 @@ def list_unified_capabilities() -> dict[str, Any]:
     """
     caps = list_unified_capabilities_fn()
     return {
-        "capabilities": [
-            c.model_dump(mode="json") if hasattr(c, "model_dump") else c
-            for c in caps
-        ]
+        "capabilities": [c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in caps]
     }
 
 

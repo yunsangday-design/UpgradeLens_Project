@@ -82,11 +82,7 @@ class IssueRepairEvalReport:
 
     @property
     def root_cause_hit_rate(self) -> float:
-        return (
-            self.root_cause_hits / self.locatable_cases
-            if self.locatable_cases
-            else 0.0
-        )
+        return self.root_cause_hits / self.locatable_cases if self.locatable_cases else 0.0
 
     @property
     def pipeline_ok_rate(self) -> float:
@@ -136,14 +132,9 @@ class IssueRepairEvalReport:
         ]
         for c in self.cases:
             hit = "—" if c.root_cause_hit is None else ("✓" if c.root_cause_hit else "✗")
-            nomatch = (
-                "—"
-                if c.no_match_correct is None
-                else ("✓" if c.no_match_correct else "✗")
-            )
+            nomatch = "—" if c.no_match_correct is None else ("✓" if c.no_match_correct else "✗")
             lines.append(
-                f"| {c.name} | {c.category} | {hit} | {nomatch} | "
-                f"{'✓' if c.pipeline_ok else '✗'} |"
+                f"| {c.name} | {c.category} | {hit} | {nomatch} | {'✓' if c.pipeline_ok else '✗'} |"
             )
         return "\n".join(lines)
 
@@ -219,9 +210,7 @@ def run_issue_repair_eval(
             )
             res = run_capability(task, mode=mode)
             pipeline_ok = (
-                res.status == "succeeded"
-                and bool(res.findings)
-                and bool(res.verification)
+                res.status == "succeeded" and bool(res.findings) and bool(res.verification)
             )
         except Exception as exc:  # noqa: BLE001 — eval must never crash
             pipeline_ok = False

@@ -16,9 +16,7 @@ from .models import IssueRepairReport
 __all__ = ["verify_issue_repair"]
 
 
-def verify_issue_repair(
-    report: IssueRepairReport, repo_root: str | Path
-) -> VerificationResult:
+def verify_issue_repair(report: IssueRepairReport, repo_root: str | Path) -> VerificationResult:
     """Verify the repair patch targets real repository files."""
     root = Path(repo_root)
     checks: list[VerificationCheck] = []
@@ -28,16 +26,12 @@ def verify_issue_repair(
             VerificationCheck(
                 name=f"patch-target:{target}",
                 passed=exists,
-                detail=(
-                    "target file exists" if exists else "patch targets a missing file"
-                ),
+                detail=("target file exists" if exists else "patch targets a missing file"),
                 evidence_id=target,
             )
         )
     passed = bool(checks) and all(c.passed for c in checks)
-    summary = (
-        "all patch targets exist" if passed else "patch targets missing files"
-    )
+    summary = "all patch targets exist" if passed else "patch targets missing files"
     return VerificationResult(
         proposal_id="issue_repair",
         checks=checks,

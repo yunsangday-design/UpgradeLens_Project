@@ -195,9 +195,7 @@ def test_verifier_proposed_offline(tmp_path: Path):
 def test_verifier_verified_when_executed(tmp_path: Path):
     repo = _repo(tmp_path)
     repro = generate_repro_test(repo_root=repo, source_path="src/app.py", issue_text="bug")
-    result = verify_test_proposal(
-        repro, runnable=True, before_pass=False, after_pass=True
-    )
+    result = verify_test_proposal(repro, runnable=True, before_pass=False, after_pass=True)
     assert result.passed is True
     assert "verified" in result.summary
 

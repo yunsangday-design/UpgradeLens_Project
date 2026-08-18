@@ -173,15 +173,11 @@ class WebSearchProvider:
 
     # ------------------------------------------------------------------ internal
 
-    def _search_one(
-        self, query: str, *, fetcher: RestrictedFetcher
-    ) -> list[DiscoveredSource]:
+    def _search_one(self, query: str, *, fetcher: RestrictedFetcher) -> list[DiscoveredSource]:
         import urllib.parse
 
         try:
-            content = fetcher.fetch(
-                f"{self._SEARCH_URL}?q={urllib.parse.quote(query)}"
-            )
+            content = fetcher.fetch(f"{self._SEARCH_URL}?q={urllib.parse.quote(query)}")
         except FETCH_EXCEPTIONS:
             return []
 

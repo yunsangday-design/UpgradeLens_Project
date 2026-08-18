@@ -24,6 +24,7 @@ Usage mirrors :class:`DependencyUpgradeAgent`::
     for finding in result.findings:
         print(finding.severity, finding.summary)
 """
+
 from __future__ import annotations
 
 import logging
@@ -71,10 +72,7 @@ def _collect_findings(result: CapabilityRunResult | None) -> list[Finding]:
         except Exception:
             try:
                 relaxed = dict(item)
-                if (
-                    relaxed.get("status") == "verified"
-                    and not relaxed.get("evidence_ids")
-                ):
+                if relaxed.get("status") == "verified" and not relaxed.get("evidence_ids"):
                     relaxed["status"] = "candidate"
                 out.append(Finding.model_validate(relaxed))
             except Exception:
@@ -106,18 +104,13 @@ class EngineeringResult(BaseModel):
     dry_run: bool = False
 
     @classmethod
-    def from_supervisor(
-        cls, task: SoftwareTask, sup: SupervisorResult
-    ) -> EngineeringResult:
+    def from_supervisor(cls, task: SoftwareTask, sup: SupervisorResult) -> EngineeringResult:
         findings: list[Finding] = []
         if sup.result is not None:
             findings.extend(_collect_findings(sup.result))
         for sub in sup.sub_results or []:
             findings.extend(_collect_findings(sub))
-        kinds = [
-            TaskKind(k) if isinstance(k, str) else k
-            for k in (sup.capability_kinds or [])
-        ]
+        kinds = [TaskKind(k) if isinstance(k, str) else k for k in (sup.capability_kinds or [])]
         return cls(
             task=task,
             kinds=kinds,

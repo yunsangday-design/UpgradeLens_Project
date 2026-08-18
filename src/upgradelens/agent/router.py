@@ -457,9 +457,7 @@ class Router:
                 ordered.append(k)
         return ordered
 
-    def route_task(
-        self, text: str, *, task_id: str | None = None
-    ) -> SoftwareTask:
+    def route_task(self, text: str, *, task_id: str | None = None) -> SoftwareTask:
         """Route ``text`` and wrap the resulting :class:`Intent` in a SoftwareTask.
 
         Fully offline in ``fake`` mode -- the underlying router skips the model and

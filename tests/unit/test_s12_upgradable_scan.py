@@ -91,9 +91,7 @@ class TestParseAllPyprojectToml:
 
     def test_dynamic_dependencies(self, tmp_path: Path):
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\nname = "test"\ndynamic = ["dependencies"]\n'
-        )
+        pyproject.write_text('[project]\nname = "test"\ndynamic = ["dependencies"]\n')
         outcome = parse_all_pyproject_toml(tmp_path, pyproject)
         assert len(outcome.declarations) == 0
         assert len(outcome.warnings) == 1
@@ -111,39 +109,45 @@ class TestLatestStableVersion:
         fetcher = MagicMock()
         client = PyPIClient(fetcher)
         data = {"info": {"version": "0.0.0"}, "releases": releases}
-        fetcher.fetch.return_value = MagicMock(
-            content=json.dumps(data).encode("utf-8")
-        )
+        fetcher.fetch.return_value = MagicMock(content=json.dumps(data).encode("utf-8"))
         return client
 
     def test_returns_latest_stable(self):
-        client = self._mock_client({
-            "1.0.0": [{"yanked": False}],
-            "2.0.0": [{"yanked": False}],
-            "2.1.0a1": [{"yanked": False}],  # pre-release
-        })
+        client = self._mock_client(
+            {
+                "1.0.0": [{"yanked": False}],
+                "2.0.0": [{"yanked": False}],
+                "2.1.0a1": [{"yanked": False}],  # pre-release
+            }
+        )
         assert client.latest_stable_version("pkg") == "2.0.0"
 
     def test_skips_yanked(self):
-        client = self._mock_client({
-            "1.0.0": [{"yanked": False}],
-            "2.0.0": [{"yanked": True}],  # fully yanked
-        })
+        client = self._mock_client(
+            {
+                "1.0.0": [{"yanked": False}],
+                "2.0.0": [{"yanked": True}],  # fully yanked
+            }
+        )
         assert client.latest_stable_version("pkg") == "1.0.0"
 
     def test_partially_yanked_not_excluded(self):
         """If not ALL files are yanked, the release is NOT excluded."""
-        client = self._mock_client({
-            "1.0.0": [{"yanked": False}],
-            "2.0.0": [{"yanked": True}, {"yanked": False}],
-        })
+        client = self._mock_client(
+            {
+                "1.0.0": [{"yanked": False}],
+                "2.0.0": [{"yanked": True}, {"yanked": False}],
+            }
+        )
         assert client.latest_stable_version("pkg") == "2.0.0"
 
     def test_no_stable_returns_none(self):
-        client = self._mock_client({
-            "1.0.0a1": [{"yanked": False}],
-            "2.0.0.dev1": [{"yanked": False}],
-        })
+        client = self._mock_client(
+            {
+                "1.0.0a1": [{"yanked": False}],
+                "2.0.0.dev1": [{"yanked": False}],
+            }
+        )
         assert client.latest_stable_version("pkg") is None
 
     def test_empty_releases(self):
@@ -164,8 +168,7 @@ class TestScanUpgradableDependencies:
         req.write_text("requests==2.28.0\nflask>=2.0\n")
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            '[project]\nname = "myapp"\n'
-            'dependencies = ["pydantic==2.5.0", "click"]\n'
+            '[project]\nname = "myapp"\ndependencies = ["pydantic==2.5.0", "click"]\n'
         )
         return tmp_path
 
@@ -246,16 +249,12 @@ class TestRouterScanIntent:
 
     def test_scan_keyword_with_repo(self):
         router = Router()
-        intent = router.route(
-            "https://github.com/user/repo 扫描所有依赖"
-        )
+        intent = router.route("https://github.com/user/repo 扫描所有依赖")
         assert intent.kind == "scan_upgradable"
 
     def test_scan_keyword_en_with_repo(self):
         router = Router()
-        intent = router.route(
-            "https://github.com/user/repo scan dependencies"
-        )
+        intent = router.route("https://github.com/user/repo scan dependencies")
         assert intent.kind == "scan_upgradable"
 
     def test_scan_keyword_without_repo_not_scan(self):

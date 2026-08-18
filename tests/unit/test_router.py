@@ -115,8 +115,7 @@ def test_route_task_triages_issue_repair():
 
 def test_route_task_triages_breaking_change():
     task = route_task(
-        "Analyze the breaking change when upgrading requests from 2 to 3 "
-        "in https://github.com/x/y"
+        "Analyze the breaking change when upgrading requests from 2 to 3 in https://github.com/x/y"
     )
     assert task.kind == TaskKind.BREAKING_CHANGE
 

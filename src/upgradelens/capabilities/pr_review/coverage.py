@@ -26,13 +26,9 @@ class CoverageSummary:
     __test__ = False
 
 
-def compute_pr_review_coverage(
-    findings: list[Finding], change_set: ChangeSet
-) -> CoverageSummary:
+def compute_pr_review_coverage(findings: list[Finding], change_set: ChangeSet) -> CoverageSummary:
     """Fraction of changed files cited by at least one finding's evidence."""
-    changed = {
-        c.path for c in change_set.files if c.label is not ChangeLabel.DELETED
-    }
+    changed = {c.path for c in change_set.files if c.label is not ChangeLabel.DELETED}
     cited: set[str] = set()
     for finding in findings:
         for eid in finding.evidence_ids:

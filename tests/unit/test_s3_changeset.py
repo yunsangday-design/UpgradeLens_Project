@@ -91,9 +91,7 @@ def _init_repo(path: Path) -> None:
         ["git", "-C", str(path), "config", "user.email", "test@example.com"],
         check=True,
     )
-    subprocess.run(
-        ["git", "-C", str(path), "config", "user.name", "Test"], check=True
-    )
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
 
 
 def test_collect_git_diff_on_temp_repo(tmp_path: Path) -> None:
@@ -173,9 +171,7 @@ def test_scan_repository(tmp_path: Path) -> None:
     )
     tests = tmp_path / "tests"
     tests.mkdir()
-    (tests / "test_demo.py").write_text(
-        "def test_ok():\n    assert True\n", encoding="utf-8"
-    )
+    (tests / "test_demo.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     (tmp_path / "mod.py").write_text("def helper():\n    return 3\n", encoding="utf-8")
 
     profile = scan_repository(tmp_path)

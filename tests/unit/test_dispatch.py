@@ -6,9 +6,7 @@ from upgradelens.agent.dispatch import dispatch_by_task
 from upgradelens.capabilities.workbench import run_capability
 from upgradelens.core.task import SoftwareTask, TaskContext, TaskKind
 
-_REPO = (
-    "tests/fixtures/eval/pydantic_field_validator/repo"
-)
+_REPO = "tests/fixtures/eval/pydantic_field_validator/repo"
 
 
 def _task(kind: TaskKind, **ctx) -> SoftwareTask:

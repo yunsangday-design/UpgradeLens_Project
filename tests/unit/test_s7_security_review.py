@@ -80,9 +80,7 @@ def _fake_gateway() -> ModelGateway:
 def test_review_security_offline(tmp_path: Path) -> None:
     _make_repo(tmp_path)
     gw = _fake_gateway()
-    result = review_security(
-        repo_root=tmp_path, unified_diff=APP_DIFF, gateway=gw
-    )
+    result = review_security(repo_root=tmp_path, unified_diff=APP_DIFF, gateway=gw)
 
     # Model node served from the canned fixture, not a real call.
     assert result.used_model is False
@@ -257,17 +255,13 @@ def test_sarif_projection() -> None:
     findings = _scan_text(code, "app/main.py")
     sarif = to_sarif(SemgrepResult(findings=findings, used_fake=True))
     assert sarif["version"] == "2.1.0"
-    assert (
-        sarif["runs"][0]["tool"]["driver"]["name"] == "upgradelens-security-review"
-    )
+    assert sarif["runs"][0]["tool"]["driver"]["name"] == "upgradelens-security-review"
     assert len(sarif["runs"][0]["results"]) == len(findings)
     assert sarif["runs"][0]["results"][0]["ruleId"].startswith("semgrep:")
 
 
 def test_run_semgrep_offline_returns_result(tmp_path: Path) -> None:
-    (tmp_path / "app.py").write_text(
-        'SECRET = "abcdefghijklmnop"\n', encoding="utf-8"
-    )
+    (tmp_path / "app.py").write_text('SECRET = "abcdefghijklmnop"\n', encoding="utf-8")
     res = run_semgrep(tmp_path, fake=True)
     assert res.used_fake is True
     assert any(f.category == SecurityCategory.SECRET for f in res.findings)

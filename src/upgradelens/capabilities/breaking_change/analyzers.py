@@ -65,9 +65,7 @@ def compare_versions(from_version: str, to_version: str) -> VersionComparison:
         level = "patch"
     else:
         level = "none"
-    return VersionComparison(
-        from_version=from_version, to_version=to_version, level=level
-    )
+    return VersionComparison(from_version=from_version, to_version=to_version, level=level)
 
 
 @dataclass(frozen=True)
@@ -79,9 +77,7 @@ class VersionComparison:
     __test__ = False
 
 
-def classify_api_change(
-    symbol: str, old_signature: str, new_signature: str
-) -> ApiChangeKind:
+def classify_api_change(symbol: str, old_signature: str, new_signature: str) -> ApiChangeKind:
     """Heuristic API-change classifier (deterministic, no model)."""
     if new_signature == "":
         return ApiChangeKind.DELETION
@@ -112,9 +108,7 @@ def _changed_symbols(file_change: object) -> set[str]:
     return syms
 
 
-def detect_breaking_changes(
-    change_set: ChangeSet, repo_root: str | Path
-) -> list[BreakingChange]:
+def detect_breaking_changes(change_set: ChangeSet, repo_root: str | Path) -> list[BreakingChange]:
     """Deterministic pre-filter: changed public symbols become candidates.
 
     The model node performs the authoritative classification; this step only
@@ -160,9 +154,7 @@ def report_to_findings(report: BreakingChangeReport) -> list[Finding]:
     return findings
 
 
-def _build_prompt(
-    change_set: ChangeSet, comparison: VersionComparison
-) -> str:
+def _build_prompt(change_set: ChangeSet, comparison: VersionComparison) -> str:
     files = ", ".join(c.path for c in change_set.files) or "(none)"
     return (
         f"Detect breaking changes for upgrade {comparison.from_version} -> "

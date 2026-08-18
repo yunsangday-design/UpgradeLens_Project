@@ -337,10 +337,7 @@ _AGENT_REPEAT_EXAMPLE = FewShotExample(
         '{"tool": "retrieve_for_package", "arguments": {}, "done": false, '
         '"thought": "code already scanned; move to documentation retrieval."}'
     ),
-    bad=(
-        '{"tool": "scan_code", "arguments": {}, "done": false, '
-        '"thought": "rescan to be safe."}'
-    ),
+    bad=('{"tool": "scan_code", "arguments": {}, "done": false, "thought": "rescan to be safe."}'),
     rejection=(
         "scan_code already succeeded (it is in tools_done). Re-calling it re-reads the "
         "same files and wastes a round-trip; the loop also skips it deterministically. "

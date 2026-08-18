@@ -40,8 +40,7 @@ _CASES = [
         {"issue_text": "Login fails with traceback"},
     ),
     (
-        "Analyze the breaking change when upgrading requests "
-        "from 2 to 3 in https://github.com/x/y",
+        "Analyze the breaking change when upgrading requests from 2 to 3 in https://github.com/x/y",
         TaskKind.BREAKING_CHANGE,
         {"unified_diff": _SAMPLE_DIFF, "from_version": "2", "to_version": "3"},
     ),

@@ -25,9 +25,7 @@ def _cites_changed_code(evidence_ids: list[str], changed_paths: set[str]) -> boo
     return False
 
 
-def verify_breaking_changes(
-    findings: list[Finding], change_set: ChangeSet
-) -> VerificationResult:
+def verify_breaking_changes(findings: list[Finding], change_set: ChangeSet) -> VerificationResult:
     """Verify that every verified breaking change cites real changed code."""
     changed_paths = {c.path for c in change_set.files}
     checks: list[VerificationCheck] = []

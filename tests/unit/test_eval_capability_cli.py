@@ -28,9 +28,7 @@ def test_eval_capability_kind_filter_and_gate(capsys):
 def test_eval_capability_writes_json(tmp_path, capsys):
     json_path = tmp_path / "report.json"
     md_path = tmp_path / "scoreboard.md"
-    code = cli_main(
-        ["eval-capability", "--json", str(json_path), "--md", str(md_path)]
-    )
+    code = cli_main(["eval-capability", "--json", str(json_path), "--md", str(md_path)])
     assert code == 0
     capsys.readouterr()
     payload = json.loads(json_path.read_text(encoding="utf-8"))

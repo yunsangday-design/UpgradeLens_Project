@@ -16,8 +16,6 @@ from upgradelens.core.verification import VerificationResult
 __all__ = ["verify_security"]
 
 
-def verify_security(
-    findings: list[Finding], change_set: ChangeSet
-) -> VerificationResult:
+def verify_security(findings: list[Finding], change_set: ChangeSet) -> VerificationResult:
     """Run the security verification gate over a set of findings."""
     return security_review_verifier(findings, change_set)

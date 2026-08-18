@@ -281,10 +281,7 @@ class ToolRegistry:
         self._active_capability_kind = kind
 
     def _enforce_capability(self, name: str) -> None:
-        if (
-            self._capability_registry is not None
-            and self._active_capability_kind is not None
-        ):
+        if self._capability_registry is not None and self._active_capability_kind is not None:
             self._capability_registry.require_tool(self._active_capability_kind, name)
 
     def run(

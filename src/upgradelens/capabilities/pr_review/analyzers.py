@@ -98,9 +98,7 @@ def recommend_tests(
     return proposals
 
 
-def produce_test_gap_findings(
-    change_set: ChangeSet, profile: RepositoryProfile
-) -> list[Finding]:
+def produce_test_gap_findings(change_set: ChangeSet, profile: RepositoryProfile) -> list[Finding]:
     """Produce citable ``test_gap`` findings for changed files lacking tests (S8)."""
     return [g.to_finding() for g in analyze_test_gaps(change_set, profile)]
 

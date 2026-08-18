@@ -76,9 +76,7 @@ def analyze_test_gaps(
 
     def has_test(stem: str) -> bool:
         return any(
-            f"test_{stem}" in Path(t).name
-            or f"{stem}_test" in Path(t).name
-            or stem in Path(t).stem
+            f"test_{stem}" in Path(t).name or f"{stem}_test" in Path(t).name or stem in Path(t).stem
             for t in existing
         )
 

@@ -171,17 +171,13 @@ def run_capability(
                     review_pull_request,
                 )
 
-                raw = review_pull_request(
-                    repo_root=repo, unified_diff=diff, gateway=gw
-                )
+                raw = review_pull_request(repo_root=repo, unified_diff=diff, gateway=gw)
             elif kind == "issue_repair":
                 from upgradelens.capabilities.issue_repair.analyzers import (
                     repair_issue,
                 )
 
-                raw = repair_issue(
-                    repo_root=repo, issue_text=issue_text, gateway=gw
-                )
+                raw = repair_issue(repo_root=repo, issue_text=issue_text, gateway=gw)
             elif kind == "security_review":
                 from upgradelens.capabilities.security_review.analyzers import (
                     review_security,
@@ -247,9 +243,7 @@ def _norm_dependency_upgrade(raw: Any, res: CapabilityRunResult) -> None:
     risks = list(getattr(assessment, "verified_risks", [])) + list(
         getattr(assessment, "degraded_risks", [])
     )
-    res.findings = [
-        _to_jsonable_safe(_upgrade_finding_view_to_finding(v)) for v in risks
-    ]
+    res.findings = [_to_jsonable_safe(_upgrade_finding_view_to_finding(v)) for v in risks]
     res.degradations = list(getattr(assessment, "degradations", []) or [])
     res.test_results = [
         _to_jsonable_safe(_recommended_test_to_proposal(t))
@@ -309,9 +303,7 @@ def _norm_issue_repair(raw: Any, res: CapabilityRunResult) -> None:
 
 def _norm_security_review(raw: Any, res: CapabilityRunResult) -> None:
     res.findings = [_to_jsonable_safe(f) for f in (getattr(raw, "findings", []) or [])]
-    res.test_results = [
-        _to_jsonable_safe(t) for t in (getattr(raw, "test_proposals", []) or [])
-    ]
+    res.test_results = [_to_jsonable_safe(t) for t in (getattr(raw, "test_proposals", []) or [])]
     res.action_proposals = list(res.test_results)
     gate = getattr(raw, "gate", None)
     if gate is not None:
@@ -338,9 +330,9 @@ def _norm_breaking_change(raw: Any, res: CapabilityRunResult) -> None:
 
 
 def _upgrade_finding_view_to_finding(view: UpgradeFindingView) -> Finding:
-    evidence_ids = [
-        c.evidence_id for c in getattr(view, "code", []) if c.evidence_id
-    ] + [d.evidence_id for d in getattr(view, "docs", []) if d.evidence_id]
+    evidence_ids = [c.evidence_id for c in getattr(view, "code", []) if c.evidence_id] + [
+        d.evidence_id for d in getattr(view, "docs", []) if d.evidence_id
+    ]
     sev = view.severity if view.severity in _SEVERITY_NAMES else "low"
     ev = view.evidence_status
     if ev == "verified" and evidence_ids:

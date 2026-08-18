@@ -41,7 +41,5 @@ class VerificationResult(BaseModel):
     @model_validator(mode="after")
     def _derive_passed(self) -> VerificationResult:
         """True only when at least one check ran and all of them passed."""
-        object.__setattr__(
-            self, "passed", bool(self.checks) and all(c.passed for c in self.checks)
-        )
+        object.__setattr__(self, "passed", bool(self.checks) and all(c.passed for c in self.checks))
         return self

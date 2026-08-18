@@ -85,9 +85,7 @@ class TestTemporaryRetrieveTrust:
         """When source_trust_map is None, default to community."""
         url = "https://unknown.io/page"
         chunk = _make_chunk(url, "breaking change migration upgrade v2")
-        evidence = temporary_retrieve(
-            "pkg", "1.0", "2.0", "upgrade", [], [chunk]
-        )
+        evidence = temporary_retrieve("pkg", "1.0", "2.0", "upgrade", [], [chunk])
         assert evidence[0].trust_level == "community"
 
     def test_mixed_sources_get_correct_trust(self):

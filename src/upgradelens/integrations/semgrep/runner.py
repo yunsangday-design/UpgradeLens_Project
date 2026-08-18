@@ -52,9 +52,7 @@ def run_semgrep(
     if fake:
         return SemgrepResult(findings=_fake_scan(repo_root), used_fake=True)
     if config is not None and config not in ALLOWED_CONFIGS:
-        raise ValueError(
-            f"semgrep config {config!r} not allowed; use one of {ALLOWED_CONFIGS}"
-        )
+        raise ValueError(f"semgrep config {config!r} not allowed; use one of {ALLOWED_CONFIGS}")
     if not check_semgrep_available():
         raise RuntimeError(
             "semgrep CLI is not available; the security-review capability "
@@ -62,9 +60,7 @@ def run_semgrep(
             "the offline scanner."
         )
     cmd = ["semgrep", "--sarif", "--config", config or "auto", str(repo_root)]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout, check=False
-    )
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     stdout = proc.stdout or ""
     if len(stdout.encode("utf-8", "ignore")) > MAX_OUTPUT_BYTES:
         raise RuntimeError("semgrep output exceeded the size limit")

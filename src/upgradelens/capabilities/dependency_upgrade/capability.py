@@ -24,9 +24,7 @@ __all__ = ["DependencyUpgradeCapability", "DEPENDENCY_UPGRADE_STEPS"]
 
 # ``DEFAULT_PLAN_STEPS`` is a sequence of plan-step dicts; the capability plan
 # declares the *ordered tool names* (strings), so we project them out.
-DEPENDENCY_UPGRADE_STEPS: tuple[str, ...] = tuple(
-    step["tool"] for step in DEFAULT_PLAN_STEPS
-)
+DEPENDENCY_UPGRADE_STEPS: tuple[str, ...] = tuple(step["tool"] for step in DEFAULT_PLAN_STEPS)
 
 
 class DependencyUpgradeCapability(BaseCapability):

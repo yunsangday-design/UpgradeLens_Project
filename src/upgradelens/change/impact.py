@@ -120,6 +120,4 @@ def analyze_impact(changeset: ChangeSet, root: str | Path) -> ChangeImpact:
         f"{len(direct)} direct, {len(impacted)} impacted across "
         f"{changeset.stat.files_changed} changed file(s)"
     )
-    return ChangeImpact(
-        direct=direct, impacted=impacted, labels=labels, summary=summary
-    )
+    return ChangeImpact(direct=direct, impacted=impacted, labels=labels, summary=summary)

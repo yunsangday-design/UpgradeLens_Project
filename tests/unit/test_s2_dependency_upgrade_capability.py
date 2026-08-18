@@ -57,9 +57,7 @@ def test_default_capabilities_registers_dependency_upgrade() -> None:
 
 def test_capability_build_plan_returns_deterministic_steps() -> None:
     cap = build_dependency_upgrade_capability()
-    task = route_task(
-        "upgrade pydantic in https://github.com/foo/bar to 2.0.0", task_id="s2"
-    )
+    task = route_task("upgrade pydantic in https://github.com/foo/bar to 2.0.0", task_id="s2")
     plan = cap.build_plan(task)
     assert plan.capability_kind == "dependency_upgrade"
     assert tuple(plan.steps) == DEPENDENCY_UPGRADE_STEPS
@@ -136,9 +134,7 @@ def test_adapter_verification_from_verified() -> None:
 
 
 def test_software_task_to_request() -> None:
-    task = route_task(
-        "upgrade pydantic in https://github.com/foo/bar to 2.0.0", task_id="s2"
-    )
+    task = route_task("upgrade pydantic in https://github.com/foo/bar to 2.0.0", task_id="s2")
     request = software_task_to_request(task)
     assert request.repo == "https://github.com/foo/bar"
     assert request.dependency == "pydantic"
@@ -147,17 +143,13 @@ def test_software_task_to_request() -> None:
 
 def test_fake_end_to_end_capability_flow() -> None:
     gw = _fake_gateway()
-    task = route_task(
-        "upgrade pydantic in https://github.com/foo/bar to 2.0.0", task_id="s2"
-    )
+    task = route_task("upgrade pydantic in https://github.com/foo/bar to 2.0.0", task_id="s2")
     cap = build_dependency_upgrade_capability()
     plan = cap.build_plan(task)
     assert plan.steps  # deterministic steps exist
 
     # Analyzer node is served entirely by the pre-generated fake response.
-    report, used = gw.complete_structured(
-        prompt="analyze", schema=ImpactReport, name="analyse"
-    )
+    report, used = gw.complete_structured(prompt="analyze", schema=ImpactReport, name="analyse")
     assert isinstance(report, ImpactReport)
     assert used.mode == "fake"
     findings = findings_from_impact(report)

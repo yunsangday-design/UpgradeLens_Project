@@ -29,9 +29,7 @@ def test_dry_run_routes_issue_repair():
 
 
 def test_dry_run_routes_pr_review_from_url():
-    res = _agent().run(
-        "review the PR https://github.com/foo/bar", dry_run=True
-    )
+    res = _agent().run("review the PR https://github.com/foo/bar", dry_run=True)
     assert res.dry_run is True
     assert TaskKind.PR_REVIEW in res.kinds
 

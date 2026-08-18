@@ -86,11 +86,7 @@ def decompose_task(task: SoftwareTask, ctx: AgentContext) -> list[TaskKind]:
     )
     if ctx.allowed_capabilities is not None:
         allowed = {str(a).lower() for a in ctx.allowed_capabilities}
-        kinds = [
-            k
-            for k in kinds
-            if k.value.lower() in allowed or k.name.lower() in allowed
-        ]
+        kinds = [k for k in kinds if k.value.lower() in allowed or k.name.lower() in allowed]
     return kinds
 
 

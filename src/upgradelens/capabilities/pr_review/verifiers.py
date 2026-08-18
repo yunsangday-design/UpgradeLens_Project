@@ -27,9 +27,7 @@ def _cites_changed_code(evidence_ids: list[str], changed_paths: set[str]) -> boo
     return False
 
 
-def pr_review_verifier(
-    findings: list[Finding], change_set: ChangeSet
-) -> VerificationResult:
+def pr_review_verifier(findings: list[Finding], change_set: ChangeSet) -> VerificationResult:
     """Verify that every verified finding cites real changed code."""
     changed_paths = {c.path for c in change_set.files}
     checks: list[VerificationCheck] = []

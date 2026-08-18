@@ -154,9 +154,7 @@ def _build_evidence_summary(acc: _Accumulator) -> str:
             snippet = u.snippet.replace("\n", " ")
             if len(snippet) > _MAX_CODE_SNIPPET_CHARS:
                 snippet = snippet[:_MAX_CODE_SNIPPET_CHARS] + " …"
-            lines.append(
-                f"- {u.symbol} ({u.kind.value}) @ {u.path}:{u.start_line}: {snippet}"
-            )
+            lines.append(f"- {u.symbol} ({u.kind.value}) @ {u.path}:{u.start_line}: {snippet}")
 
     if acc.doc_runs:
         docs: list[DocEvidence] = [e for r in acc.doc_runs for e in r.top_doc_evidence]
@@ -369,17 +367,13 @@ def _already_collected(tool: str, acc: _Accumulator) -> bool:
     return False
 
 
-def _record_redundant_call(
-    plan: AgentPlan, plan_writer: Any, tool: str, turn: int
-) -> None:
+def _record_redundant_call(plan: AgentPlan, plan_writer: Any, tool: str, turn: int) -> None:
     """Record that the model re-called ``tool`` although its result is collected.
 
     A succeeded step stays succeeded; we only annotate its observation so the plan
     stays truthful without accumulating per-call ad-hoc steps.
     """
-    prior = next(
-        (s for s in plan.steps if s.tool == tool and s.status == SUCCEEDED), None
-    )
+    prior = next((s for s in plan.steps if s.tool == tool and s.status == SUCCEEDED), None)
     if prior is not None:
         note = f"redundant re-call at turn {turn}; skipped (already collected)"
         prior.observation = "; ".join(x for x in (prior.observation, note) if x)
@@ -999,9 +993,9 @@ def _run_driven(
         _sync_plan(plan_writer, plan)
 
         # Record tool result on ctx so the next _decide call can see it.
-        ctx.tool_history.append({
-            "turn": str(turn), "tool": decision.tool, "observation": observation or ""
-        })
+        ctx.tool_history.append(
+            {"turn": str(turn), "tool": decision.tool, "observation": observation or ""}
+        )
 
         if not ok:
             plan.notes.append(f"step {step.id} ({decision.tool}) failed: {observation}")

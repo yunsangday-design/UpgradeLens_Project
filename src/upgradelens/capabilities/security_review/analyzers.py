@@ -58,9 +58,7 @@ _CVE_DB: dict[str, dict[str, str]] = {
     "django": {"<2.2.28": "CVE-2022-28346: SQL injection in Django < 2.2.28."},
     "flask": {"<2.2.5": "CVE-2023-30861: cookie deserialization in Flask < 2.2.5."},
     "pyyaml": {"<5.4": "CVE-2020-1747: arbitrary code execution in PyYAML < 5.4."},
-    "requests": {
-        "<2.20.0": "CVE-2019-11324: credential leak on redirect in requests < 2.20.0."
-    },
+    "requests": {"<2.20.0": "CVE-2019-11324: credential leak on redirect in requests < 2.20.0."},
 }
 
 _PIN_RE = re.compile(r"^([A-Za-z0-9_.\-]+)\s*==\s*([0-9][^\s;]*)")
@@ -155,9 +153,7 @@ def check_dependency_cves(
     return findings
 
 
-def report_to_findings(
-    report: SecurityReviewReport, change_set: ChangeSet
-) -> list[Finding]:
+def report_to_findings(report: SecurityReviewReport, change_set: ChangeSet) -> list[Finding]:
     """Convert security findings into pipeline :class:`Finding` values."""
     findings: list[Finding] = []
     for sf in report.findings:
@@ -172,8 +168,7 @@ def report_to_findings(
                 evidence_ids=list(sf.evidence_refs),
                 status=FindingStatus.REJECTED if sf.false_positive else sf.status,
                 requires_approval=(
-                    sf.severity in (Severity.CRITICAL, Severity.HIGH)
-                    and not sf.false_positive
+                    sf.severity in (Severity.CRITICAL, Severity.HIGH) and not sf.false_positive
                 ),
             )
         )
@@ -276,9 +271,7 @@ def _source_path_of(refs: list[str]) -> str:
     return ""
 
 
-def _security_test_proposals(
-    report: SecurityReviewReport, repo_root: str
-) -> list[TestProposal]:
+def _security_test_proposals(report: SecurityReviewReport, repo_root: str) -> list[TestProposal]:
     """Generate a security regression test per real (non-false-positive) finding (S8)."""
     proposals: list[TestProposal] = []
     for sf in report.findings:
@@ -288,8 +281,6 @@ def _security_test_proposals(
         if not src:
             continue
         proposals.append(
-            generate_security_regression_test(
-                repo_root=repo_root, source_path=src, finding=sf
-            )
+            generate_security_regression_test(repo_root=repo_root, source_path=src, finding=sf)
         )
     return proposals

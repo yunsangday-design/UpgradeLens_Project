@@ -59,9 +59,7 @@ def _fake_gateway() -> ModelGateway:
 def test_review_pull_request_offline(tmp_path: Path) -> None:
     _make_repo(tmp_path)
     gw = _fake_gateway()
-    result = review_pull_request(
-        repo_root=tmp_path, unified_diff=APP_DIFF, gateway=gw
-    )
+    result = review_pull_request(repo_root=tmp_path, unified_diff=APP_DIFF, gateway=gw)
 
     # Model node served from the canned fixture, not a real call.
     assert result.used.mode == "fake"
@@ -94,9 +92,7 @@ def test_review_pull_request_offline(tmp_path: Path) -> None:
 def test_pr_review_renderer(tmp_path: Path) -> None:
     _make_repo(tmp_path)
     gw = _fake_gateway()
-    result = review_pull_request(
-        repo_root=tmp_path, unified_diff=APP_DIFF, gateway=gw
-    )
+    result = review_pull_request(repo_root=tmp_path, unified_diff=APP_DIFF, gateway=gw)
     text = render_pr_review(result)
     assert "PR Review" in text
     assert "logic_risk" in text

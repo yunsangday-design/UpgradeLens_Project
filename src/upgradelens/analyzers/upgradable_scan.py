@@ -49,9 +49,7 @@ __all__ = [
 # Domain models
 # ---------------------------------------------------------------------------
 
-UpdateStatus = Literal[
-    "upgradable", "up_to_date", "unresolved", "unsupported", "lookup_failed"
-]
+UpdateStatus = Literal["upgradable", "up_to_date", "unresolved", "unsupported", "lookup_failed"]
 
 
 class DependencyUpdateItem(BaseModel):
@@ -76,9 +74,7 @@ class UpgradableScanResult(BaseModel):
     total_declarations: int = 0
     items: list[DependencyUpdateItem] = Field(default_factory=list)
     errors: list[ParseIssue] = Field(default_factory=list)
-    scanned_at: str = Field(
-        default_factory=lambda: _dt.datetime.now(_dt.UTC).isoformat()
-    )
+    scanned_at: str = Field(default_factory=lambda: _dt.datetime.now(_dt.UTC).isoformat())
 
 
 # ---------------------------------------------------------------------------

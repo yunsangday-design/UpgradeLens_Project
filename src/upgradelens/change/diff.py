@@ -67,7 +67,10 @@ def _parse_hunk(raw: list[str], start: int) -> tuple[ChangeHunk, int]:
         # Not a real hunk header; bail out consuming only this line.
         return (
             ChangeHunk(
-                old_start=0, old_count=0, new_start=0, new_count=0,
+                old_start=0,
+                old_count=0,
+                new_start=0,
+                new_count=0,
                 lines=[raw[start]],
             ),
             start + 1,

@@ -33,9 +33,7 @@ def test_list_unified_capabilities():
 
 
 def test_run_capability_fake():
-    result = mcp_server.run_capability(
-        "security_review", repo=str(FIXTURE_REPO), mode="fake"
-    )
+    result = mcp_server.run_capability("security_review", repo=str(FIXTURE_REPO), mode="fake")
     assert result["capability"] == "security_review"
     assert "status" in result
 

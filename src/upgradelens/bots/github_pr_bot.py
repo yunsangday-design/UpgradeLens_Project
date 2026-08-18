@@ -142,12 +142,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pr", required=True, type=int, help="PR number")
     parser.add_argument("--token", default=None, help="GitHub token (or GITHUB_TOKEN env)")
     parser.add_argument(
-        "--mode", default="fake", choices=["fake", "live", "replay"],
+        "--mode",
+        default="fake",
+        choices=["fake", "live", "replay"],
         help="capability gateway mode (default: fake, offline)",
     )
     parser.add_argument("--repo-root", default=None, help="local checkout of the PR head")
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="print the report instead of posting a comment",
     )
     args = parser.parse_args(argv)

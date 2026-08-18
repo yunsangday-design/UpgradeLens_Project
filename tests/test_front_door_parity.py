@@ -95,9 +95,12 @@ def test_demo_reuses_the_shared_evidence_collection() -> None:
     )
 
     assert result["code_report"] == expected.code_report
-    assert expected.skill is not None
-    assert result["skill"] is not None
-    assert result["skill"].skill_id == expected.skill.skill_id
+    # LS-1 removed legacy SkillPackage resolution from the shared evidence
+    # collection: ``expected.skill`` is intentionally None and the demo must
+    # reach that conclusion independently (the parity check is now over the
+    # code report + the absence of a resolved legacy pack).
+    assert expected.skill is None
+    assert result["skill"] is None
     # The verifier appends caveats of its own, so this is containment rather
     # than equality: every caveat the *pipeline* raised must reach the demo.
     assert set(expected.degradations) <= set(result["verified"].degradations)

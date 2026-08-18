@@ -16,7 +16,7 @@ from upgradelens.agent.loop import _Accumulator, _build_collection, _collection_
 from upgradelens.domain import DependencyScanResult
 from upgradelens.domain.code_evidence import CodeEvidenceReport, CodeEvidenceSummary
 from upgradelens.pipeline import AssessmentRequest, build_evidence_collection
-from upgradelens.tools.registry import default_registry, resolve_skill_package
+from upgradelens.tools.registry import default_registry
 
 
 def _code_report() -> CodeEvidenceReport:
@@ -95,9 +95,9 @@ def test_build_collection_carries_source_version_and_scan_result() -> None:
     assert collection.source_version.spec == ">=1.4,<2"
     assert collection.source_version.status == "declared"
     assert collection.dependency_scan is acc.scan_result
-    # A Skill Pack is optional; even with only the generic fallthrough skill
-    # the agent completes without a forced resolve_skill step.
-    assert collection.skill is not None
+    # LS-1: neither the loop nor the pipeline resolves a SkillPackage any more;
+    # the compat field is intentionally None on the main path.
+    assert collection.skill is None
 
 
 def test_agent_and_pipeline_build_identical_evidence() -> None:
@@ -117,16 +117,14 @@ def test_agent_and_pipeline_build_identical_evidence() -> None:
     )
     loop_collection = _build_collection(acc, request)
 
-    # The deterministic pipeline resolves the same generic skill, so the two
-    # paths must agree on the skill too.
-    skill = resolve_skill_package(request.dependency, request.target_version)
+    # LS-1: both paths are skill-free; they must agree on that too.
     pipeline_collection = build_evidence_collection(
         request=request,
         repo_path=Path("/tmp/repo"),
         code_report=code_report,
         doc_runs=[],
         scan_result=scan,
-        skill=skill,
+        skill=None,
         degradations=[],
     )
 

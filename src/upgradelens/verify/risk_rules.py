@@ -15,7 +15,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from upgradelens.domain.skill import SkillPackage
 from upgradelens.models.impact import EvidenceItem
 from upgradelens.verify.models import EvidenceStatus, RiskFactor
 
@@ -63,15 +62,14 @@ def is_major_bump(source_spec: str, target_spec: str) -> bool:
 class RiskScoringInput:
     """Everything the rule engine is allowed to look at.
 
-    Every factor is derived from evidence. ``skill`` is retained only as a
-    fallback for legacy doc evidence that carries no ``trust_level`` meta; a
-    missing Skill Pack never lowers the quality of the scoring.
+    Every factor is derived from evidence (LS-1: the legacy ``skill`` fallback
+    field was removed); a dependency without a dedicated Skill Pack scores
+    through the same rules as one that never had one.
     """
 
     status: EvidenceStatus
     code_items: list[EvidenceItem] = field(default_factory=list)
     doc_items: list[EvidenceItem] = field(default_factory=list)
-    skill: SkillPackage | None = None
     source_version_spec: str = ""
     target_version_spec: str = ""
     has_recommended_tests: bool = False

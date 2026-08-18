@@ -5,6 +5,7 @@ from upgradelens.capabilities.transformations.loader import (
     discover_transformation_packs,
     load_transformation_pack,
     load_transformation_packs,
+    resolve_pack_for_dependency,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "load_transformation_pack",
     "discover_transformation_packs",
     "load_transformation_packs",
+    "resolve_pack_for_dependency",
 ]

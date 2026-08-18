@@ -73,6 +73,11 @@ COVERAGE_INSUFFICIENT = (
 
 NO_CODE_EVIDENCE = "在代码中未发现该依赖的使用；评估结果无法针对本仓库具体化。"
 
+MISSING_TARGET_VERSION = (
+    "未提供目标版本（--target）；LS-1 移除了从旧 Skill Pack 推断版本窗口的兜底，"
+    "评估未锚定到具体目标版本。"
+)
+
 
 # Note: the absence of a Skill Pack is deliberately *not* a degradation. Since
 # stage B2/B3 retrieval, planning, scoring and verification all run off shared
@@ -249,9 +254,13 @@ def collect_evidence(
     code_report = CodeEvidenceReport.model_validate(
         tools.run("scan_code", {"repo": str(repo_path), "dependency": request.dependency}, ctx)
     )
-    skill = _resolve_skill(request, ctx, tools)
+    # LS-1: the main flow no longer resolves a deprecated SkillPackage. Version
+    # facts come from the shared RAG corpus, mechanical rewrites from a
+    # TransformationPack, behaviour from an AgentSkill -- none of them require
+    # a dedicated legacy pack to be selected first.
+    skill: SkillPackage | None = None
 
-    target_version = _target_spec(request, skill)
+    target_version = _target_spec(request)
     scan_result: DependencyScanResult | None = None
     if target_version:
         try:
@@ -284,7 +293,7 @@ def collect_evidence(
             session,
             package=request.dependency,
             source_version=source_version.spec or "",
-            target_version=_target_spec(request, skill),
+            target_version=_target_spec(request),
             user_intent=request.user_intent,
             code_symbols=sorted({usage.symbol for usage in code_report.usages}),
             source_id=request.source_id,
@@ -333,13 +342,19 @@ def build_evidence_collection(
         )
     if not bundle.items:
         degradations.append(NO_CODE_EVIDENCE)
+    target_spec = _target_spec(request)
+    if not target_spec:
+        # LS-1: without a caller-supplied target there is nothing to anchor the
+        # upgrade to -- the legacy "infer from the Skill Pack" fallback is gone,
+        # so the run degrades explicitly instead of guessing.
+        degradations.append(MISSING_TARGET_VERSION)
     return EvidenceCollection(
         request=request,
         repo_path=repo_path,
         spec=AssessmentSpec(
             repo=str(repo_path),
             dependency=request.dependency,
-            target_version_spec=_target_spec(request, skill),
+            target_version_spec=target_spec,
             source_version_spec=source_version.spec or "",
             source_version=source_version,
         ),
@@ -381,29 +396,26 @@ def _resolve_skill(
 
 
 def legacy_skill_boost_queries(skill: SkillPackage | None, *, enabled: bool) -> list[str]:
-    """Hand-written Skill queries to boost retrieval with -- empty unless opted in.
+    """Deprecated hand-written Skill queries -- permanently empty (LS-1).
 
-    Deprecated since S6. These queries were a per-package shortcut: packages
-    with a dedicated Skill searched better than packages without one, which
-    both hid weaknesses in the shared corpus and made "no Skill" mean "worse
-    answers". Retrieval now derives its queries from the upgrade goal and the
-    scanned code symbols alone.
-
-    The switch survives so the retrieval baseline can measure the two paths
-    against each other rather than asserting the removal was harmless.
+    Since S6 these queries were a per-package shortcut: packages with a
+    dedicated Skill searched better than packages without one, which both hid
+    weaknesses in the shared corpus and made "no Skill" mean "worse answers".
+    LS-1 removes the boost entirely: retrieval derives its queries from the
+    upgrade goal and the scanned code symbols alone. The signature survives so
+    callers (and the retrieval baseline) keep importing it.
     """
-    if not enabled or skill is None:
-        return []
-    return [query for pattern in skill.patterns for query in pattern.retrieval_queries]
+    return []
 
 
-def _target_spec(request: AssessmentRequest, skill: SkillPackage | None) -> str:
-    """Caller's target version, else the skill's, else nothing."""
-    if request.target_version:
-        return request.target_version
-    if skill is not None:
-        return skill.target_version_spec or ""
-    return ""
+def _target_spec(request: AssessmentRequest) -> str:
+    """The caller's target version, or empty -- never inferred from a Skill.
+
+    LS-1 removed the ``skill.target_version_spec`` fallback: without a caller
+    supplied target the run degrades via :data:`MISSING_TARGET_VERSION` rather
+    than silently anchoring to a legacy pack's version window.
+    """
+    return request.target_version or ""
 
 
 # --------------------------------------------------------------------------- #

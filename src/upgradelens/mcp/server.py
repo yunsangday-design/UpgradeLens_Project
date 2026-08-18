@@ -45,6 +45,7 @@ from upgradelens.agent.supervisor import run_supervisor as supervisor_run
 from upgradelens.analyzers import scan_code_evidence
 from upgradelens.analyzers import scan_dependency as scan_dependency_fn
 from upgradelens.capabilities import CapabilityRegistry, TransformationPack
+from upgradelens.capabilities.transformations import resolve_pack_for_dependency
 from upgradelens.capabilities.workbench import (
     list_capabilities as list_unified_capabilities_fn,
 )
@@ -365,9 +366,13 @@ def assess(
 def _draft_patch(
     outcome: AssessmentOutcome, destination: Path, allow_quality_patch: bool
 ) -> dict[str, Any]:
-    """Write a Unified Diff draft for ``outcome``, or explain why there is none."""
-    skill = outcome.skill
-    capability = TransformationPack.from_skill(skill) if skill is not None else None
+    """Write a Unified Diff draft for ``outcome``, or explain why there is none.
+
+    LS-1: the mechanical-rewrite capability is resolved from the migrated
+    TransformationPack YAML by the assessed dependency -- the deprecated
+    SkillPackage (``outcome.skill``) is no longer involved.
+    """
+    capability = resolve_pack_for_dependency(outcome.report.target_dependency)
     if capability is None or not capability.allow_patch_draft():
         return {"patch_warning": "capability pack does not permit patch drafts; nothing written"}
 

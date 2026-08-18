@@ -65,9 +65,30 @@ def load_transformation_packs(names: Iterable[str]) -> list[TransformationPack]:
     return [load_transformation_pack(n) for n in names]
 
 
+def resolve_pack_for_dependency(dependency: str) -> TransformationPack | None:
+    """Match a builtin TransformationPack by canonical package name (LS-1).
+
+    Replaces the old ``TransformationPack.from_skill(outcome.skill)`` derivation:
+    the mechanical-rewrite capability is resolved from the migrated YAML packs,
+    so a dependency upgrade no longer needs the deprecated SkillPackage to be
+    able to draft patches.
+    """
+    from packaging.utils import canonicalize_name
+
+    canonical = canonicalize_name((dependency or "").strip())
+    if not canonical:
+        return None
+    for pack in discover_transformation_packs():
+        names = {canonicalize_name(str(n)) for n in pack.package_names}
+        if canonical in names:
+            return pack
+    return None
+
+
 __all__ = [
     "TransformationLoadError",
     "load_transformation_pack",
     "discover_transformation_packs",
     "load_transformation_packs",
+    "resolve_pack_for_dependency",
 ]

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypedDict
 
-from upgradelens.domain.skill import SkillPackage
 from upgradelens.llm.gateway import ModelGateway
 from upgradelens.models.impact import (
     BreakingChange,
@@ -30,10 +29,12 @@ class GraphState(TypedDict, total=False):
 
     The graph is acyclic (planner -> breaking_change_extractor ->
     impact_analyzer -> END), so there is no path to an infinite loop.
+
+    LS-1: the deprecated ``skill`` key was removed -- planner / extractor /
+    impact run on evidence alone (``bundle`` + ``spec``).
     """
 
     spec: AssessmentSpec
-    skill: SkillPackage | None
     bundle: EvidenceBundle
     context: str
     plan: Plan

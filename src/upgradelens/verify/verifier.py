@@ -452,7 +452,6 @@ class EvidenceVerifier:
                 status=status,
                 code_items=code_items,
                 doc_items=doc_items,
-                skill=self._skill,
                 source_version_spec=report.source_version_spec,
                 target_version_spec=report.target_version_spec,
                 has_recommended_tests=bool(tests),

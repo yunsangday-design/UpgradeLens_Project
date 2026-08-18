@@ -173,14 +173,13 @@ def test_skill_query_boost_is_off_by_default() -> None:
 
 
 def test_skill_query_boost_still_available_for_comparison() -> None:
-    """Kept switchable so the removal can be measured, not merely asserted."""
+    """LS-1 removed the boost entirely: it now permanently returns empty."""
     skill = builtin_registry().get("pydantic_v1_to_v2")
     assert skill is not None
 
     queries = legacy_skill_boost_queries(skill, enabled=True)
 
-    assert queries
-    assert queries == [q for p in skill.patterns for q in p.retrieval_queries]
+    assert queries == []
 
 
 def test_skill_query_boost_tolerates_a_dependency_with_no_skill() -> None:

@@ -87,6 +87,10 @@ def run_assessment(
 ) -> ImpactReport:
     """Run the closed loop and return a structured impact report.
 
+    ``skill`` is deprecated (LS-1) and ignored: planner / extractor / impact
+    read evidence (``bundle`` + ``spec``) only. It stays in the signature so
+    existing callers keep working during the migration.
+
     If the model is unavailable or the token budget is exceeded, a deterministic
     static report is returned instead (``static=True``); risks in that report
     still reference only real evidence ids.
@@ -97,7 +101,6 @@ def run_assessment(
     app = build_main_graph(gateway)
     initial: GraphState = {
         "spec": spec,
-        "skill": skill,
         "bundle": bundle,
         "context": context,
     }

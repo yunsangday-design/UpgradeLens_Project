@@ -57,7 +57,9 @@ def test_sqlalchemy_skill_has_expected_shape() -> None:
     assert sqla.content_hash  # hashed from the on-disk YAML files
 
 
-def test_resolve_sqlalchemy_uses_dedicated_pack() -> None:
+def test_resolve_sqlalchemy_uses_dedicated_pack(monkeypatch) -> None:
+    # pin the legacy-selection switch OFF (see test_resolve_pydantic_uses_dedicated_pack)
+    monkeypatch.delenv("UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION", raising=False)
     sel = builtin_registry().select_skill("sqlalchemy", "2.0.0")
     assert sel.skill_id == "sqlalchemy_v1_to_v2"
     assert sel.is_generic is False
@@ -101,7 +103,11 @@ def test_generic_skill_lowers_capability_claims() -> None:
     assert sel.capability_note == GENERIC_CAPABILITY_NOTE
 
 
-def test_resolve_pydantic_uses_dedicated_pack() -> None:
+def test_resolve_pydantic_uses_dedicated_pack(monkeypatch) -> None:
+    # pin the legacy-selection switch OFF so this test documents the default
+    # behaviour regardless of the ambient environment (LS-1 acceptance runs
+    # the whole suite with the switch set).
+    monkeypatch.delenv("UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION", raising=False)
     sel = builtin_registry().select_skill("pydantic", "2.0.0")
     assert sel.skill_id == "pydantic_v1_to_v2"
     assert sel.is_generic is False

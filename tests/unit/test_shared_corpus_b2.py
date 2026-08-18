@@ -123,7 +123,9 @@ def test_collect_evidence_collects_doc_with_skill(tmp_path):
     ctx = ToolContext(workdir=tmp_path)
     request = AssessmentRequest(repo=str(repo), dependency="pydantic", target_version="2.0", db=db)
     collection = collect_evidence(request, ctx, registry=default_registry())
-    assert collection.skill is not None, "pydantic@2.0 should resolve a Skill Pack"
+    # LS-1: the main flow is skill-free; pydantic docs come from the shared
+    # corpus exactly like any other dependency.
+    assert collection.skill is None
     doc_items = collection.bundle.by_kind("doc_chunk")
-    assert doc_items, "doc evidence must be collected with a Skill Pack present"
+    assert doc_items, "doc evidence must be collected without a legacy Skill Pack"
     ctx.close()

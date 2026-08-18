@@ -75,6 +75,7 @@ from upgradelens.capabilities.runner import (
     dispatch_capability,
     list_capabilities,
 )
+from upgradelens.capabilities.transformations import resolve_pack_for_dependency
 from upgradelens.config import NetworkMode, Settings
 from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
 from upgradelens.db.repository import persist_code_report
@@ -86,7 +87,6 @@ from upgradelens.domain import (
     ParseIssue,
     ResolutionStatus,
 )
-from upgradelens.domain.skill import SkillPackage
 from upgradelens.eval import (
     BASELINES,
     SYSTEMS,
@@ -1176,7 +1176,9 @@ def _assess_command(args: argparse.Namespace) -> int:
             _emit(result.verified)
 
         if args.emit_patch is not None:
-            _emit_patch_draft(args, result.verified, result.repo_path, result.skill, result.bundle)
+            _emit_patch_draft(
+                args, result.verified, result.repo_path, args.dependency, result.bundle
+            )
 
         if args.plan_only is not None:
             plan = build_upgrade_plan(
@@ -1420,17 +1422,18 @@ def _emit_patch_draft(
     args: argparse.Namespace,
     verified: VerifiedReport,
     repo_path: Path,
-    skill: SkillPackage | None,
+    dependency: str,
     bundle: EvidenceBundle,
 ) -> None:
     """Generate a Unified Diff patch draft and write it (stage 8).
 
     Never writes to the analysed tree; only to ``--emit-patch``. When no
     capability pack permits drafts, or no verified rewrite is eligible, nothing
-    is written. The skill is only read to derive its (optional) transformation
-    capability; the patch logic itself no longer depends on the Skill Pack.
+    is written. LS-1: the mechanical-rewrite capability is resolved from the
+    migrated TransformationPack YAML by dependency name -- the deprecated
+    SkillPackage is no longer involved.
     """
-    capability = TransformationPack.from_skill(skill) if skill is not None else None
+    capability = resolve_pack_for_dependency(dependency)
     if capability is None or not capability.allow_patch_draft():
         sys.stderr.write(
             "upgradelens: capability pack does not permit patch drafts; nothing written.\n"

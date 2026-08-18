@@ -56,7 +56,6 @@ from upgradelens.tools.registry import (
     ToolContext,
     ToolRegistry,
     default_registry,
-    resolve_skill_package,
 )
 from upgradelens.verify.models import RemediationKind, classify_issue
 
@@ -391,7 +390,9 @@ def _build_collection(acc: _Accumulator, request: Any) -> EvidenceCollection:
     if code_report is None:
         raise ValueError("no code evidence collected; agent failed to reach a checkout+scan")
     src, tgt = _collected_specs(acc, request)
-    skill = resolve_skill_package(request.dependency, request.target_version)
+    # LS-1: the loop no longer resolves a deprecated SkillPackage; the
+    # collection is built skill-free exactly like the deterministic pipeline.
+    skill = None
     degradations: list[str] = []
     if src in ("unknown", "") or tgt in ("unknown", ""):
         degradations.append("unknown/conflict source version")

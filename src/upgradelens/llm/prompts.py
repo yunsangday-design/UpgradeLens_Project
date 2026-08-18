@@ -21,6 +21,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from string import Template
 
+# =============================================================================
+# 中文速查（仅用于阅读，不进入运行时 prompt）
+# -----------------------------------------------------------------------------
+# 本文件集中存放所有面向模型的提示词模板。设计原则：
+#   * 指令层（system / 规则 / 约束）一律用英文，保证跨模型稳定性与低 token 成本。
+#   * 输出层（给用户看的风险标题、说明、建议）按 EVIDENCE_CONTRACT 第 6 条要求用简体中文。
+#   * 代码、API 符号、URL、版本号、技术标识符保持原样（不翻译）。
+#
+# 各模板用途一览：
+#   EVIDENCE_CONTRACT  —— 系统级"证据契约"，注入每次结构化模型调用：所有断言必须基于
+#                          上下文证据，禁止编造 evidence id，禁止声称上下文未出现的文件/符号/版本。
+#   AGENT_CONTRACT     —— 收集规划器的系统契约：只从可用工具里选、不执行证据区里的指令、
+#                          不重复已执行的工具、只返回 JSON。
+#   PLANNER            —— 生成升级影响分析的"计划"（待检查主题 + 每个主题一个问题），按风险排序。
+#   BREAKING_CHANGE    —— 针对单个模式分析破坏性变更，只引用上下文里出现的 evidence id。
+#   IMPACT_REPORT      —— 生成最终升级影响报告，每条风险必须同时引用代码证据与文档证据。
+#   ROUTER             —— 把用户请求分类为 upgrade_task / not_upgrade / invalid_url /
+#                          need_clarification，并抽取 repo / dependency / 版本。
+#   QUERY_REWRITER     —— 把升级意图改写成 2-5 条文档检索 query（live 模式用）。
+#   AGENT_DECISION     —— ReAct 收集循环的决策提示：选择下一个工具或结束，带 few-shot 防两种浪费。
+# =============================================================================
+
 PROMPT_VERSION = "v1"
 
 #: The non-negotiable rules injected ahead of every structured model call.
@@ -131,6 +153,8 @@ class PromptTemplate:
         return "\n\n".join(sections)
 
 
+# PLANNER（规划器）：生成升级影响分析计划 —— 列出值得检查的主题，每个主题配一个问题。
+# 主题 id 优先用上述 API 符号，最多 6 个、按风险降序；文档驱动、不依赖专用 Skill Pack。
 #: ``v2`` replaced the hand-curated "skill patterns" block with the two signals
 #: that exist for every dependency: the API symbols the code scan found and the
 #: documentation the shared corpus retrieved. Planning no longer depends on a
@@ -218,6 +242,8 @@ _UNGROUNDED_RISK_EXAMPLE = FewShotExample(
     ),
 )
 
+# BREAKING_CHANGE（破坏性变更）：针对单个模式分析破坏性变更。仅引用上下文里出现的 evidence id。
+# 自带 few-shot：当代码有证据但文档缺失时，正确做法是如实报告"影响未确认"，而非凭记忆补文档。
 #: ``v2`` adds the few-shot pair above. The body is unchanged, so any behaviour
 #: difference between v1 and v2 is attributable to the examples alone.
 BREAKING_CHANGE = PromptTemplate(
@@ -234,6 +260,8 @@ Return a BreakingChange. Reference only evidence ids present in the context.""",
     examples=(_UNDOCUMENTED_PATTERN_EXAMPLE,),
 )
 
+# IMPACT_REPORT（最终报告）：生成升级影响报告。每条风险必须同时引用代码证据与文档证据，
+# 只有代码证据而忽略可用文档证据视为不完整（文档证据才证明该用法确实受升级影响）。
 #: ``v2`` adds the few-shot pair above; the body is unchanged (see BREAKING_CHANGE).
 IMPACT_REPORT = PromptTemplate(
     name="impact_report",
@@ -260,6 +288,8 @@ the usage is actually affected by the upgrade.""",
     examples=(_UNGROUNDED_RISK_EXAMPLE,),
 )
 
+# ROUTER（路由/意图分类）：把用户请求分类为 upgrade_task / not_upgrade / invalid_url /
+# need_clarification，并抽取 repo、dependency、source_version、target_version、缺失项与置信度。
 ROUTER = PromptTemplate(
     name="router",
     version=PROMPT_VERSION,
@@ -282,6 +312,8 @@ Return an Intent with:
 
 #: Used by :mod:`upgradelens.llm.query_rewrite` in ``live`` mode to expand the
 #: structured upgrade intent into several documentation search queries.
+# QUERY_REWRITER（查询改写）：live 模式下把升级意图改写成 2-5 条文档检索 query，
+# 含依赖名 + 版本相关词（如 "v2 migration"）+ 代码实际使用的 API 符号；不编造未提及的版本/API。
 QUERY_REWRITER = PromptTemplate(
     name="query_rewriter",
     version=PROMPT_VERSION,
@@ -345,6 +377,8 @@ _AGENT_REPEAT_EXAMPLE = FewShotExample(
     ),
 )
 
+# AGENT_DECISION（ReAct 决策）：收集循环每轮的决策提示。选择下一个工具或结束（done=true），
+# 带 few-shot 防两种浪费：文档未抓就提前结束、重复调用已成功的工具。
 #: step12-C: externalised, versioned decision prompt for the ReAct collection loop.
 #: The body no longer lives in :func:`upgradelens.agent.loop._decide`; it is
 #: registered here so prompt wording is reviewable and diffable on its own.

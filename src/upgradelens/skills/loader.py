@@ -1,10 +1,17 @@
-"""Load Skill Packs from YAML on disk (plan sections 8.9-8.12, 3).
+"""Load Skill Packs from disk (plan sections 8.9-8.12, 3).
 
-A Skill Pack directory contains ``skill.yaml`` (metadata/descriptor) plus
-optional sibling files: ``patterns.yaml``, ``sources.yaml`` and
-``patch_rules.yaml``. The loader merges them into a single
-:class:`~upgradelens.domain.skill.SkillPackage` and validates version
-specifiers using :mod:`packaging`.
+A Skill Pack directory is described by **either**:
+
+- ``SKILL.md`` — the preferred format: a YAML frontmatter block carrying the
+  structured descriptor (anything :class:`~upgradelens.domain.skill.SkillPackage`
+  accepts, including inline ``patterns`` / ``sources`` / ``patch_rules``),
+  followed by a markdown body whose lead paragraph becomes ``description`` and
+  whose ``## Limitations`` section becomes ``limitations``; or
+- ``skill.yaml`` — the legacy descriptor mapping.
+
+Optional sibling files (``patterns.yaml``, ``sources.yaml``,
+``patch_rules.yaml``) are merged on top for both entry formats. The loader
+validates version specifiers using :mod:`packaging`.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from upgradelens.domain.skill import (
     UsagePattern,
 )
 
+SKILL_MD_FILE = "SKILL.md"
 SKILL_FILE = "skill.yaml"
 PATTERNS_FILE = "patterns.yaml"
 SOURCES_FILE = "sources.yaml"
@@ -29,7 +37,7 @@ PATCH_RULES_FILE = "patch_rules.yaml"
 
 # Files that contribute to the content hash, in a fixed order so the hash is
 # deterministic regardless of directory iteration order.
-_HASHED_FILES = (SKILL_FILE, PATTERNS_FILE, SOURCES_FILE, PATCH_RULES_FILE)
+_HASHED_FILES = (SKILL_MD_FILE, SKILL_FILE, PATTERNS_FILE, SOURCES_FILE, PATCH_RULES_FILE)
 
 
 class SkillParseError(Exception):
@@ -42,6 +50,54 @@ def _read_yaml(path: Path) -> object:
             return yaml.safe_load(handle)
     except yaml.YAMLError as exc:  # pragma: no cover - defensive
         raise SkillParseError(f"{path}: invalid YAML: {exc}") from exc
+
+
+def _parse_skill_md(path: Path) -> dict[str, object]:
+    """Parse a ``SKILL.md``: YAML frontmatter + markdown body.
+
+    The frontmatter carries the structured descriptor. From the body, the lead
+    paragraph (after the optional H1 title) becomes ``description`` and the
+    ``## Limitations`` section becomes ``limitations``; explicit frontmatter
+    keys win over the body-derived values.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise SkillParseError(f"{path}: {SKILL_MD_FILE} must start with a '---' frontmatter fence")
+    fence = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            fence = idx
+            break
+    if fence is None:
+        raise SkillParseError(f"{path}: unterminated frontmatter (missing closing '---')")
+
+    try:
+        meta = yaml.safe_load("\n".join(lines[1:fence])) or {}
+    except yaml.YAMLError as exc:
+        raise SkillParseError(f"{path}: invalid frontmatter YAML: {exc}") from exc
+    if not isinstance(meta, dict):
+        raise SkillParseError(f"{path}: frontmatter must be a mapping")
+
+    desc_lines: list[str] = []
+    lim_lines: list[str] = []
+    in_limitations = False
+    past_title = False
+    for line in lines[fence + 1 :]:
+        stripped = line.strip()
+        if not past_title and stripped.startswith("# "):
+            past_title = True
+            continue
+        if stripped.lower().startswith("## limitations"):
+            in_limitations = True
+            continue
+        if in_limitations:
+            lim_lines.append(line)
+        else:
+            desc_lines.append(line)
+
+    meta.setdefault("description", "\n".join(desc_lines).strip())
+    meta.setdefault("limitations", "\n".join(lim_lines).strip())
+    return meta
 
 
 def _validate_specifier(raw: str | None, where: str) -> None:
@@ -83,23 +139,31 @@ def _load_sibling[T: BaseModel](path: Path, model: type[T], label: str) -> list[
 
 
 def load_skill_package(skill_dir: str | Path) -> SkillPackage:
-    """Load and validate one Skill Pack from ``skill_dir``."""
+    """Load and validate one Skill Pack from ``skill_dir``.
+
+    ``SKILL.md`` takes precedence when present; otherwise the legacy
+    ``skill.yaml`` descriptor is used. Sibling YAML files merge on top of
+    inline frontmatter lists for both entry formats.
+    """
     skill_dir = Path(skill_dir)
     if not skill_dir.is_dir():
         raise SkillParseError(f"skill directory not found: {skill_dir}")
 
+    md_path = skill_dir / SKILL_MD_FILE
     meta_path = skill_dir / SKILL_FILE
-    if not meta_path.is_file():
-        raise SkillParseError(f"missing {SKILL_FILE} in {skill_dir}")
-
-    raw_meta = _read_yaml(meta_path)
+    if md_path.is_file():
+        raw_meta: object = _parse_skill_md(md_path)
+    elif meta_path.is_file():
+        raw_meta = _read_yaml(meta_path)
+    else:
+        raise SkillParseError(f"missing {SKILL_MD_FILE} or {SKILL_FILE} in {skill_dir}")
     if not isinstance(raw_meta, dict):
-        raise SkillParseError(f"{meta_path}: {SKILL_FILE} must be a mapping")
+        raise SkillParseError(f"{skill_dir}: skill descriptor must be a mapping")
 
     try:
         skill = SkillPackage.model_validate(raw_meta)
     except ValidationError as exc:
-        raise SkillParseError(f"{meta_path}: {exc}") from exc
+        raise SkillParseError(f"{skill_dir}: invalid skill descriptor: {exc}") from exc
 
     patterns = _load_sibling(skill_dir / PATTERNS_FILE, UsagePattern, "patterns")
     if patterns is not None:
@@ -132,6 +196,6 @@ def discover_skills(base_dir: str | Path) -> list[SkillPackage]:
     if not base_dir.is_dir():
         return skills
     for child in sorted(base_dir.iterdir()):
-        if child.is_dir() and (child / SKILL_FILE).is_file():
+        if child.is_dir() and ((child / SKILL_MD_FILE).is_file() or (child / SKILL_FILE).is_file()):
             skills.append(load_skill_package(child))
     return skills

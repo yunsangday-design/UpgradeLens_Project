@@ -63,7 +63,7 @@ def test_valid_dedicated_skill_merges_siblings(tmp_path: Path) -> None:
 
 def test_missing_skill_yaml_raises(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
-    with pytest.raises(SkillParseError, match="missing skill.yaml"):
+    with pytest.raises(SkillParseError, match="missing SKILL.md or skill.yaml"):
         load_skill_package(tmp_path / "empty")
 
 

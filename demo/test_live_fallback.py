@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Live demo: test two-stage online fallback with click (not in RAG corpus)."""
+
 import sys
 from pathlib import Path
 
@@ -7,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from upgradelens import DependencyUpgradeAgent
 
-REPO = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval" / "celery_upgrade" / "repo"
+REPO = (
+    Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval" / "celery_upgrade" / "repo"
+)
 GOAL = "upgrade celery in {repo} from 4.x to 5.x"
 
 print("=" * 60)

@@ -84,7 +84,7 @@ class Job:
             event = JobEvent(id=self._event_seq, kind=kind, data=data or {})
             self._events.append(event)
             if len(self._events) > self._max_events:
-                self._events = self._events[-self._max_events:]
+                self._events = self._events[-self._max_events :]
         with self._condition:
             self._condition.notify_all()
         return event

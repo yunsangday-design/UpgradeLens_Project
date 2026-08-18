@@ -35,7 +35,9 @@ from upgradelens.presentation.projector import project_assessment
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle each request in a new thread (needed for SSE long-polling)."""
+
     daemon_threads = True
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = Path(__file__).resolve().parent
@@ -395,9 +397,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
             repo = str(body.get("repo") or "").strip()
             if not repo:
                 if kind == "dependency_upgrade":
-                    dep = body.get("dependency") or _infer_dep(
-                        str(body.get("goal", "")), None
-                    )
+                    dep = body.get("dependency") or _infer_dep(str(body.get("goal", "")), None)
                     default = _DEFAULT_REPO_BY_DEP.get(
                         dep, "tests/fixtures/eval/pydantic_field_validator/repo"
                     )
@@ -522,9 +522,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
         try:
             repo_path.relative_to(ROOT.parent)
         except ValueError:
-            self._json_response(
-                {"error": "repo path must be within the workspace"}, 403
-            )
+            self._json_response({"error": "repo path must be within the workspace"}, 403)
             return
 
         try:
@@ -564,9 +562,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
         try:
             repo_path.relative_to(ROOT.parent)
         except ValueError:
-            self._json_response(
-                {"error": "repo path must be within the workspace"}, 403
-            )
+            self._json_response({"error": "repo path must be within the workspace"}, 403)
             return
 
         job = self._submit_scan_job(repo_path)
@@ -596,9 +592,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
             inferred = _infer_dep(goal, dependency)
             repo = _DEFAULT_REPO_BY_DEP.get(inferred) if inferred else None
 
-        job = self._submit_run_job(
-            goal, mode, repo, dependency, target_version, source_version
-        )
+        job = self._submit_run_job(goal, mode, repo, dependency, target_version, source_version)
         self._json_response({"job_id": job.job_id}, 202)
 
     def _handle_job_status(self, path: str):
@@ -667,6 +661,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
 
     def _submit_scan_job(self, repo_path: Path) -> Job:
         """Submit a scan as an async job, return the Job."""
+
         def _do_scan(job: Job) -> dict:
             from upgradelens.analyzers.upgradable_scan import (
                 scan_upgradable_dependencies,
@@ -713,23 +708,28 @@ class ChatHandler(SimpleHTTPRequestHandler):
                 """Emit a plan_updated event with step summaries."""
                 steps_summary = []
                 for s in plan.steps:
-                    steps_summary.append({
-                        "id": s.id,
-                        "tool": s.tool,
-                        "seq": s.seq,
-                        "status": s.status,
-                        "reason": s.reason or "",
-                        "observation": (s.observation or "")[:120],
-                    })
+                    steps_summary.append(
+                        {
+                            "id": s.id,
+                            "tool": s.tool,
+                            "seq": s.seq,
+                            "status": s.status,
+                            "reason": s.reason or "",
+                            "observation": (s.observation or "")[:120],
+                        }
+                    )
                 job.emit("plan.updated", {"steps": steps_summary, "status": plan.status})
                 # Also emit step-level events for running/completed transitions
                 for s in plan.steps:
                     if s.status == "running":
-                        job.emit("step_started", {
-                            "step": s.tool,
-                            "plan_step_id": s.id,
-                            "reason": s.reason or "",
-                        })
+                        job.emit(
+                            "step_started",
+                            {
+                                "step": s.tool,
+                                "plan_step_id": s.id,
+                                "reason": s.reason or "",
+                            },
+                        )
 
             job.emit("step_started", {"step": "agent_run", "dependency": dependency or ""})
             agent = DependencyUpgradeAgent(mode=mode)
@@ -748,26 +748,17 @@ class ChatHandler(SimpleHTTPRequestHandler):
                 "intent": result.intent.model_dump(mode="json"),
                 "plan": result.plan.to_dict() if result.plan else None,
                 "verified": (
-                    result.outcome.verified.model_dump(mode="json")
-                    if result.outcome
-                    else None
+                    result.outcome.verified.model_dump(mode="json") if result.outcome else None
                 ),
                 "degradations": list(result.degradations),
-                "trace": (
-                    [e.to_dict() for e in result.trace.events] if result.trace else []
-                ),
+                "trace": ([e.to_dict() for e in result.trace.events] if result.trace else []),
                 "cost": {
                     "total_tokens": (
-                        sum(
-                            r.prompt_tokens + r.completion_tokens
-                            for r in result.gateway.ledger
-                        )
+                        sum(r.prompt_tokens + r.completion_tokens for r in result.gateway.ledger)
                         if result.gateway
                         else 0
                     ),
-                    "call_count": (
-                        len(result.gateway.ledger) if result.gateway else 0
-                    ),
+                    "call_count": (len(result.gateway.ledger) if result.gateway else 0),
                 },
                 "error": result.error,
                 "badges": _build_badges(result),

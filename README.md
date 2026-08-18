@@ -71,8 +71,7 @@ for finding in result.findings:
     print(f"  [{finding.severity.value}] {finding.summary}")
 
 # Multi-capability decomposition without executing anything
-plan = agent.run("review this PR and run a security scan",
-                 repo="./repo", dry_run=True)
+plan = agent.run("review this PR and run a security scan", repo="./repo", dry_run=True)
 print(plan.capabilities)  # ['security_review', 'pr_review']
 ```
 

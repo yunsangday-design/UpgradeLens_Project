@@ -8,6 +8,18 @@ from collections.abc import Iterable
 from upgradelens.agent_skills.loader import load_builtin_agent_skills
 from upgradelens.domain.agent_skill import AgentSkill
 
+# The explainable routing contract (implementation-plan SK-1-3 acceptance):
+# which behaviour skill each capability kind resolves to by default. It exists
+# so per-kind routing is an explicit, auditable decision instead of an emergent
+# property of `len(applies_to)` tiebreaks.
+_ROUTING_CONTRACT: dict[str, str] = {
+    "dependency_upgrade": "safe-dependency-migration",
+    "pr_review": "evidence-grounded-review",
+    "security_review": "evidence-grounded-review",
+    "issue_repair": "systematic-issue-diagnosis",
+    "breaking_change": "evidence-grounded-review",
+}
+
 
 class AgentSkillRegistry:
     """Index AgentSkills by capability kind, with locale-aware resolution."""
@@ -31,24 +43,27 @@ class AgentSkillRegistry:
         return list(self._by_kind.get(kind, []))
 
     def resolve(self, kind: str, *, locale: str = "en") -> AgentSkill | None:
-        """Pick the skill for ``kind``, preferring the most specific + localized one.
+        """Pick the skill for ``kind`` with an explainable routing contract.
 
-        When several skills apply to a kind (e.g. a cross-cutting behaviour like
-        *evidence-grounded-review* and a method like *safe-dependency-migration*),
-        the resolver prefers the **most specific** skill -- one whose
-        ``applies_to`` is exactly ``[kind]`` -- over a broad, multi-capability one.
-        Locale ``zh-CN`` / ``zh`` then prefers a skill that ships a ``cn`` variant.
+        The routing table below is the contract from the implementation plan's
+        SK-1-3 acceptance criteria -- it wins over generic specificity so the
+        behaviour is deterministic and auditable:
+
+        * ``dependency_upgrade`` -> safe-dependency-migration (exact, method)
+        * ``pr_review`` / ``security_review`` / ``breaking_change``
+          -> evidence-grounded-review (review kinds)
+        * ``issue_repair`` -> systematic-issue-diagnosis (diagnosis method)
+
+        Kinds outside the table fall back to "most specific first" (fewest
+        ``applies_to``); an unknown kind resolves to ``None``. Locale
+        ``zh-CN`` / ``zh`` then prefers a skill that ships a ``cn`` variant.
         """
         candidates = self.for_kind(kind)
         if not candidates:
             return None
         lang = locale.split("-")[0].lower()  # "zh-CN" -> "zh"
 
-        def _specificity(s: AgentSkill) -> tuple[int, int]:
-            exact = 0 if s.applies_to == [kind] else 1
-            return (exact, len(s.applies_to))
-
-        ordered = sorted(candidates, key=_specificity)
+        ordered = self._order_candidates(kind, candidates)
         if lang != "en":
             for s in ordered:
                 if lang in s.localized_variants:
@@ -57,6 +72,15 @@ class AgentSkillRegistry:
             if s.language == "en" or s.localized_variants:
                 return s
         return ordered[0]
+
+    def _order_candidates(self, kind: str, candidates: list[AgentSkill]) -> list[AgentSkill]:
+        preferred = _ROUTING_CONTRACT.get(kind)
+        if preferred is not None and any(s.skill_id == preferred for s in candidates):
+            return sorted(
+                candidates,
+                key=lambda s: (0 if s.skill_id == preferred else 1, len(s.applies_to)),
+            )
+        return sorted(candidates, key=lambda s: len(s.applies_to))
 
 
 def default_agent_skill_registry() -> AgentSkillRegistry:

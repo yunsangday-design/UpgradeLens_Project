@@ -20,7 +20,19 @@ def test_list_skills_reports_builtin_packs(capsys) -> None:
     assert "pydantic_v1_to_v2" in ids
     assert "generic_python_dependency" in ids
     assert payload["generic_skill_id"] == "generic_python_dependency"
-    assert err == ""
+    # LS-4: the command still runs, but clearly warns it is deprecated.
+    assert "DEPRECATED" in err
+    assert "legacy compatibility" in err
+
+
+def test_resolve_skill_warns_deprecated(capsys, monkeypatch) -> None:
+    monkeypatch.delenv("UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION", raising=False)
+    code, payload, err = _run(
+        capsys, "resolve-skill", "--dependency", "pydantic", "--target-version", "2.0.0"
+    )
+    assert code == EXIT_OK
+    assert payload["skill_id"] == "pydantic_v1_to_v2"
+    assert "DEPRECATED" in err
 
 
 def test_list_skills_accepts_custom_base_dir(capsys, tmp_path) -> None:
@@ -35,7 +47,11 @@ def test_list_skills_accepts_custom_base_dir(capsys, tmp_path) -> None:
     assert {s["skill_id"] for s in payload["skills"]} == {"demo"}
 
 
-def test_resolve_pydantic_selects_dedicated(capsys) -> None:
+def test_resolve_pydantic_selects_dedicated(capsys, monkeypatch) -> None:
+    # pin the legacy-selection switch OFF: this documents default behaviour
+    # (LS-1 acceptance runs the suite with the switch set, where dedicated
+    # packs are skipped and selection falls back to generic).
+    monkeypatch.delenv("UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION", raising=False)
     code, payload, _ = _run(
         capsys, "resolve-skill", "--dependency", "pydantic", "--target-version", "2.0.0"
     )

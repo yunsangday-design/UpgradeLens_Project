@@ -55,6 +55,7 @@ from upgradelens.core.task import SoftwareTask, TaskContext, TaskKind
 from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.docs import DocSourceManifestError, ingest_corpus, ingest_skill, retrieve
 from upgradelens.domain import DependencyAnalysisRequest
+from upgradelens.domain.skill import LEGACY_SKILL_COMMAND_DEPRECATION
 from upgradelens.eval import BASELINES, render_summary_markdown, run_evaluation
 from upgradelens.llm.gateway import ModelConfig, ModelGateway, ModelMode
 from upgradelens.patch import generate_patch_draft
@@ -161,7 +162,10 @@ def scan_code(repo: str, dependency: str, db: str | None = None) -> dict[str, An
 
 @mcp.tool()
 def list_skills(base_dir: str | None = None) -> dict[str, Any]:
-    """Stage 3: list the built-in Skill Packs and their version ranges.
+    """[DEPRECATED (LS-4): legacy compatibility only] List the built-in Skill Packs.
+
+    Dependency facts now live in the shared RAG corpus, mechanical rewrites in
+    TransformationPacks (``list_capabilities``), behaviour specs in AgentSkills.
 
     Args:
         base_dir: Optional directory of Skill Packs to list (defaults to built-in).
@@ -169,7 +173,9 @@ def list_skills(base_dir: str | None = None) -> dict[str, Any]:
     registry: SkillRegistry = (
         SkillRegistry.from_directory(Path(base_dir)) if base_dir else builtin_registry()
     )
-    return registry.catalog().model_dump(mode="json")
+    catalog = registry.catalog().model_dump(mode="json")
+    catalog["deprecation"] = LEGACY_SKILL_COMMAND_DEPRECATION
+    return catalog
 
 
 @mcp.tool()
@@ -178,7 +184,7 @@ def resolve_skill(
     target_version: str,
     source_version: str | None = None,
 ) -> dict[str, Any]:
-    """Stage 3: pick the best Skill Pack for a dependency + target version.
+    """[DEPRECATED (LS-4): legacy compatibility only] Pick the best Skill Pack.
 
     Args:
         dependency: Dependency name (any casing).
@@ -186,7 +192,9 @@ def resolve_skill(
         source_version: Optional source PEP 440 version to narrow the match.
     """
     selection = builtin_registry().select_skill(dependency, target_version, source_version)
-    return selection.model_dump(mode="json")
+    dump = selection.model_dump(mode="json")
+    dump["deprecation"] = LEGACY_SKILL_COMMAND_DEPRECATION
+    return dump
 
 
 @mcp.tool()

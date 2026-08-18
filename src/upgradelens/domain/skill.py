@@ -54,6 +54,15 @@ DEPRECATED_SELECTION_NOTE = (
     "UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION to opt out."
 )
 
+# Emitted by the legacy CLI/MCP skill commands (LS-4): they keep running inside
+# the migration window, but must clearly say so and point at the successors.
+LEGACY_SKILL_COMMAND_DEPRECATION = (
+    "DEPRECATED: the Skill Pack commands are kept for legacy compatibility only "
+    "(LS-4). Dependency facts now live in the shared RAG corpus, mechanical "
+    "rewrites in TransformationPacks (list-capabilities / resolve-capability), "
+    "and behaviour specs in AgentSkills. These commands will be removed in LS-6."
+)
+
 
 # ---------------------------------------------------------------------------
 # Patterns — what usage looks like, and how to retrieve docs for it

@@ -87,6 +87,7 @@ from upgradelens.domain import (
     ParseIssue,
     ResolutionStatus,
 )
+from upgradelens.domain.skill import LEGACY_SKILL_COMMAND_DEPRECATION
 from upgradelens.eval import (
     BASELINES,
     SYSTEMS,
@@ -329,7 +330,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_skills = subparsers.add_parser(
         _LIST_SKILLS_COMMAND,
-        help="List the built-in Skill Packs and their version ranges.",
+        help=(
+            "[DEPRECATED: legacy compatibility only (LS-4)] "
+            "List the built-in Skill Packs and their version ranges."
+        ),
     )
     list_skills.add_argument(
         "--base-dir",
@@ -340,7 +344,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve = subparsers.add_parser(
         _RESOLVE_SKILL_COMMAND,
-        help="Resolve the best Skill Pack for a dependency + target version.",
+        help=(
+            "[DEPRECATED: legacy compatibility only (LS-4)] "
+            "Resolve the best Skill Pack for a dependency + target version."
+        ),
     )
     resolve.add_argument("--dependency", required=True, help="Dependency name (any casing).")
     resolve.add_argument("--target-version", required=True, help="Target PEP 440 version.")
@@ -2050,12 +2057,18 @@ def _cmd_eval_issue_repair(args: Any) -> int:
     return EXIT_OK
 
 
+def _warn_legacy_skill_command() -> None:
+    """LS-4: legacy skill commands still run, but must say they are deprecated."""
+    sys.stderr.write(f"upgradelens: {LEGACY_SKILL_COMMAND_DEPRECATION}\n")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``upgradelens`` script."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == _LIST_SKILLS_COMMAND:
+        _warn_legacy_skill_command()
         if args.base_dir is not None:
             registry: SkillRegistry = SkillRegistry.from_directory(args.base_dir)
         else:
@@ -2064,6 +2077,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_OK
 
     if args.command == _RESOLVE_SKILL_COMMAND:
+        _warn_legacy_skill_command()
         try:
             selection = builtin_registry().select_skill(
                 args.dependency, args.target_version, args.source_version

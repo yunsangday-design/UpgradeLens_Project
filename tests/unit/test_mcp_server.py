@@ -37,11 +37,14 @@ def test_list_skills():
     catalog = mcp_server.list_skills()
     _assert_jsonable(catalog)
     assert "skills" in catalog
+    # LS-4: legacy skill tools keep working but clearly flag their deprecation.
+    assert "DEPRECATED" in catalog["deprecation"]
 
 
 def test_resolve_skill():
     selection = mcp_server.resolve_skill("pydantic", "2.0")
     _assert_jsonable(selection)
+    assert "DEPRECATED" in selection["deprecation"]
 
 
 def test_scan_code(tmp_path):

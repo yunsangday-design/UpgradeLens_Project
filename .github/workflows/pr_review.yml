@@ -39,10 +39,24 @@ jobs:
       - name: Sync (locked)
         run: uv sync --all-groups --locked
 
+      - name: Verify model secrets are configured
+        env:
+          HAS_KEY: ${{ secrets.UPGRADELENS_MODEL_API_KEY != '' }}
+          HAS_URL: ${{ secrets.UPGRADELENS_MODEL_BASE_URL != '' }}
+        run: |
+          echo "MODEL_API_KEY configured: $HAS_KEY"
+          echo "MODEL_BASE_URL configured: $HAS_URL"
+          if [ "$HAS_KEY" != "true" ] || [ "$HAS_URL" != "true" ]; then
+            echo "::error::Model secrets missing — configure UPGRADELENS_MODEL_API_KEY and UPGRADELENS_MODEL_BASE_URL in repository secrets"
+            exit 1
+          fi
+
       - name: Run UpgradeLens PR bot
         env:
           UPGRADELENS_MODEL_API_KEY: ${{ secrets.UPGRADELENS_MODEL_API_KEY }}
           UPGRADELENS_MODEL_BASE_URL: ${{ secrets.UPGRADELENS_MODEL_BASE_URL }}
+          UPGRADELENS_MODEL_NAME: qwen-max
+          UPGRADELENS_MODEL_DISABLE_THINKING: "false"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           uv run upgradelens-pr-bot \

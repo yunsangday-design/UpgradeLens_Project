@@ -1,0 +1,57 @@
+# Shared RAG corpus source descriptors (LS-1).
+#
+# These are the *facts* that used to live on the deprecated dependency-upgrade
+# Skill Packs (pydantic_v1_to_v2 / sqlalchemy_v1_to_v2). They are now corpus
+# documents, findable by (package, from-version, to-version) alone, with no
+# coupling to any Skill. Retrieval starts from the dependency, never a Skill id.
+schema_version: 1
+package_name: pydantic
+source_version_spec: ">=1,<2"
+target_version_spec: ">=2,<3"
+sources:
+  - id: pydantic-v2-migration-guide
+    package_name: pydantic
+    title: Pydantic v2 Migration Guide
+    url: https://docs.pydantic.dev/latest/migration/
+    source_type: migration_guide
+    trust_level: official
+    source_version_spec: ">=1,<2"
+    target_version_spec: ">=2,<3"
+    fetch_strategy: static
+    parse_strategy: markdown
+  - id: pydantic-v2-changelog
+    package_name: pydantic
+    title: Pydantic v2 Changelog
+    url: https://docs.pydantic.dev/latest/changelog/
+    source_type: changelog
+    trust_level: official
+    source_version_spec: ">=1,<2"
+    target_version_spec: ">=2,<3"
+    fetch_strategy: static
+    parse_strategy: markdown
+---
+schema_version: 1
+package_name: sqlalchemy
+source_version_spec: ">=1.4,<2"
+target_version_spec: ">=2,<3"
+sources:
+  - id: sqlalchemy-20-migration
+    package_name: sqlalchemy
+    title: SQLAlchemy 2.0 Migration Guide
+    url: https://docs.sqlalchemy.org/en/20/changelog/migration_20.html
+    source_type: migration_guide
+    trust_level: official
+    source_version_spec: ">=1.4,<2"
+    target_version_spec: ">=2,<3"
+    fetch_strategy: static
+    parse_strategy: markdown
+  - id: sqlalchemy-20-changelog
+    package_name: sqlalchemy
+    title: SQLAlchemy 2.0 Changelog
+    url: https://docs.sqlalchemy.org/en/20/changelog/changelog_20.html
+    source_type: changelog
+    trust_level: official
+    source_version_spec: ">=1.4,<2"
+    target_version_spec: ">=2,<3"
+    fetch_strategy: static
+    parse_strategy: markdown

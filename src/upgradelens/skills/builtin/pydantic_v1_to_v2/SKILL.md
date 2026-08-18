@@ -16,6 +16,7 @@ risk_categories:
   - parsing
 allow_patch_draft: true
 version: "1.0.0"
+deprecated: true
 ---
 
 # Pydantic v1 → v2 迁移

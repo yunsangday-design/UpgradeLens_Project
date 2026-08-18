@@ -29,6 +29,9 @@ def test_pydantic_skill_has_expected_shape() -> None:
     assert len(pyd.patch_rules) == 2
     assert pyd.allow_patch_draft is True
     assert pyd.content_hash  # hashed from the on-disk YAML files
+    # migration (MA/LS): dedicated dependency-upgrade pack is superseded by the
+    # shared RAG corpus + TransformationPack + AgentSkill path.
+    assert pyd.deprecated is True
 
 
 def test_adding_a_skill_needs_no_core_change() -> None:
@@ -61,6 +64,19 @@ def test_resolve_sqlalchemy_uses_dedicated_pack() -> None:
     assert sel.matched_by == "version_range"
     assert sel.skill_version == "1.0.0"
     assert sel.package_name == "sqlalchemy"
+    # deprecated but still selectable until UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION is set
+    assert sel.deprecated is True
+
+
+def test_deprecated_skill_skipped_when_selection_disabled(monkeypatch) -> None:
+    # With the legacy-skill disable flag on, deprecated dedicated packs are
+    # skipped and selection falls back to the generic capability note.
+    monkeypatch.setenv("UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION", "1")
+    sel = builtin_registry().select_skill("pydantic", "2.0.0")
+    assert sel.is_generic is True
+    assert sel.matched_by == "generic_fallback"
+    assert sel.deprecated is False
+    assert GENERIC_CAPABILITY_NOTE in sel.capability_note
 
 
 def test_resolve_sqlalchemy_14_falls_back_to_generic() -> None:
@@ -92,3 +108,5 @@ def test_resolve_pydantic_uses_dedicated_pack() -> None:
     assert sel.matched_by == "version_range"
     assert sel.skill_version == "1.0.0"
     assert sel.package_name == "pydantic"
+    # deprecated but still selectable until UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION is set
+    assert sel.deprecated is True

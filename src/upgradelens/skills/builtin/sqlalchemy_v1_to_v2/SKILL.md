@@ -15,6 +15,7 @@ risk_categories:
   - engine_execute
 allow_patch_draft: true
 version: "1.0.0"
+deprecated: true
 ---
 
 # SQLAlchemy 1.x -> 2.0

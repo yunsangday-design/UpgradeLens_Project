@@ -45,6 +45,15 @@ GENERIC_CAPABILITY_NOTE = (
     "require manual confirmation before any migration decision."
 )
 
+# Appended to a selection's capability note when the chosen pack is deprecated
+# (MA / LS migration): the shared RAG corpus + TransformationPack + AgentSkill
+# path supersedes it.
+DEPRECATED_SELECTION_NOTE = (
+    " [DEPRECATED] This Skill Pack is superseded by the shared RAG corpus + "
+    "TransformationPack + AgentSkill path; prefer the generic fallback or set "
+    "UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION to opt out."
+)
+
 
 # ---------------------------------------------------------------------------
 # Patterns — what usage looks like, and how to retrieve docs for it
@@ -158,6 +167,12 @@ class SkillPackage(BaseModel):
     patterns: list[UsagePattern] = Field(default_factory=list)
     sources: list[DocSource] = Field(default_factory=list)
     patch_rules: list[PatchRule] = Field(default_factory=list)
+    # Migration flag (MA / LS): marks a legacy dependency-upgrade Skill Pack as
+    # superseded by the shared RAG corpus + TransformationPack + AgentSkill path.
+    # Deprecated packs still load and run, but ``select_skill`` flags them and
+    # (when UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION is set) falls back to
+    # generic instead of selecting them.
+    deprecated: bool = False
     # Metadata filled in by the loader, not authored in YAML.
     content_hash: str = Field(default="", repr=False)
     source_path: str = Field(default="", repr=False)
@@ -188,6 +203,7 @@ class SkillSelection(BaseModel):
     matched_by: Literal["version_range", "generic_fallback"]
     content_hash: str
     capability_note: str = ""
+    deprecated: bool = False
 
 
 class SkillCatalogEntry(BaseModel):
@@ -203,6 +219,7 @@ class SkillCatalogEntry(BaseModel):
     patch_rule_count: int
     skill_version: str
     content_hash: str
+    deprecated: bool = False
 
 
 class SkillCatalog(BaseModel):
@@ -224,6 +241,7 @@ def catalog_entry_from_skill(skill: SkillPackage) -> SkillCatalogEntry:
         patch_rule_count=len(skill.patch_rules),
         skill_version=skill.version,
         content_hash=skill.content_hash,
+        deprecated=skill.deprecated,
     )
 
 
@@ -242,5 +260,9 @@ def selection_from_skill(
         priority=skill.priority,
         matched_by=matched_by,
         content_hash=skill.content_hash,
-        capability_note=GENERIC_CAPABILITY_NOTE if skill.is_generic else "",
+        capability_note=(
+            (GENERIC_CAPABILITY_NOTE if skill.is_generic else "")
+            + (DEPRECATED_SELECTION_NOTE if skill.deprecated else "")
+        ),
+        deprecated=skill.deprecated,
     )

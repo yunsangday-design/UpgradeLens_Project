@@ -8,6 +8,7 @@ the registered *generic* skill, which carries a lowered capability statement.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -23,6 +24,16 @@ from upgradelens.domain.skill import (
     selection_from_skill,
 )
 from upgradelens.skills.loader import SkillParseError, discover_skills
+
+
+def legacy_skill_selection_enabled() -> bool:
+    """Whether deprecated legacy packs may still be selected.
+
+    Returns ``False`` when ``UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION`` is set,
+    in which case :meth:`SkillRegistry.select_skill` skips deprecated packs and
+    falls back to the generic capability note.
+    """
+    return not os.environ.get("UPGRADELENS_LEGACY_SKILL_DISABLE_SELECTION")
 
 
 class SkillRegistry:
@@ -81,6 +92,9 @@ class SkillRegistry:
 
         candidates: list[SkillPackage] = []
         for skill in self._skills.values():
+            if skill.deprecated and not legacy_skill_selection_enabled():
+                # superseded by RAG corpus + TransformationPack + AgentSkill path
+                continue
             if canonical not in skill.canonical_package_names:
                 continue
             if not self._version_in(skill.target_version_spec, target):

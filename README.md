@@ -1,15 +1,19 @@
 # UpgradeLens
 
-Evidence-driven dependency upgrade pre-audit agent. UpgradeLens analyses a
-repository for the impact of upgrading a Python dependency: it scans the
-codebase for usages of the dependency's API, retrieves relevant documentation,
-and produces a **verified** impact report with specific breaking-change risks,
-evidence citations, and migration recommendations.
+A general-purpose, **evidence-driven software-engineering agent**. UpgradeLens
+turns a plain-language request into a structured task and runs one of **five
+capabilities** through a single controlled execution layer — dependency
+upgrade, PR review, issue repair, breaking-change analysis and security review
+— producing verified findings with evidence citations, action proposals and a
+unified verification gate.
 
-> **Status:** stages S0–S8 complete (518 tests, ruff/mypy clean). The model
-> gateway defaults to `fake` (offline, deterministic); switch to `live`/
-> `replay` for real or recorded LLM runs. The recommended entry point for new
-> code is [`DependencyUpgradeAgent`](#python-api).
+> **Status:** five capabilities live behind one brain (`EngineeringAgent`,
+> v0.3.0); S0–S9 complete; Supervisor+Handoff multi-agent orchestration;
+> unified Workbench, GitHub PR bot and MCP server all verified. 737+ tests,
+> ruff/mypy clean. The model gateway defaults to `fake` (offline,
+> deterministic); switch to `live`/`replay` for real or recorded LLM runs.
+> The recommended entry point for new code is
+> [`EngineeringAgent`](#python-api).
 
 ## Quick start
 
@@ -32,6 +36,14 @@ uv run upgradelens agent "upgrade pydantic to 2.0" \
   --dependency pydantic --target-version 2.0 \
   --mode fake
 
+# One goal in, one unified result out — any of the five capabilities
+uv run upgradelens run "review this PR and run a security scan" \
+  --repo tests/fixtures/eval/capabilities/repo --dry-run
+uv run upgradelens run "fix bug: login button fails"
+
+# Per-capability gold-set evaluation (no-hallucination gate)
+uv run upgradelens eval-capability
+
 # Architecture comparison (offline)
 uv run upgradelens eval-compare
 uv run upgradelens eval-ablate
@@ -44,8 +56,28 @@ uv run mypy src
 
 ## Python API
 
-The `DependencyUpgradeAgent` class is the single entry point for programmatic
-use — CLI, MCP and demo all drive the same kernel:
+`EngineeringAgent` is the unified entry point for all five capabilities —
+CLI, MCP, the Workbench and the Supervisor all drive the same kernel:
+
+```python
+from upgradelens import EngineeringAgent
+
+agent = EngineeringAgent(mode="fake")
+
+# One sentence routes to any capability (or fans out to several)
+result = agent.run("review the security of https://github.com/o/r")
+print(result.capabilities, result.verification_passed)
+for finding in result.findings:
+    print(f"  [{finding.severity.value}] {finding.summary}")
+
+# Multi-capability decomposition without executing anything
+plan = agent.run("review this PR and run a security scan",
+                 repo="./repo", dry_run=True)
+print(plan.capabilities)  # ['security_review', 'pr_review']
+```
+
+For dependency-upgrade-only callers, `DependencyUpgradeAgent` remains the
+focused front door:
 
 ```python
 from upgradelens import DependencyUpgradeAgent
@@ -74,17 +106,21 @@ outcome = agent.run_pipeline(repo="./repo", dependency="pydantic", target_versio
 
 | Command | What it does |
 |---|---|
-| `scan-dependency` | Parse manifests and resolve the declared version. |
-| `assess` | Run the full pipeline: scan → code evidence → RAG → model → verify → patch draft. |
-| `agent` | Natural-language entry: route → plan → agent loop → run artifacts. |
+| `run` | **Unified entry (A4):** one natural-language goal → routed to any of the five capabilities → unified `EngineeringResult`. |
+| `agent` | Natural-language entry for dependency upgrade: route → plan → agent loop → run artifacts. |
+| `assess` | Run the full upgrade pipeline: scan → code evidence → RAG → model → verify → patch draft. |
+| `capability-list` | List the five unified capabilities and their allowed tools. |
+| `capability-run` | Run one capability end-to-end by explicit `--kind`. |
+| `eval-capability` | **A5 gold-set gate:** per-capability scoreboard (pass rate / verification / no-hallucination) with `--fail-under` CI threshold. |
 | `comment-pr` | Run `assess` and post the report as a GitHub PR comment. |
-| `eval` | Offline hybrid evaluation (baseline suite). |
-| `eval-compare` | S8 architecture comparison: direct LLM vs pipeline vs agent. |
-| `eval-ablate` | S8 ablation: isolate verifier / supplement / agent value. |
-| `eval-replay` | S8 comparison against recorded live model responses. |
-| `ingest-docs` | Ingest documentation into the SQLite evidence store. |
-| `retrieve-docs` | Query the doc store (FTS5 + sqlite-vec). |
+| `eval` / `eval-compare` / `eval-ablate` / `eval-replay` | Offline evaluation suites (S8 baseline / architecture comparison / ablation / recorded replay). |
+| `scan-dependency` | Parse manifests and resolve the declared version. |
+| `ingest-docs` / `retrieve-docs` | Ingest and query the SQLite doc store (FTS5 + sqlite-vec). |
 | `mcp` | Start the MCP server (stdio transport). |
+
+Also: `upgradelens-pr-bot --repo owner/repo --pr N [--mode live]` reviews a
+real GitHub PR (pr_review + security_review) and posts the report as a
+comment.
 
 ### Source version inference
 
@@ -157,6 +193,62 @@ Risks with no evidence are **degraded**, not dropped silently. Risks citing
 non-existent evidence are **quarantined** by the verifier. This is the core
 no-hallucination guarantee, enforced by `tests/unit/test_s8_ci_gate.py`.
 
+## Verifier as a first-class citizen
+
+Every conclusion UpgradeLens produces is **verified before it is believed**.
+The verifier is not a post-hoc filter — it is a structural part of the result
+contract shared by all five capabilities:
+
+- A finding promoted to `verified` **must cite at least one evidence id**;
+  the pydantic model itself rejects the construction otherwise
+  (`core/finding.py`).
+- Findings without evidence are **degraded** (surfaced, never silently
+  dropped); findings citing non-existent evidence are **quarantined**.
+- Every capability declares its own verifiers and runs them through the same
+  gate (`CapabilityRunResult.verification`), so "verified" means the same
+  thing for an upgrade risk, a security finding and a PR review comment.
+- Only verified findings may drive automatic remediation proposals; degraded
+  ones always require a human.
+
+This aligns with the 2026 shift from "LLM as generator" to "LLM as
+verifier": the harness — not the model weights — decides what is trustworthy.
+
+## The Harness: five engineering guardrails
+
+Agent reliability is decided more by the harness than by model weights.
+UpgradeLens ships five guardrails, all on by default:
+
+| Guardrail | What it does | Where |
+|---|---|---|
+| **Budget** | hard cap on total tokens per run; model calls are rejected beyond it | `ModelConfig.max_total_tokens` |
+| **Coverage** | per-capability evidence coverage; insufficient coverage triggers deterministic supplementary retrieval before any conclusion | `agent/coverage.py`, per-capability `CoveragePolicy` |
+| **Fake / replay determinism** | every path runs offline in `fake`; live runs can be recorded and replayed byte-for-byte | `llm/gateway.py` |
+| **SSRF guard** | allow-listed hosts only; GitHub URLs validated (scheme / host / slug / internal-address) before any fetch | `tools/fetcher.py`, `agent/router.py` |
+| **Sandbox, zero source mutation** | the analysed repository is never modified; patches are drafts verified in a sandbox; every write action defaults to `requires_approval=True` | `plan/executor.py`, `core/action.py` |
+
+Token values never enter traces or artifacts; the GitHub token travels in
+headers only.
+
+## Capabilities as Skills / Subagents
+
+UpgradeLens maps to the Claude Code mental model: a **Skill** runs in the
+main context (a single-capability request drives one deterministic state
+machine), a **Subagent** runs in its own isolated context with a fixed role
+(a multi-capability request fans out via Supervisor + Handoff, then
+aggregates through one verification gate).
+
+| Capability | Inputs | Allowed tools | Verifier gate | Output findings |
+|---|---|---|---|---|
+| `dependency_upgrade` | repo, dependency, target/source version | clone_repo, scan_dependency, scan_code, retrieve_for_package, supplement_retrieval | `verify_report` | dependency risks (verified / degraded / quarantined) |
+| `pr_review` | repo, unified diff | load_change_set, build_repository_context, analyze_change_impact, retrieve_code_context, retrieve_docs, recommend_tests, verify_findings | `pr_review_verifier` | logic / compatibility / test_gap / impact / documentation |
+| `issue_repair` | repo, issue text | load_issue, reproduce_issue, locate_root_cause, generate_patch, run_tests, verify_fix | issue verifier | root-cause findings + patch & test proposals |
+| `security_review` | repo, unified diff, dependency | load_change_set, build_repository_context, semgrep_scan, dependency_cve_check, verify_findings | `security_review_verifier` | security:secret / injection / dependency |
+| `breaking_change` | repo, unified diff, from/to version | load_change_set, detect_breaking_changes, extract_public_symbols, classify_api_change, compare_versions, verify_report | breaking-change verifier | deletion / rename / signature / type / behaviour changes |
+
+Adding a capability means registering one `TaskKind` plus a capability entry
+— the router, dispatcher, supervisor, CLI `run`, MCP `run_task` and the
+Workbench pick it up without any changes of their own.
+
 ### Evaluation (S8)
 
 The offline comparison harness runs three architectures over 18 cases covering
@@ -189,9 +281,13 @@ Report Markdown, Patch Draft. Default is `fake` mode (offline). Check "Agent
 uv run upgradelens-mcp
 ```
 
-Exposes 11 tools: `scan_dependency`, `scan_code`, `assess`, `ingest_docs`,
-`retrieve_docs`, `fetch_docs`, `list_skills`, `resolve_skill`,
-`list_capabilities`, `resolve_capability`, `run_eval`.
+Exposes 15 tools: the upgrade toolkit (`scan_dependency`, `scan_code`,
+`assess`, `ingest_docs`, `retrieve_docs`, `fetch_docs`, `list_skills`,
+`resolve_skill`, `list_capabilities`, `resolve_capability`, `run_eval`) plus
+the unified five-capability surface — `list_unified_capabilities`,
+`run_capability` (explicit kind), `run_supervisor` (natural-language
+Supervisor orchestration) and `run_task` (the `EngineeringAgent` entry, the
+same object the CLI `run` command prints).
 
 ## Project layout
 

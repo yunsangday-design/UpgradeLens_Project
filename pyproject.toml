@@ -19,6 +19,7 @@ dependencies = [
 [project.scripts]
 upgradelens = "upgradelens.cli:main"
 upgradelens-mcp = "upgradelens.mcp.server:serve"
+upgradelens-pr-bot = "upgradelens.bots.github_pr_bot:main"
 
 [project.optional-dependencies]
 demo = [

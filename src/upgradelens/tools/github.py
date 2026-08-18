@@ -28,6 +28,7 @@ from typing import Any
 
 from upgradelens.tools.errors import ApiDegradedError, ToolError
 from upgradelens.tools.fetcher import RestrictedFetcher
+from upgradelens.tools.trace import ToolTrace
 
 _GITHUB_API = "https://api.github.com"
 
@@ -185,6 +186,78 @@ class GitHubClient:
         :meth:`post_issue_comment`.
         """
         return self.post_issue_comment(repo_slug, pr_number, body, token=token)
+
+    def pr_diff(
+        self,
+        repo_slug: str,
+        pr_number: int,
+        *,
+        token: str | None = None,
+    ) -> str:
+        """Fetch the unified diff of PR ``pr_number`` via the GitHub REST API.
+
+        Uses the ``application/vnd.github.v3.diff`` media type so the response body
+        is the raw diff (no JSON parsing needed). Read-only; reuses the same SSRF
+        guard and trace as the other paths, and the token is sent only as an
+        ``Authorization`` header and never recorded.
+        """
+        if not _SLUG_RE.match(repo_slug):
+            raise ToolError(f"Invalid GitHub repo slug: {repo_slug!r}")
+        url = f"{_GITHUB_API}/repos/{repo_slug}/pulls/{int(pr_number)}"
+        if not self._fetcher.is_url_allowed(url):
+            raise ToolError("Refused: GitHub API host is not allowed by the HTTP policy")
+        headers = {"Accept": "application/vnd.github.v3.diff", "User-Agent": "upgradelens"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(url, headers=headers)
+        trace = self._fetcher.trace
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=30) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            elapsed = (time.monotonic() - started) * 1000
+            snippet = exc.read().decode("utf-8", "replace")[:400]
+            trace.record(
+                tool="github.pr_diff",
+                target=url,
+                status="error",
+                http_status=exc.code,
+                latency_ms=elapsed,
+                error=f"HTTP {exc.code}: {snippet}",
+            )
+            raise ToolError(f"GitHub API returned {exc.code}: {snippet}") from exc
+        except OSError as exc:
+            elapsed = (time.monotonic() - started) * 1000
+            trace.record(
+                tool="github.pr_diff",
+                target=url,
+                status="error",
+                latency_ms=elapsed,
+                error=str(exc),
+            )
+            raise ToolError(f"GitHub API request failed: {exc}") from exc
+        elapsed = (time.monotonic() - started) * 1000
+        trace.record(
+            tool="github.pr_diff",
+            target=url,
+            status="ok",
+            bytes_=len(raw),
+            latency_ms=elapsed,
+        )
+        return str(raw.decode("utf-8", "replace"))
+
+
+def pr_diff(
+    repo_slug: str,
+    pr_number: int,
+    *,
+    token: str | None = None,
+    fetcher: RestrictedFetcher | None = None,
+) -> str:
+    """Convenience wrapper: fetch a PR diff with a throwaway traced fetcher."""
+    fetcher = fetcher or RestrictedFetcher(trace=ToolTrace())
+    return GitHubClient(fetcher).pr_diff(repo_slug, pr_number, token=token)
 
 
 def validate_ref(ref: str) -> bool:

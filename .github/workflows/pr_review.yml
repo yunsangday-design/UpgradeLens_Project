@@ -1,0 +1,52 @@
+name: PR Review Bot
+
+# D2: run the UpgradeLens PR bot (pr_review + security_review) on every PR and
+# post the unified report as a comment. Requires two repository secrets:
+#   - UPGRADELENS_MODEL_API_KEY   (DashScope / OpenAI-compatible key)
+#   - UPGRADELENS_MODEL_BASE_URL  (e.g. the DashScope compatible-mode endpoint)
+# GITHUB_TOKEN is provided by Actions itself (pull-requests: write).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - "docments/**"
+      - "**.md"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (locked)
+        run: uv sync --all-groups --locked
+
+      - name: Run UpgradeLens PR bot
+        env:
+          UPGRADELENS_MODEL_API_KEY: ${{ secrets.UPGRADELENS_MODEL_API_KEY }}
+          UPGRADELENS_MODEL_BASE_URL: ${{ secrets.UPGRADELENS_MODEL_BASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run upgradelens-pr-bot \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --repo-root "${{ github.workspace }}" \
+            --mode live

@@ -94,18 +94,23 @@ _DEF_RE = re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(")
 _CLASS_RE = re.compile(r"^\s*class\s+([A-Za-z_]\w*)")
 
 
-def _changed_symbols(file_change: object) -> set[str]:
-    """Symbols defined on added lines of a file's hunks."""
+def _symbols_on_lines(file_change: object, prefix: str) -> set[str]:
+    """Symbols defined on diff lines with the given prefix ('+' or '-')."""
     syms: set[str] = set()
     for hunk in getattr(file_change, "hunks", []):
         for line in getattr(hunk, "lines", []):
-            if not line.startswith("+"):
+            if not line.startswith(prefix):
                 continue
             text = line[1:]
             match = _DEF_RE.match(text) or _CLASS_RE.match(text)
             if match:
                 syms.add(match.group(1))
     return syms
+
+
+def _changed_symbols(file_change: object) -> set[str]:
+    """Symbols defined on added lines of a file's hunks."""
+    return _symbols_on_lines(file_change, "+")
 
 
 def detect_breaking_changes(change_set: ChangeSet, repo_root: str | Path) -> list[BreakingChange]:
@@ -154,13 +159,59 @@ def report_to_findings(report: BreakingChangeReport) -> list[Finding]:
     return findings
 
 
-def _build_prompt(change_set: ChangeSet, comparison: VersionComparison) -> str:
+_MAX_PROMPT_SYMBOLS = 80
+
+
+def _build_prompt(
+    change_set: ChangeSet,
+    comparison: VersionComparison,
+    repo_root: str | Path,
+) -> str:
+    """Build the model prompt, anchored to the repository's real symbols.
+
+    Live testing showed that a files-only prompt invites the model to invent
+    plausible symbol names (every finding then degrades to CANDIDATE at the
+    verification gate). Anchoring the prompt to (a) the symbols the diff
+    actually removes and (b) the public symbols the repository actually
+    defines keeps the model grounded and raises the verified rate.
+    """
     files = ", ".join(c.path for c in change_set.files) or "(none)"
-    return (
-        f"Detect breaking changes for upgrade {comparison.from_version} -> "
-        f"{comparison.to_version} ({comparison.level}).\n"
-        f"Changed files: {files}"
+
+    removed: list[str] = []
+    for change in change_set.files:
+        names = sorted(_symbols_on_lines(change, "-"))
+        if names:
+            removed.append(f"  {change.path}: {', '.join(names)}")
+
+    by_file: dict[str, list[str]] = {}
+    total = 0
+    for sym in extract_public_symbols(repo_root):
+        by_file.setdefault(sym.path, []).append(sym.name)
+        total += 1
+        if total >= _MAX_PROMPT_SYMBOLS:
+            break
+    existing = [f"  {file}: {', '.join(sorted(names))}" for file, names in sorted(by_file.items())]
+
+    lines = [
+        f"Detect breaking API changes for upgrade {comparison.from_version} -> "
+        f"{comparison.to_version} ({comparison.level}).",
+        f"Changed files: {files}",
+    ]
+    if removed:
+        lines.append("Symbols REMOVED by this diff:")
+        lines.extend(removed)
+    if existing:
+        lines.append("Public symbols defined in the repository:")
+        lines.extend(existing)
+        if total >= _MAX_PROMPT_SYMBOLS:
+            lines.append(f"  (list truncated at {_MAX_PROMPT_SYMBOLS} symbols)")
+    lines.append(
+        "Constraints:\n"
+        "- Only reference symbols that appear in the lists above; never invent names.\n"
+        "- Prefer concrete symbol names from the diff over made-up class names.\n"
+        "- Cite evidence_refs as changed file paths."
     )
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -187,7 +238,7 @@ def review_breaking_changes(
     change_set = parse_unified_diff(unified_diff)
     comparison = compare_versions(from_version, to_version)
     report, used = gateway.complete_structured(
-        prompt=_build_prompt(change_set, comparison),
+        prompt=_build_prompt(change_set, comparison, repo_root),
         schema=BreakingChangeReport,
         name="breaking_change",
     )

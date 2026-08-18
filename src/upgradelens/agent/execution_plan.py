@@ -180,9 +180,10 @@ def execute_plan(
 ) -> PlanExecutionResult:
     """Drive the plan's waves through ``runner`` under one shared budget.
 
-    Within a wave, steps run concurrently (bounded by ``max_workers``); cost is
-    recorded into the shared ledger *after* the wave finishes, so concurrent
-    runs never race on the ledger.
+    Within a wave, steps run concurrently (bounded by ``max_workers``) as *child*
+    runs of ``ctx`` (so every leaf carries ``parent_run_id`` and the trace tree
+    stays connected). Cost is recorded once, by the runner, into the shared
+    (thread-safe) ledger on the context.
     """
     waves = execution_waves(plan)
     results: dict[str, AgentResult] = {}
@@ -205,8 +206,6 @@ def execute_plan(
             results[sid] = res
             if res.status.value != "completed":
                 any_failed = True
-            if ctx.budget is not None and hasattr(ctx.budget, "record"):
-                ctx.budget.record(res.cost)
 
     return PlanExecutionResult(
         plan_id=plan.plan_id,
@@ -220,7 +219,7 @@ def _run_step(
     runner: AgentRunner, plan: ExecutionPlan, ctx: AgentRunContext, step_id: str
 ) -> AgentResult:
     step = plan.steps[step_id]
-    return runner.run(step.kind, ctx, step.task)
+    return runner.run_child(ctx, step.kind, step.task)
 
 
 __all__ = [

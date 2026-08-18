@@ -19,12 +19,33 @@ respecting its hard constraints:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from upgradelens.agent.budget import BudgetLedger, default_budget_spec
 from upgradelens.agent.dispatch import dispatch_by_task
+from upgradelens.agent.evidence_reviewer import EvidenceReviewerAgent
+from upgradelens.agent.execution_plan import (
+    ExecutionPlan,
+    PlanStep,
+    StepStrategy,
+    execute_plan,
+)
 from upgradelens.agent.router import Router
+from upgradelens.agent.runner import AgentRunner
+from upgradelens.agent.runtime import (
+    AgentIdentity,
+    AgentKind,
+    AgentResult,
+    AgentRunContext,
+    RunStatus,
+    TaskEnvelope,
+    new_run_id,
+)
+from upgradelens.agent.spec import default_registry
 from upgradelens.capabilities.workbench import CapabilityRunResult
 from upgradelens.core.task import SoftwareTask, TaskKind
 
@@ -129,6 +150,49 @@ class SupervisorResult(BaseModel):
     budget_tokens_limit: int = 0
     verification_passed: bool = True
     degradations: list[str] = Field(default_factory=list)
+    # -- unified-runtime observability (MA-2-2 / MA-2-3; multi-agent only) -- #
+    root_run_id: str = ""
+    execution_plan: dict[str, Any] | None = None
+    agent_runs: list[dict[str, Any]] = Field(default_factory=list)
+    aggregate_result: dict[str, Any] | None = None
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _envelope_from_task(
+    kind: TaskKind, task: SoftwareTask, parent_id: str, idx: int
+) -> TaskEnvelope:
+    """Build the capability-agnostic :class:`TaskEnvelope` for one handoff."""
+    c = task.context
+    return TaskEnvelope(
+        kind=kind.value,
+        repo=getattr(c, "repo", "") or "",
+        dependency=getattr(c, "dependency", "") or "",
+        source_version=getattr(c, "source_version", "") or "",
+        target_version=getattr(c, "target_version", "") or "",
+        goal=task.goal,
+        scope=getattr(c, "scope", "") or "",
+        unified_diff=getattr(c, "unified_diff", "") or "",
+        issue_text=getattr(c, "issue_text", "") or "",
+        from_version=getattr(c, "from_version", "") or "",
+        to_version=getattr(c, "to_version", "") or "",
+        model=getattr(c, "model", "") or "",
+        locale=task.locale or "zh-CN",
+        max_turns=int(getattr(c, "max_turns", 0) or 0),
+        extra={"task_id": f"{parent_id}-sub{idx}"},
+    )
+
+
+def _capability_view(result: AgentResult) -> CapabilityRunResult:
+    """Bridge a unified :class:`AgentResult` back to the Workbench shape."""
+    payload = result.to_capability_result()
+    patch = payload.get("patch")
+    if isinstance(patch, str):
+        try:
+            payload["patch"] = json.loads(patch)
+        except (TypeError, ValueError):
+            payload["patch"] = {"raw": patch}
+    payload["status"] = "succeeded" if result.status is RunStatus.COMPLETED else "failed"
+    return CapabilityRunResult.model_validate(payload)
 
 
 def run_supervisor(
@@ -167,16 +231,39 @@ def run_supervisor(
             verification_passed=bool(res.verification and res.verification.get("passed")),
         )
 
-    # Multi-agent: fan out, then aggregate.
-    sub_results: list[CapabilityRunResult] = []
-    used_budget = 0
-    degradations: list[str] = []
-    for idx, kind in enumerate(kinds):
-        sub = handoff_to(task, kind, idx, parent_id, ctx)
-        cost = sub.cost or {}
-        used_budget += int(cost.get("total_tokens", 0) or 0)
-        sub_results.append(sub)
+    # Multi-agent (MA-2-2): fan out through the unified runtime as one parallel
+    # wave of child runs, then converge through the deterministic aggregator +
+    # shared evidence gate (MA-2-3).
+    ledger = BudgetLedger(default_budget_spec(ctx.budget_tokens or None))
+    root_ctx = AgentRunContext(
+        run_id=new_run_id(),
+        agent=AgentIdentity.create(AgentKind.SUPERVISOR),
+        mode=ctx.mode,
+        locale=task.locale or "zh-CN",
+        budget=ledger,
+    )
+    runner = AgentRunner(default_registry())
 
+    plan = ExecutionPlan(plan_id=str(root_ctx.run_id), mode=ctx.mode)
+    for idx, kind in enumerate(kinds):
+        plan.add_step(
+            PlanStep(
+                id=f"cap-{idx}-{kind.value}",
+                kind=AgentKind(kind.value),
+                task=_envelope_from_task(kind, task, parent_id, idx),
+                strategy=StepStrategy.PARALLEL,
+            )
+        )
+
+    exec_result = execute_plan(runner, plan, root_ctx, max_workers=max(1, len(plan.steps)))
+    leaf_results = [exec_result.results[sid] for sid in plan.steps]
+
+    # fan-in: one shared trust bar over every leaf's findings
+    aggregate = EvidenceReviewerAgent().review(root_ctx, leaf_results)
+
+    sub_results = [_capability_view(r) for r in leaf_results]
+    used_budget = int(ledger.total.total)
+    degradations: list[str] = []
     verification_passed = all(
         bool(r.verification and r.verification.get("passed")) for r in sub_results
     )
@@ -185,6 +272,9 @@ def run_supervisor(
             f"budget-exceeded: used {used_budget} tokens > limit {ctx.budget_tokens}"
         )
         verification_passed = False
+    conflicts = [dict(c) for c in aggregate.notes.get("conflicts", [])]
+    if conflicts:
+        degradations.append(f"conflicting-findings: {len(conflicts)} need human review")
 
     summary = "多能力协作完成（Supervisor 编排）：" + ", ".join(k.value for k in kinds)
     return SupervisorResult(
@@ -197,4 +287,9 @@ def run_supervisor(
         budget_tokens_limit=ctx.budget_tokens,
         verification_passed=verification_passed,
         degradations=degradations,
+        root_run_id=str(root_ctx.run_id),
+        execution_plan=plan.model_dump(mode="json"),
+        agent_runs=[r.model_dump(mode="json") for r in [*leaf_results, aggregate]],
+        aggregate_result=aggregate.model_dump(mode="json"),
+        conflicts=conflicts,
     )

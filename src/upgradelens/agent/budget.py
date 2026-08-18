@@ -10,6 +10,7 @@ latency and tool usage across a whole multi-agent plan.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -70,27 +71,31 @@ class BudgetLedger:
     run_id: RunId | None = None
     total: CostUsage = field(default_factory=CostUsage)
     entries: list[CostUsage] = field(default_factory=list)
+    # parallel-wave agents record concurrently; the lock keeps totals exact
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     # -- recording -------------------------------------------------------- #
 
     def record(self, cost: CostUsage) -> CostUsage:
         """Merge ``cost`` into the running total, enforcing the policy.
 
-        Returns the new running total. Raises :class:`BudgetExhausted` on a
-        :class:`BudgetPolicy.FAIL` breach.
+        Thread-safe: concurrent agents in one parallel wave may record at the
+        same time. Returns the new running total. Raises :class:`BudgetExhausted`
+        on a :class:`BudgetPolicy.FAIL` breach.
         """
-        self.total = self.total.merge(cost)
-        self.entries.append(cost)
-        breach = self._first_breach()
-        if breach is None:
+        with self._lock:
+            self.total = self.total.merge(cost)
+            self.entries.append(cost)
+            breach = self._first_breach()
+            if breach is None:
+                return self.total
+            if self.policy is BudgetPolicy.FAIL:
+                cap = getattr(self.spec, breach)
+                raise BudgetExhausted(
+                    f"budget exhausted on {breach}: "
+                    f"{self._usage_value(breach)} >= {cap}"
+                )
             return self.total
-        if self.policy is BudgetPolicy.FAIL:
-            cap = getattr(self.spec, breach)
-            raise BudgetExhausted(
-                f"budget exhausted on {breach}: "
-                f"{self._usage_value(breach)} >= {cap}"
-            )
-        return self.total
 
     def record_legacy_entry(self, entry: dict[str, Any], *, model: str = "") -> CostUsage:
         """Record a cost from an existing loop :class:`Ledger` entry dict."""

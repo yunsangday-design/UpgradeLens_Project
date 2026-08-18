@@ -236,6 +236,9 @@ class TaskEnvelope(BaseModel):
 
     kind: str = ""
     repo: str = ""
+    dependency: str = ""
+    source_version: str = ""
+    target_version: str = ""
     goal: str = ""
     scope: str = ""
     unified_diff: str = ""
@@ -251,6 +254,9 @@ class TaskEnvelope(BaseModel):
         """Materialise a :class:`~upgradelens.core.task.TaskContext` payload."""
         payload: dict[str, Any] = {
             "repo": self.repo,
+            "dependency": self.dependency,
+            "source_version": self.source_version,
+            "target_version": self.target_version,
             "goal": self.goal,
             "scope": self.scope,
             "unified_diff": self.unified_diff,

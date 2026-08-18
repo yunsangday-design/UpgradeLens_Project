@@ -98,7 +98,12 @@ class EvidenceReviewerAgent:
             verification=verification,
             coverage=aggregated.coverage,
             cost=aggregated.cost,
-            notes={"reviewed_results": len(prior)},
+            notes={
+                "reviewed_results": len(prior),
+                # surfaced so the supervisor / UI can ask for human input instead
+                # of silently picking one side of a conflicting finding
+                "conflicts": list(aggregated.notes.get("conflicts", [])),
+            },
         )
 
 

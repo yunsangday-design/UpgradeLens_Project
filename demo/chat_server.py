@@ -495,6 +495,17 @@ class ChatHandler(SimpleHTTPRequestHandler):
                     "capability_kinds": sup.capability_kinds,
                     "result": sup.result.model_dump(mode="json") if sup.result else None,
                     "sub_results": [r.model_dump(mode="json") for r in sup.sub_results],
+                    "summary": sup.summary,
+                    "verification_passed": sup.verification_passed,
+                    "degradations": sup.degradations,
+                    "budget_tokens_used": sup.budget_tokens_used,
+                    "budget_tokens_limit": sup.budget_tokens_limit,
+                    # unified-runtime observability (MA-2-2 / MA-2-3)
+                    "root_run_id": sup.root_run_id,
+                    "execution_plan": sup.execution_plan,
+                    "agent_runs": sup.agent_runs,
+                    "aggregate_result": sup.aggregate_result,
+                    "conflicts": sup.conflicts,
                 }
             )
         except Exception as exc:

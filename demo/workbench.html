@@ -991,12 +991,53 @@ async function runTask() {
     const { data } = await submitTask(payload);
     if (data && data.error) { toast(data.error, "error"); container.innerHTML = ""; return; }
     if (data.orchestration === "multi-agent" && data.sub_results && data.sub_results.length) {
-      // M3: Supervisor + Handoff multi-agent collaboration view.
+      // MA-2: Supervisor 统一运行时编排（并行 DAG → 聚合 → 证据门）
       const kinds = data.capability_kinds || [];
-      container.appendChild(el("div", { class: "card", style: "margin-bottom:var(--sp-4); padding:var(--sp-3); border-color:var(--primary);" }, [
-        el("strong", null, "编排模式：多能力协作 (Supervisor + Handoff)"),
-        document.createTextNode(" " + (kinds.join(" → ") || "")),
-      ]));
+      const runs = data.agent_runs || [];
+      const leaves = runs.filter(r => r.kind !== "evidence_reviewer");
+      const agg = data.aggregate_result;
+      const conflicts = data.conflicts || [];
+
+      const head = el("div", { class: "card", style: "margin-bottom:var(--sp-4); padding:var(--sp-3); border-color:var(--primary);" });
+      head.appendChild(el("strong", null, "编排模式：多能力协作 (Supervisor · 统一运行时)"));
+      head.appendChild(el("div", { style: "font-size:var(--fs-sm); color:var(--text-secondary); margin-top:var(--sp-2);" },
+        (kinds.join(" ∥ ") || "") + (data.root_run_id ? " · run " + data.root_run_id : "")));
+      const meta = el("div", { style: "display:flex; gap:var(--sp-2); flex-wrap:wrap; margin-top:var(--sp-2);" });
+      meta.appendChild(el("span", { class: "badge" }, "预算 " + (data.budget_tokens_used || 0) + " / " + (data.budget_tokens_limit || 0) + " tok"));
+      meta.appendChild(el("span", { class: "badge " + (data.verification_passed ? "badge--green" : "badge--amber") }, data.verification_passed ? "验证通过" : "验证未全通过"));
+      if (conflicts.length) meta.appendChild(el("span", { class: "badge badge--red" }, "冲突 " + conflicts.length));
+      if (agg && agg.verification && agg.verification.summary) meta.appendChild(el("span", { class: "badge" }, esc(agg.verification.summary)));
+      head.appendChild(meta);
+      if ((data.degradations || []).length) {
+        const deg = el("details", { style: "margin-top:var(--sp-2);" });
+        deg.appendChild(el("summary", { style: "font-size:var(--fs-sm); cursor:pointer; color:var(--text-secondary);" }, "降级（" + data.degradations.length + "）"));
+        data.degradations.forEach(d => deg.appendChild(el("div", { style: "font-size:var(--fs-xs); color:var(--text-muted);" }, esc(d))));
+        head.appendChild(deg);
+      }
+      container.appendChild(head);
+
+      // 运行树：并行叶子 → evidence_reviewer 收敛（可展开）
+      const tree = el("details", { class: "card", style: "margin-bottom:var(--sp-4); padding:var(--sp-3);" });
+      tree.appendChild(el("summary", { style: "cursor:pointer;" }, "运行树（" + runs.length + " 个 run · " + leaves.length + " 并行）"));
+      const treeBody = el("div", { style: "margin-top:var(--sp-2); font-size:var(--fs-sm);" });
+      leaves.forEach(r => {
+        treeBody.appendChild(el("div", { style: "display:flex; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-1);" }, [
+          el("span", { class: "status-dot " + (r.status === "completed" ? "status-dot--succeeded" : "status-dot--failed") }),
+          el("code", { style: "font-size:var(--fs-xs);" }, esc(r.run_id || "")),
+          el("span", { class: "badge" }, esc(r.kind || "")),
+          document.createTextNode(((r.findings || []).length) + " findings · " + ((r.cost && r.cost.total_tokens) || 0) + " tok"),
+        ]));
+      });
+      if (agg) {
+        treeBody.appendChild(el("div", { style: "display:flex; gap:var(--sp-2); align-items:center; margin-top:var(--sp-2); border-top:1px dashed var(--border); padding-top:var(--sp-2);" }, [
+          el("span", { class: "status-dot status-dot--succeeded" }),
+          el("code", { style: "font-size:var(--fs-xs);" }, esc(agg.run_id || "")),
+          el("span", { class: "badge badge--green" }, "evidence_reviewer"),
+          document.createTextNode(esc((agg.verification && agg.verification.summary) || "")),
+        ]));
+      }
+      tree.appendChild(treeBody);
+      container.appendChild(tree);
       data.sub_results.forEach((r, i) => {
         const sub = el("div", { style: "margin-bottom:var(--sp-4); border-left:3px solid var(--primary); padding-left:var(--sp-3);" });
         const label = "Sub-agent " + (i + 1) + (kinds[i] ? " · " + kinds[i] : "");

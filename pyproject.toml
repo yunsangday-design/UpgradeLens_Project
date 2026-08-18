@@ -37,6 +37,9 @@ test = [
 lint = [
   "mypy",
   "ruff",
+  # Needed for mypy on mcp/server.py — the @mcp.tool() decorators reference
+  # the FastMCP runtime that ships types when the package itself is installed.
+  "mcp>=1.2,<2",
 ]
 
 [tool.uv]

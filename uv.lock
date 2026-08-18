@@ -1378,6 +1378,7 @@ mcp = [
 
 [package.dev-dependencies]
 lint = [
+    { name = "mcp" },
     { name = "mypy" },
     { name = "ruff" },
 ]
@@ -1404,6 +1405,7 @@ provides-extras = ["demo", "mcp"]
 
 [package.metadata.requires-dev]
 lint = [
+    { name = "mcp", specifier = ">=1.2,<2" },
     { name = "mypy" },
     { name = "ruff" },
 ]

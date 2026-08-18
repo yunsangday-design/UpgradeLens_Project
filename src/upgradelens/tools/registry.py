@@ -25,7 +25,10 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from upgradelens.core.capability import CapabilityRegistry
 
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
@@ -234,10 +237,21 @@ def _target_of(params: Mapping[str, Any]) -> str:
 class ToolRegistry:
     """An ordered, name-addressed collection of :class:`Tool` values."""
 
-    def __init__(self, tools: list[Tool] | None = None) -> None:
+    def __init__(
+        self,
+        tools: list[Tool] | None = None,
+        *,
+        capability_registry: CapabilityRegistry | None = None,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
         for tool in tools or []:
             self.register(tool)
+        # S1 integration: optional capability gate. When an active capability kind
+        # is set (via :meth:`set_active_capability`), every :meth:`run` must pass the
+        # capability's ``allowed_tools`` check before executing. Disabled by default
+        # so existing call paths (no active capability) are unchanged.
+        self._capability_registry = capability_registry
+        self._active_capability_kind: str | None = None
 
     def register(self, tool: Tool) -> Tool:
         if tool.name in self._tools:
@@ -259,12 +273,27 @@ class ToolRegistry:
         """Function definitions for every tool, ready for function calling."""
         return [self._tools[name].json_schema() for name in self.names()]
 
+    def set_active_capability(self, kind: str | None) -> None:
+        """Activate capability-based tool gating for subsequent :meth:`run` calls.
+
+        Pass ``None`` to disable gating (the default for every existing path).
+        """
+        self._active_capability_kind = kind
+
+    def _enforce_capability(self, name: str) -> None:
+        if (
+            self._capability_registry is not None
+            and self._active_capability_kind is not None
+        ):
+            self._capability_registry.require_tool(self._active_capability_kind, name)
+
     def run(
         self,
         name: str,
         payload: Mapping[str, Any] | BaseModel,
         ctx: ToolContext | None = None,
     ) -> Any:
+        self._enforce_capability(name)
         return self.get(name).run(payload, ctx)
 
     def __contains__(self, name: object) -> bool:

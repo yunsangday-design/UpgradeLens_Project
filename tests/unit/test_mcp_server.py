@@ -77,3 +77,52 @@ def test_run_eval_offline():
     _assert_jsonable(result)
     assert "baselines" in result
     assert "cases" in result
+
+
+def test_list_agent_skills():
+    catalog = mcp_server.list_agent_skills()
+    _assert_jsonable(catalog)
+    ids = {s["skill_id"] for s in catalog["agent_skills"]}
+    assert ids == {
+        "evidence-grounded-review",
+        "safe-dependency-migration",
+        "systematic-issue-diagnosis",
+        "verification-before-completion",
+    }
+
+
+def test_resolve_agent_skill():
+    for kind, expected in [
+        ("dependency_upgrade", "safe-dependency-migration"),
+        ("pr_review", "evidence-grounded-review"),
+        ("chat_summary", None),
+    ]:
+        result = mcp_server.resolve_agent_skill(kind)
+        _assert_jsonable(result)
+        assert result["skill_id"] == expected
+        assert result["matched_by"] in ("routing_contract", "fallback", "none")
+
+
+def test_resolve_agent_skill_locale_zh():
+    result = mcp_server.resolve_agent_skill("pr_review", locale="zh-CN")
+    _assert_jsonable(result)
+    assert result["skill_id"] == "evidence-grounded-review"
+
+
+def test_list_corpus_sources():
+    sources = mcp_server.list_corpus_sources()
+    _assert_jsonable(sources)
+    pkgs = {s["package_name"] for s in sources["sources"]}
+    assert "pydantic" in pkgs
+
+
+def test_resolve_capability_uses_migrated_pack():
+    """LS-3: resolve_capability now resolves from the YAML pack, not the Skill."""
+    for dep, expected in [
+        ("pydantic", "pydantic_v1_to_v2"),
+        ("sqlalchemy", "sqlalchemy_v1_to_v2"),
+        ("no_such_pkg", None),
+    ]:
+        result = mcp_server.resolve_capability(dep, "2.0")
+        _assert_jsonable(result)
+        assert result["capability_id"] == expected

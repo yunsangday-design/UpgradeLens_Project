@@ -44,7 +44,7 @@ from upgradelens.agent.supervisor import AgentContext
 from upgradelens.agent.supervisor import run_supervisor as supervisor_run
 from upgradelens.analyzers import scan_code_evidence
 from upgradelens.analyzers import scan_dependency as scan_dependency_fn
-from upgradelens.capabilities import CapabilityRegistry, TransformationPack
+from upgradelens.capabilities import CapabilityRegistry
 from upgradelens.capabilities.transformations import resolve_pack_for_dependency
 from upgradelens.capabilities.workbench import (
     list_capabilities as list_unified_capabilities_fn,
@@ -215,25 +215,99 @@ def resolve_capability(
     target_version: str,
     source_version: str | None = None,
 ) -> dict[str, Any]:
-    """B5: pick the transformation capability for a dependency + target version.
+    """Pick the migrated TransformationPack (LS-1/LS-3) for a dependency.
 
     Args:
         dependency: Dependency name (any casing).
-        target_version: Target PEP 440 version.
-        source_version: Optional source PEP 440 version to narrow the match.
+        target_version: Target PEP 440 version (kept for the legacy contract;
+            the migrated packs are version-agnostic, callers can ignore it).
+        source_version: Optional source PEP 440 version (also accepted for the
+            legacy contract, not consulted by the post-skill resolver).
     """
-    selection = builtin_registry().select_skill(dependency, target_version, source_version)
-    if selection is None:
+    pack = resolve_pack_for_dependency(dependency)
+    if pack is None:
         return {"dependency": dependency, "capability_id": None}
-    resolved = builtin_registry().get(selection.skill_id)
-    if resolved is None:
-        return {"dependency": dependency, "capability_id": None}
-    pack = TransformationPack.from_skill(resolved)
     return {
         "dependency": dependency,
         "capability_id": pack.id,
         "allow_patch_draft": pack.allow_patch_draft(),
         "patch_rules": [r.id for r in pack.patch_rules()],
+    }
+
+
+@mcp.tool()
+def list_agent_skills(locale: str = "en") -> dict[str, Any]:
+    """SK-1: list the built-in AgentSkills (behaviour specs).
+
+    The deprecated ``list_skills`` tool keeps listing legacy Skill Packs for
+    back-compat; this tool surfaces the *behaviour-spec* registry instead.
+    """
+    from upgradelens.agent_skills.loader import load_builtin_agent_skills
+
+    skills = load_builtin_agent_skills()
+    return {
+        "agent_skills": [
+            {
+                "skill_id": s.skill_id,
+                "version": s.version,
+                "language": s.language,
+                "applies_to": list(s.applies_to),
+                "when_to_use": list(s.when_to_use),
+                "has_localized_variant": "cn" in s.localized_variants,
+            }
+            for s in skills
+        ]
+    }
+
+
+@mcp.tool()
+def resolve_agent_skill(kind: str, locale: str = "en") -> dict[str, Any]:
+    """SK-1: resolve the AgentSkill for a capability ``kind`` (and locale).
+
+    Returns ``matched_by: "none"`` when no skill applies -- callers can fall
+    back to the generic capability note instead of guessing.
+    """
+    from upgradelens.agent_skills.resolver import resolve_agent_skill
+
+    skill = resolve_agent_skill(kind, locale=locale or "en")
+    if skill is None:
+        return {"kind": kind, "skill_id": None, "matched_by": "none"}
+    return {
+        "kind": kind,
+        "skill_id": skill.skill_id,
+        "version": skill.version,
+        "language": skill.language,
+        "matched_by": (
+            "routing_contract" if skill.applies_to == [kind] else "fallback"
+        ),
+        "steps": list(skill.steps),
+        "completion_criteria": list(skill.completion_criteria),
+    }
+
+
+@mcp.tool()
+def list_corpus_sources() -> dict[str, Any]:
+    """LS-2: list the shared RAG corpus source descriptors.
+
+    Each entry is a document the RAG index ingests -- independent of any
+    Skill Pack. Retrieval starts from these descriptors, not from legacy
+    Skill metadata.
+    """
+    from upgradelens.corpus.loader import iter_builtin_sources
+
+    return {
+        "sources": [
+            {
+                "id": s.id,
+                "package_name": s.package_name,
+                "title": s.display_title,
+                "source_type": s.source_type,
+                "trust_level": s.trust_level,
+                "source_version_spec": s.source_version_spec,
+                "target_version_spec": s.target_version_spec,
+            }
+            for s in iter_builtin_sources()
+        ]
     }
 
 

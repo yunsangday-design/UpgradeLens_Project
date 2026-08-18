@@ -69,7 +69,7 @@ from pydantic import BaseModel, ValidationError
 from upgradelens.agent.loop import run_agent
 from upgradelens.agent.planner import build_agent_plan
 from upgradelens.analyzers import scan_code_evidence, scan_dependency
-from upgradelens.capabilities import CapabilityRegistry, TransformationPack
+from upgradelens.capabilities import CapabilityRegistry
 from upgradelens.capabilities.runner import (
     build_gateway,
     dispatch_capability,
@@ -143,6 +143,9 @@ _LIST_SKILLS_COMMAND = "list-skills"
 _RESOLVE_SKILL_COMMAND = "resolve-skill"
 _LIST_CAPABILITIES_COMMAND = "list-capabilities"
 _RESOLVE_CAPABILITY_COMMAND = "resolve-capability"
+_LIST_AGENT_SKILLS_COMMAND = "list-agent-skills"
+_RESOLVE_AGENT_SKILL_COMMAND = "resolve-agent-skill"
+_LIST_CORPUS_SOURCES_COMMAND = "list-corpus-sources"
 _GATE_COMMAND = "gate"
 _INGEST_DOCS_COMMAND = "ingest-docs"
 _RETRIEVE_DOCS_COMMAND = "retrieve-docs"
@@ -380,6 +383,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-version",
         default=None,
         help="Optional source PEP 440 version to narrow the match.",
+    )
+
+    # LS-4 / SK-1: the post-skill surface. AgentSkills are behaviour specs;
+    # corpus sources are the shared RAG inputs; transformation packs are the
+    # migrated mechanical-rewrite abilities. None of them derive from the
+    # deprecated SkillPackage path.
+    list_agent_skills = subparsers.add_parser(
+        _LIST_AGENT_SKILLS_COMMAND,
+        help="(SK-1) List the built-in AgentSkills (behaviour specs).",
+    )
+    list_agent_skills.add_argument("--locale", default="en", help="Locale code (default: en).")
+
+    resolve_agent_skill = subparsers.add_parser(
+        _RESOLVE_AGENT_SKILL_COMMAND,
+        help="(SK-1) Resolve the AgentSkill for a capability kind (and locale).",
+    )
+    resolve_agent_skill.add_argument(
+        "--kind", required=True,
+        help="Capability kind (e.g. dependency_upgrade, pr_review, issue_repair).",
+    )
+    resolve_agent_skill.add_argument("--locale", default="en", help="Locale code (default: en).")
+
+    subparsers.add_parser(
+        _LIST_CORPUS_SOURCES_COMMAND,
+        help="(LS-2) List the shared RAG corpus source descriptors (package -> docs).",
     )
 
     # 6.1: CI gate consumes the assess artifact and blocks on verified high risk.
@@ -2107,32 +2135,81 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit({"capabilities": caps.catalog()})
         return EXIT_OK
 
+    if args.command == _LIST_AGENT_SKILLS_COMMAND:
+        from upgradelens.agent_skills.loader import load_builtin_agent_skills
+
+        skills = load_builtin_agent_skills()
+        _emit(
+            {
+                "agent_skills": [
+                    {
+                        "skill_id": s.skill_id,
+                        "version": s.version,
+                        "language": s.language,
+                        "applies_to": list(s.applies_to),
+                        "when_to_use": list(s.when_to_use),
+                        "has_localized_variant": "cn" in s.localized_variants,
+                    }
+                    for s in skills
+                ]
+            }
+        )
+        return EXIT_OK
+
+    if args.command == _RESOLVE_AGENT_SKILL_COMMAND:
+        from upgradelens.agent_skills.resolver import resolve_agent_skill
+
+        skill = resolve_agent_skill(args.kind, locale=args.locale)
+        if skill is None:
+            _emit({"kind": args.kind, "skill_id": None, "matched_by": "none"})
+            return EXIT_OK
+        _emit(
+            {
+                "kind": args.kind,
+                "skill_id": skill.skill_id,
+                "version": skill.version,
+                "language": skill.language,
+                "matched_by": (
+                    "routing_contract"
+                    if skill.applies_to == [args.kind]
+                    else "fallback"
+                ),
+                "steps": list(skill.steps),
+                "completion_criteria": list(skill.completion_criteria),
+            }
+        )
+        return EXIT_OK
+
+    if args.command == _LIST_CORPUS_SOURCES_COMMAND:
+        from upgradelens.corpus.loader import iter_builtin_sources
+
+        _emit(
+            {
+                "sources": [
+                    {
+                        "id": s.id,
+                        "package_name": s.package_name,
+                        "title": s.display_title,
+                        "source_type": s.source_type,
+                        "trust_level": s.trust_level,
+                        "source_version_spec": s.source_version_spec,
+                        "target_version_spec": s.target_version_spec,
+                    }
+                    for s in iter_builtin_sources()
+                ]
+            }
+        )
+        return EXIT_OK
+
     if args.command == _RESOLVE_CAPABILITY_COMMAND:
-        try:
-            selection = builtin_registry().select_skill(
-                args.dependency, args.target_version, args.source_version
-            )
-        except SkillParseError as exc:
-            errors = [ParseIssue(code=IssueCode.INVALID_REQUEST, message=str(exc))]
-            _emit(
-                DependencyScanResult(
-                    requested_name=args.dependency,
-                    dependency_name=canonicalize_name(args.dependency.strip()),
-                    status=ResolutionStatus.INVALID,
-                    target_version=args.target_version,
-                    errors=errors,
-                )
-            )
-            sys.stderr.write("upgradelens: invalid request\n")
-            return EXIT_INVALID_REQUEST
-        if selection is None:
+        # LS-3: resolve the migrated TransformationPack directly. The deprecated
+        # SkillPack path was kept as a thin compatibility shim above (resolve-skill)
+        # so this command can move to the post-LS-1 surface without breaking the
+        # front door's parity tests.
+        pack = resolve_pack_for_dependency(args.dependency)
+        if pack is None:
             _emit({"dependency": args.dependency, "capability_id": None})
             return EXIT_OK
-        resolved = builtin_registry().get(selection.skill_id)
-        if resolved is None:
-            _emit({"dependency": args.dependency, "capability_id": None})
-            return EXIT_OK
-        pack = TransformationPack.from_skill(resolved)
         _emit(
             {
                 "dependency": args.dependency,

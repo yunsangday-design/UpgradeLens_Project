@@ -17,17 +17,20 @@ multi-agent supervisor reuses the single-capability engines unchanged.
 
 from __future__ import annotations
 
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from upgradelens.agent.checkpoint import CheckpointStore
 from upgradelens.agent.runner import AgentRunner
 from upgradelens.agent.runtime import (
     AgentKind,
     AgentResult,
     AgentRunContext,
+    RunStatus,
     TaskEnvelope,
 )
 
@@ -169,6 +172,8 @@ class PlanExecutionResult:
     results: dict[str, AgentResult]
     waves: list[list[str]]
     status: str = "completed"  # completed | failed
+    # steps whose results were restored from a checkpoint instead of re-run
+    resumed_steps: list[str] = field(default_factory=list)
 
 
 def execute_plan(
@@ -177,6 +182,7 @@ def execute_plan(
     ctx: AgentRunContext,
     *,
     max_workers: int = 1,
+    checkpoint_store: CheckpointStore | None = None,
 ) -> PlanExecutionResult:
     """Drive the plan's waves through ``runner`` under one shared budget.
 
@@ -184,23 +190,68 @@ def execute_plan(
     runs of ``ctx`` (so every leaf carries ``parent_run_id`` and the trace tree
     stays connected). Cost is recorded once, by the runner, into the shared
     (thread-safe) ledger on the context.
+
+    With a ``checkpoint_store``, completed steps are checkpointed under
+    ``(ctx.run_id, step_id)`` and a re-dispatch of the same run id resumes them
+    losslessly instead of re-executing -- the crash-recovery guarantee. Checkpoint
+    loads happen before the wave is dispatched and saves after it joins, so both
+    in-memory and SQLite stores are used from the orchestrating thread only.
     """
     waves = execution_waves(plan)
     results: dict[str, AgentResult] = {}
+    resumed: list[str] = []
     any_failed = False
 
     for wave in waves:
         wave_results: dict[str, AgentResult] = {}
 
-        if max_workers <= 1 or len(wave) <= 1:
-            for sid in wave:
+        # 1) resume completed steps from checkpoints (main thread, pre-dispatch)
+        pending = list(wave)
+        if checkpoint_store is not None:
+            still_pending: list[str] = []
+            for sid in pending:
+                cp = checkpoint_store.load(ctx.run_id, sid)
+                if cp is None or cp.state.get("status") != RunStatus.COMPLETED.value:
+                    still_pending.append(sid)
+                    continue
+                wave_results[sid] = AgentResult.model_validate(cp.state["result"])
+                resumed.append(sid)
+                # resumed costs were spent in the crashed attempt; keep the
+                # ledger honest about the task's cumulative consumption
+                if ctx.budget is not None and hasattr(ctx.budget, "record"):
+                    ctx.budget.record(wave_results[sid].cost)
+            pending = still_pending
+
+        # 2) run the rest of the wave (serially or concurrently)
+        if max_workers <= 1 or len(pending) <= 1:
+            for sid in pending:
                 wave_results[sid] = _run_step(runner, plan, ctx, sid)
         else:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(_run_step, runner, plan, ctx, sid): sid for sid in wave}
+                futures = {pool.submit(_run_step, runner, plan, ctx, sid): sid for sid in pending}
                 for fut in futures:
                     sid = futures[fut]
                     wave_results[sid] = fut.result()
+
+        # 3) checkpoint newly completed steps (main thread, post-join)
+        if checkpoint_store is not None:
+            from upgradelens.agent.runtime import Checkpoint
+
+            for sid in pending:
+                res = wave_results[sid]
+                if res.status is RunStatus.COMPLETED:
+                    dump = res.model_dump(mode="json")
+                    checkpoint_store.save(
+                        Checkpoint(
+                            run_id=ctx.run_id,
+                            step=sid,
+                            state={
+                                "status": RunStatus.COMPLETED.value,
+                                "result": dump,
+                            },
+                            state_hash=_hash_result(res),
+                        )
+                    )
 
         for sid, res in wave_results.items():
             results[sid] = res
@@ -212,7 +263,62 @@ def execute_plan(
         results=results,
         waves=waves,
         status="failed" if any_failed else "completed",
+        resumed_steps=resumed,
     )
+
+
+def _hash_result(result: AgentResult) -> str:
+    blob = f"{result.status.value}|{result.agent_id}|{result.finding_count}".encode()
+    return hashlib.sha1(blob).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Canonical fan-out / fan-in template (shared by supervisor and MA-4 decomposer)
+# ---------------------------------------------------------------------------
+
+
+def fanout_fanin_plan(
+    leaves: list[PlanStep],
+    plan_id: str,
+    *,
+    mode: str = "fake",
+    sink_id: str = "evidence_review",
+) -> ExecutionPlan:
+    """The canonical multi-agent template: independent parallel leaves
+    converging on one evidence-review fan-in step.
+
+    Both the Supervisor (classified multi-capability requests) and the
+    constrained :class:`~upgradelens.agent.decomposer.DynamicDecomposer`
+    (meta goals like ``full_audit``) build their DAG with this one helper, so
+    the fan-out/fan-in shape can never drift between the two entry points.
+    """
+    plan = ExecutionPlan(plan_id=plan_id, mode=mode)
+    sink = PlanStep(
+        id=sink_id,
+        kind=AgentKind.EVIDENCE_REVIEWER,
+        task=TaskEnvelope(kind="evidence_review"),
+        strategy=StepStrategy.FAN_IN,
+    )
+    plan.add_step(sink)
+    for leaf in leaves:
+        plan.add_step(leaf)
+        plan.link(leaf.id, sink.id, strategy=StepStrategy.FAN_IN)
+    return plan
+
+
+def leaf_subplan(plan: ExecutionPlan) -> ExecutionPlan:
+    """The executable sub-plan: ``plan`` without its fan-in sink steps.
+
+    Sink steps are realised by the caller (the supervisor / decomposer runs the
+    :class:`EvidenceReviewerAgent` over the leaf results directly), so waves
+    only ever contain the runnable leaves.
+    """
+    sub = ExecutionPlan(plan_id=f"{plan.plan_id}_leaves", mode=plan.mode)
+    for step in plan.steps.values():
+        if step.strategy is StepStrategy.FAN_IN:
+            continue
+        sub.add_step(step.model_copy(deep=True))
+    return sub
 
 
 def _run_step(
@@ -230,4 +336,6 @@ __all__ = [
     "execution_waves",
     "PlanExecutionResult",
     "execute_plan",
+    "fanout_fanin_plan",
+    "leaf_subplan",
 ]

@@ -26,13 +26,15 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from upgradelens.agent.budget import BudgetLedger, default_budget_spec
+from upgradelens.agent.checkpoint import CheckpointStore
 from upgradelens.agent.dispatch import dispatch_by_task
 from upgradelens.agent.evidence_reviewer import EvidenceReviewerAgent
 from upgradelens.agent.execution_plan import (
-    ExecutionPlan,
     PlanStep,
     StepStrategy,
     execute_plan,
+    fanout_fanin_plan,
+    leaf_subplan,
 )
 from upgradelens.agent.router import Router
 from upgradelens.agent.runner import AgentRunner
@@ -41,6 +43,7 @@ from upgradelens.agent.runtime import (
     AgentKind,
     AgentResult,
     AgentRunContext,
+    RunId,
     RunStatus,
     TaskEnvelope,
     new_run_id,
@@ -156,6 +159,8 @@ class SupervisorResult(BaseModel):
     agent_runs: list[dict[str, Any]] = Field(default_factory=list)
     aggregate_result: dict[str, Any] | None = None
     conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    # steps restored from a checkpoint instead of re-run (crash recovery)
+    resumed_steps: list[str] = Field(default_factory=list)
 
 
 def _envelope_from_task(
@@ -200,6 +205,8 @@ def run_supervisor(
     ctx: AgentContext | None = None,
     *,
     mode: str = "fake",
+    run_id: str | None = None,
+    checkpoint_store: CheckpointStore | None = None,
 ) -> SupervisorResult:
     """Run ``task`` through the controlled Supervisor + Handoff layer.
 
@@ -207,6 +214,10 @@ def run_supervisor(
     needless multi-agent graph). Multi-capability requests fan out to one handoff
     per capability, each in an isolated context, then aggregate through a unified
     verification gate.
+
+    Crash recovery: pass a ``checkpoint_store`` and re-dispatch with the same
+    ``run_id`` -- already-completed leaves are restored from their checkpoints
+    (surfaced via ``SupervisorResult.resumed_steps``) instead of re-executing.
     """
     ctx = ctx or AgentContext(mode=mode)
     parent_id = task.task_id or "task"
@@ -233,10 +244,13 @@ def run_supervisor(
 
     # Multi-agent (MA-2-2): fan out through the unified runtime as one parallel
     # wave of child runs, then converge through the deterministic aggregator +
-    # shared evidence gate (MA-2-3).
+    # shared evidence gate (MA-2-3). The DAG is the canonical fan-out/fan-in
+    # template shared with the MA-4 decomposer; a re-dispatch of the same
+    # ``run_id`` with a ``checkpoint_store`` resumes completed leaves instead of
+    # re-executing them (crash recovery).
     ledger = BudgetLedger(default_budget_spec(ctx.budget_tokens or None))
     root_ctx = AgentRunContext(
-        run_id=new_run_id(),
+        run_id=RunId(run_id) if run_id else new_run_id(),
         agent=AgentIdentity.create(AgentKind.SUPERVISOR),
         mode=ctx.mode,
         locale=task.locale or "zh-CN",
@@ -244,19 +258,27 @@ def run_supervisor(
     )
     runner = AgentRunner(default_registry())
 
-    plan = ExecutionPlan(plan_id=str(root_ctx.run_id), mode=ctx.mode)
-    for idx, kind in enumerate(kinds):
-        plan.add_step(
-            PlanStep(
-                id=f"cap-{idx}-{kind.value}",
-                kind=AgentKind(kind.value),
-                task=_envelope_from_task(kind, task, parent_id, idx),
-                strategy=StepStrategy.PARALLEL,
-            )
+    leaf_steps = [
+        PlanStep(
+            id=f"cap-{idx}-{kind.value}",
+            kind=AgentKind(kind.value),
+            task=_envelope_from_task(kind, task, parent_id, idx),
+            strategy=StepStrategy.PARALLEL,
         )
+        for idx, kind in enumerate(kinds)
+    ]
+    plan = fanout_fanin_plan(leaf_steps, str(root_ctx.run_id), mode=ctx.mode)
+    leaf_plan = leaf_subplan(plan)
 
-    exec_result = execute_plan(runner, plan, root_ctx, max_workers=max(1, len(plan.steps)))
-    leaf_results = [exec_result.results[sid] for sid in plan.steps]
+    exec_result = execute_plan(
+        runner,
+        leaf_plan,
+        root_ctx,
+        max_workers=max(1, len(leaf_plan.steps)),
+        checkpoint_store=checkpoint_store,
+    )
+    leaf_results = [exec_result.results[sid] for sid in leaf_plan.steps]
+    resumed_steps = list(exec_result.resumed_steps)
 
     # fan-in: one shared trust bar over every leaf's findings
     aggregate = EvidenceReviewerAgent().review(root_ctx, leaf_results)
@@ -292,4 +314,5 @@ def run_supervisor(
         agent_runs=[r.model_dump(mode="json") for r in [*leaf_results, aggregate]],
         aggregate_result=aggregate.model_dump(mode="json"),
         conflicts=conflicts,
+        resumed_steps=resumed_steps,
     )

@@ -16,6 +16,8 @@ from upgradelens.agent.execution_plan import (
     PlanStep,
     StepStrategy,
     execute_plan,
+    fanout_fanin_plan,
+    leaf_subplan,
 )
 from upgradelens.agent.runner import AgentRunner
 from upgradelens.agent.runtime import (
@@ -49,31 +51,27 @@ class DynamicDecomposer:
         self.registry = registry
 
     def decompose(self, task: TaskEnvelope, *, plan_id: str = "plan") -> ExecutionPlan:
+        """Build the DAG with the canonical fan-out/fan-in template.
+
+        The template is shared with the Supervisor (``fanout_fanin_plan``), so
+        the meta-goal path and the classified-request path can never drift into
+        different DAG shapes.
+        """
         register_evidence_reviewer(self.registry)
         leaves = _leaf_kinds(task, self.registry)
         if not leaves:
             leaves = [AgentKind.PR_REVIEW]
 
-        plan = ExecutionPlan(plan_id=plan_id, mode=task.locale or "fake")
-        for kind in leaves:
-            plan.add_step(
-                PlanStep(
-                    id=f"leaf_{kind.value}",
-                    kind=kind,
-                    task=TaskEnvelope(kind=kind.value, repo=task.repo, goal=task.goal),
-                    strategy=StepStrategy.FAN_OUT,
-                )
+        leaf_steps = [
+            PlanStep(
+                id=f"leaf_{kind.value}",
+                kind=kind,
+                task=TaskEnvelope(kind=kind.value, repo=task.repo, goal=task.goal),
+                strategy=StepStrategy.PARALLEL,
             )
-        sink = PlanStep(
-            id="evidence_review",
-            kind=AgentKind.EVIDENCE_REVIEWER,
-            task=TaskEnvelope(kind="evidence_review"),
-            strategy=StepStrategy.FAN_IN,
-        )
-        plan.add_step(sink)
-        for kind in leaves:
-            plan.link(f"leaf_{kind.value}", "evidence_review", strategy=StepStrategy.FAN_IN)
-        return plan
+            for kind in leaves
+        ]
+        return fanout_fanin_plan(leaf_steps, plan_id, mode=task.locale or "fake")
 
     def decompose_and_run(
         self, task: TaskEnvelope, ctx: AgentRunContext, *, max_workers: int = 1
@@ -81,11 +79,7 @@ class DynamicDecomposer:
         """Decompose, run the leaves, then run the evidence reviewer over them."""
         register_evidence_reviewer(self.registry)
         plan = self.decompose(task)
-        leaf_plan = ExecutionPlan(plan_id=f"{plan.plan_id}_leaves", mode=plan.mode)
-        for sid, step in plan.steps.items():
-            if sid == "evidence_review":
-                continue
-            leaf_plan.add_step(step)
+        leaf_plan = leaf_subplan(plan)
 
         leaf_exec = execute_plan(self.runner(), leaf_plan, ctx, max_workers=max_workers)
         reviewer = EvidenceReviewerAgent()

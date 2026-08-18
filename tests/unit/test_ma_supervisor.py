@@ -47,10 +47,12 @@ def test_multi_agent_runs_through_unified_runtime():
     assert sup.root_run_id
     assert sup.execution_plan is not None
     step_ids = sorted(sup.execution_plan["steps"])
-    assert step_ids == ["cap-0-security_review", "cap-1-pr_review"]
-    assert all(
-        s["strategy"] == "parallel" for s in sup.execution_plan["steps"].values()
-    )
+    # canonical fan-out/fan-in template: 2 parallel leaves + 1 evidence-review sink
+    assert step_ids == ["cap-0-security_review", "cap-1-pr_review", "evidence_review"]
+    strategies = {sid: s["strategy"] for sid, s in sup.execution_plan["steps"].items()}
+    assert strategies["cap-0-security_review"] == "parallel"
+    assert strategies["cap-1-pr_review"] == "parallel"
+    assert strategies["evidence_review"] == "fan_in"
 
     # agent_runs: 2 capability leaves + 1 evidence-reviewer fan-in
     assert len(sup.agent_runs) == 3

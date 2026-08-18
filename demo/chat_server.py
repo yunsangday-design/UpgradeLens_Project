@@ -506,6 +506,7 @@ class ChatHandler(SimpleHTTPRequestHandler):
                     "agent_runs": sup.agent_runs,
                     "aggregate_result": sup.aggregate_result,
                     "conflicts": sup.conflicts,
+                    "resumed_steps": sup.resumed_steps,
                 }
             )
         except Exception as exc:

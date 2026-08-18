@@ -1,0 +1,48 @@
+name: baseline_cases
+schema_version: 1
+max_speedup_factor: 2.0
+cases:
+- id: pydantic_v1_to_v2_pr
+  repo_fixture: pydantic_usage
+  goal: review 这个 PR https://github.com/x/y 并做安全扫描
+  capabilities:
+  - pr_review
+  - security_review
+  orchestration: multi-agent
+  expect:
+    capability_kinds:
+    - pr_review
+    - security_review
+    budget_tokens_used_min: 0
+    summary_contains: 多能力协作
+    findings_min: 1
+- id: pydantic_v1_to_v2_single
+  repo_fixture: pydantic_usage
+  goal: pydantic 升级 dependency_upgrade 到 2.0
+  capabilities:
+  - dependency_upgrade
+  orchestration: single
+  expect:
+    capability_kinds:
+    - dependency_upgrade
+    findings_min: 0
+- id: breaking_change_single
+  repo_fixture: pydantic_usage
+  goal: pydantic 2.0 有 breaking change 吗
+  capabilities:
+  - breaking_change
+  orchestration: single
+  expect:
+    capability_kinds:
+    - breaking_change
+    findings_min: 0
+- id: issue_repair_single
+  repo_fixture: pydantic_usage
+  goal: '修复 TypeError: ''NoneType'' object has no attribute ''foo'''
+  capabilities:
+  - issue_repair
+  orchestration: single
+  expect:
+    capability_kinds:
+    - issue_repair
+    findings_min: 0

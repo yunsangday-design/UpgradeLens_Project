@@ -70,6 +70,11 @@ from upgradelens.agent.loop import run_agent
 from upgradelens.agent.planner import build_agent_plan
 from upgradelens.analyzers import scan_code_evidence, scan_dependency
 from upgradelens.capabilities import CapabilityRegistry, TransformationPack
+from upgradelens.capabilities.runner import (
+    build_gateway,
+    dispatch_capability,
+    list_capabilities,
+)
 from upgradelens.config import NetworkMode, Settings
 from upgradelens.db.database import DEFAULT_DB_PATH, engine_for, init_db, session_for
 from upgradelens.db.repository import persist_code_report
@@ -147,6 +152,11 @@ _EVAL_ABLATE_COMMAND = "eval-ablate"
 _EVAL_REPLAY_COMMAND = "eval-replay"
 _FETCH_DOCS_COMMAND = "fetch-docs"
 _MCP_COMMAND = "mcp"
+_CAPABILITY_LIST_COMMAND = "capability-list"
+_CAPABILITY_RUN_COMMAND = "capability-run"
+_RUN_COMMAND = "run"
+_EVAL_CAPABILITY_COMMAND = "eval-capability"
+_EVAL_ISSUE_REPAIR_COMMAND = "eval-issue-repair"
 _COMMENT_PR_COMMAND = "comment-pr"
 _AGENT_COMMAND = "agent"
 _SEED_REPLAY_COMMAND = "seed-replay"
@@ -618,6 +628,210 @@ def build_parser() -> argparse.ArgumentParser:
         default="stdio",
         choices=["stdio", "sse", "streamable-http"],
         help="MCP transport to serve (default: stdio).",
+    )
+
+    capability_list = subparsers.add_parser(
+        _CAPABILITY_LIST_COMMAND,
+        help="List registered task capabilities (security_review, pr_review, ...).",
+    )
+    capability_list.add_argument(
+        "--json", action="store_true", help="Emit raw JSON instead of a table."
+    )
+
+    capability_run = subparsers.add_parser(
+        _CAPABILITY_RUN_COMMAND,
+        help="Run one capability end-to-end in fake (default) or live mode.",
+    )
+    capability_run.add_argument(
+        "--kind",
+        required=True,
+        choices=[c["kind"] for c in list_capabilities()],
+        help="Capability to run.",
+    )
+    capability_run.add_argument("--repo", default="", help="Repository root path.")
+    capability_run.add_argument(
+        "--diff",
+        default="",
+        help="Unified diff (inline) or path to a .diff/.patch file.",
+    )
+    capability_run.add_argument(
+        "--dependency", default="", help="Dependency name for upgrade/CVE checks."
+    )
+    capability_run.add_argument(
+        "--source-version", default="", help="Current dependency version."
+    )
+    capability_run.add_argument(
+        "--target-version", default="", help="Target dependency version."
+    )
+    capability_run.add_argument(
+        "--mode", default="fake", choices=["fake", "live"], help="Gateway mode."
+    )
+    capability_run.add_argument(
+        "--out", default="", help="Write the JSON result to this path."
+    )
+
+    run_cmd = subparsers.add_parser(
+        _RUN_COMMAND,
+        help=(
+            "One natural-language goal in, one unified result out: routes to any "
+            "of the five capabilities (A4 unified entry)."
+        ),
+    )
+    run_cmd.add_argument(
+        "goal",
+        help="Natural-language task, e.g. 'review the security of <github url>'.",
+    )
+    run_cmd.add_argument(
+        "--repo",
+        default=None,
+        help="Repository root (path or URL); overrides/fills the routed intent.",
+    )
+    run_cmd.add_argument(
+        "--diff",
+        default="",
+        help="Unified diff (inline) or path to a .diff/.patch file (review/security).",
+    )
+    run_cmd.add_argument(
+        "--dependency", default=None, help="Dependency name (upgrade / CVE context)."
+    )
+    run_cmd.add_argument(
+        "--source-version", default=None, help="Current dependency version."
+    )
+    run_cmd.add_argument(
+        "--target-version", default=None, help="Target dependency version."
+    )
+    run_cmd.add_argument(
+        "--issue-text",
+        default="",
+        help="Issue/bug report text (inline) or a path to a text file (issue repair).",
+    )
+    run_cmd.add_argument(
+        "--from-version", default=None, help="Breaking-change baseline version."
+    )
+    run_cmd.add_argument(
+        "--to-version", default=None, help="Breaking-change target version."
+    )
+    run_cmd.add_argument(
+        "--mode",
+        default="fake",
+        choices=["fake", "live", "replay"],
+        help="Gateway mode (default: fake, offline).",
+    )
+    run_cmd.add_argument("--model", default=None, help="Model name (live mode).")
+    run_cmd.add_argument(
+        "--api-key", default=None, help="API key (live mode, overrides env)."
+    )
+    run_cmd.add_argument(
+        "--base-url", default=None, help="OpenAI-compatible base url (live mode)."
+    )
+    run_cmd.add_argument(
+        "--budget-tokens", type=int, default=None, help="Maximum total tokens."
+    )
+    run_cmd.add_argument(
+        "--replay-dir",
+        metavar="DIR",
+        default=None,
+        help="Recorded node responses (replay mode).",
+    )
+    run_cmd.add_argument(
+        "--record-replay",
+        metavar="DIR",
+        default=None,
+        help="Record live responses to DIR (live mode).",
+    )
+    run_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Only route + decompose capabilities; do not execute.",
+    )
+    run_cmd.add_argument(
+        "--out", default="", help="Write the JSON result to this path."
+    )
+
+    eval_capability = subparsers.add_parser(
+        _EVAL_CAPABILITY_COMMAND,
+        help=(
+            "A5: run the per-capability gold set and print a cross-capability "
+            "scoreboard (pass rate / verification / no-hallucination)."
+        ),
+    )
+    eval_capability.add_argument(
+        "--kind",
+        default=None,
+        choices=[c["kind"] for c in list_capabilities()],
+        help="Evaluate one capability (default: all gold cases).",
+    )
+    eval_capability.add_argument(
+        "--gold",
+        metavar="YAML",
+        default=None,
+        help="Path to gold_cases.yaml (defaults to the bundled fixture).",
+    )
+    eval_capability.add_argument(
+        "--repo",
+        default=None,
+        help="Repository root for the cases (defaults to the bundled fixture repo).",
+    )
+    eval_capability.add_argument(
+        "--mode",
+        default="fake",
+        choices=["fake", "live"],
+        help="Gateway mode (default: fake, offline).",
+    )
+    eval_capability.add_argument(
+        "--json",
+        metavar="PATH",
+        default="",
+        help="Write the full JSON report (incl. per-case scores) to this path.",
+    )
+    eval_capability.add_argument(
+        "--md",
+        metavar="PATH",
+        default="",
+        help="Write the Markdown scoreboard to this path.",
+    )
+    eval_capability.add_argument(
+        "--fail-under",
+        type=float,
+        default=None,
+        metavar="RATE",
+        help="Exit non-zero when the overall pass rate is below RATE (CI gate).",
+    )
+
+    eval_issue_repair = subparsers.add_parser(
+        _EVAL_ISSUE_REPAIR_COMMAND,
+        help=(
+            "B2: run the issue-repair gold set (root-cause hit rate, "
+            "clarification correctness, repro-tests-red-before-fix)."
+        ),
+    )
+    eval_issue_repair.add_argument(
+        "--cases", metavar="YAML", default=None,
+        help="Path to the B2 cases.yaml (defaults to the bundled fixture).",
+    )
+    eval_issue_repair.add_argument(
+        "--repo", default=None,
+        help="Repository root for the cases (defaults to the bundled fixture repo).",
+    )
+    eval_issue_repair.add_argument(
+        "--mode", default="fake", choices=["fake", "live"],
+        help="Gateway mode (default: fake, offline).",
+    )
+    eval_issue_repair.add_argument(
+        "--skip-repro", action="store_true",
+        help="Skip the repro-tests-red subprocess check.",
+    )
+    eval_issue_repair.add_argument(
+        "--json", metavar="PATH", default="",
+        help="Write the full JSON report to this path.",
+    )
+    eval_issue_repair.add_argument(
+        "--md", metavar="PATH", default="",
+        help="Write the Markdown scoreboard to this path.",
+    )
+    eval_issue_repair.add_argument(
+        "--fail-under", type=float, default=None, metavar="RATE",
+        help="Exit non-zero when the root-cause hit rate is below RATE (CI gate).",
     )
 
     evaluate = subparsers.add_parser(
@@ -1651,6 +1865,199 @@ def _rag_worker_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_capability_list(args: Any) -> int:
+    caps = list_capabilities()
+    if getattr(args, "json", False):
+        _emit(caps)
+    else:
+        rows = [f"{c['kind']:18} {c['name']:20} {c['description']}" for c in caps]
+        _emit("\n".join(rows))
+    return EXIT_OK
+
+
+def _cmd_capability_run(args: Any) -> int:
+    import json as _json
+    import os
+
+    diff = getattr(args, "diff", "") or ""
+    if diff and os.path.isfile(diff):
+        with open(diff, encoding="utf-8") as fh:
+            diff = fh.read()
+    gateway = build_gateway(getattr(args, "mode", "fake"))
+    try:
+        result = dispatch_capability(
+            args.kind,
+            repo=getattr(args, "repo", ""),
+            diff=diff,
+            gateway=gateway,
+            dependency=getattr(args, "dependency", ""),
+            source_version=getattr(args, "source_version", ""),
+            target_version=getattr(args, "target_version", ""),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _emit({"error": str(exc)})
+        return EXIT_RUNTIME
+    out = getattr(args, "out", "")
+    if out:
+        with open(out, "w", encoding="utf-8") as fh:
+            _json.dump(result, fh, indent=2, ensure_ascii=False)
+        _emit({"ok": True, "out": out})
+    else:
+        _emit(result)
+    return EXIT_OK
+
+
+def _cmd_run(args: Any) -> int:
+    """A4 unified entry: one natural-language goal -> EngineeringResult."""
+    import json as _json
+    import os
+
+    from upgradelens.agent.engineering_agent import EngineeringAgent
+
+    mode = getattr(args, "mode", None) or "fake"
+    if mode == "replay" and not getattr(args, "replay_dir", None):
+        sys.stderr.write("upgradelens: --mode replay requires --replay-dir.\n")
+        return EXIT_INVALID_REQUEST
+
+    diff = getattr(args, "diff", "") or ""
+    if diff and os.path.isfile(diff):
+        with open(diff, encoding="utf-8") as fh:
+            diff = fh.read()
+    issue_text = getattr(args, "issue_text", "") or ""
+    if issue_text and os.path.isfile(issue_text):
+        with open(issue_text, encoding="utf-8") as fh:
+            issue_text = fh.read()
+
+    agent = EngineeringAgent(
+        mode=mode,
+        model=getattr(args, "model", None),
+        api_key=getattr(args, "api_key", None),
+        base_url=getattr(args, "base_url", None),
+        budget_tokens=getattr(args, "budget_tokens", None),
+        replay_dir=getattr(args, "replay_dir", None),
+        recording_dir=getattr(args, "record_replay", None),
+    )
+    try:
+        result = agent.run(
+            args.goal,
+            repo=getattr(args, "repo", None),
+            dependency=getattr(args, "dependency", None),
+            target_version=getattr(args, "target_version", None),
+            source_version=getattr(args, "source_version", None),
+            unified_diff=diff or None,
+            issue_text=issue_text or None,
+            from_version=getattr(args, "from_version", None),
+            to_version=getattr(args, "to_version", None),
+            dry_run=bool(getattr(args, "dry_run", False)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _emit({"error": str(exc)})
+        return EXIT_RUNTIME
+    out = getattr(args, "out", "")
+    if out:
+        with open(out, "w", encoding="utf-8") as fh:
+            _json.dump(
+                result.model_dump(mode="json"), fh, indent=2, ensure_ascii=False
+            )
+        _emit({"ok": True, "out": out})
+    else:
+        _emit(result)
+    return EXIT_OK
+
+
+def _cmd_eval_capability(args: Any) -> int:
+    """A5: run the per-capability gold set, print the cross-capability scoreboard."""
+    import json as _json
+
+    from upgradelens.eval.capability_eval import (
+        load_gold_cases,
+        run_capability_eval,
+    )
+
+    kind = getattr(args, "kind", None)
+    cases = load_gold_cases(getattr(args, "gold", None))
+    if kind:
+        cases = [c for c in cases if c.kind == kind]
+        if not cases:
+            _emit({"error": f"no gold cases for kind {kind!r}"})
+            return EXIT_INVALID_REQUEST
+    report = run_capability_eval(
+        mode=getattr(args, "mode", "fake") or "fake",
+        repo=getattr(args, "repo", None),
+        cases=cases,
+    )
+    md_path = getattr(args, "md", "")
+    json_path = getattr(args, "json", "")
+    if md_path:
+        Path(md_path).write_text(report.scoreboard_md + "\n", encoding="utf-8")
+    if json_path:
+        payload = report.to_dict()
+        payload["cases"] = [
+            {
+                "name": s.name,
+                "kind": s.kind,
+                "passed": s.passed,
+                "n_findings": s.n_findings,
+                "verified_findings": s.verified_findings,
+                "verification_passed": s.verification_passed,
+                "hallucination_free": s.hallucination_free,
+                "reasons": s.reasons,
+            }
+            for s in report.cases
+        ]
+        with open(json_path, "w", encoding="utf-8") as fh:
+            _json.dump(payload, fh, indent=2, ensure_ascii=False)
+    _emit_text(report.scoreboard_md + "\n")
+    failed = [s for s in report.cases if not s.passed]
+    if failed:
+        _emit_text("FAILED cases:\n")
+        for s in failed:
+            _emit_text(f"- {s.kind}/{s.name}: {'; '.join(s.reasons)}\n")
+    fail_under = getattr(args, "fail_under", None)
+    if fail_under is not None and report.overall_pass_rate < fail_under:
+        sys.stderr.write(
+            f"upgradelens: pass rate {report.overall_pass_rate} < threshold {fail_under}\n"
+        )
+        return EXIT_RUNTIME
+    return EXIT_OK
+
+
+def _cmd_eval_issue_repair(args: Any) -> int:
+    """B2: run the issue-repair gold set and print the repair scoreboard."""
+    import json as _json
+
+    from upgradelens.eval.issue_repair_eval import run_issue_repair_eval
+
+    report = run_issue_repair_eval(
+        mode=getattr(args, "mode", "fake") or "fake",
+        cases_path=getattr(args, "cases", None),
+        repo=getattr(args, "repo", None),
+        run_repro=not bool(getattr(args, "skip_repro", False)),
+    )
+    md_path = getattr(args, "md", "")
+    json_path = getattr(args, "json", "")
+    if md_path:
+        Path(md_path).write_text(report.scoreboard_md + "\n", encoding="utf-8")
+    if json_path:
+        with open(json_path, "w", encoding="utf-8") as fh:
+            _json.dump(report.to_dict(), fh, indent=2, ensure_ascii=False)
+    _emit_text(report.scoreboard_md + "\n")
+    if report.repro_fails_before_fix is False:
+        sys.stderr.write(
+            "upgradelens: repro tests are NOT red before fix — the gold set "
+            "fixture repo may have been fixed accidentally.\n"
+        )
+        return EXIT_RUNTIME
+    fail_under = getattr(args, "fail_under", None)
+    if fail_under is not None and report.root_cause_hit_rate < fail_under:
+        sys.stderr.write(
+            f"upgradelens: root-cause hit rate {report.root_cause_hit_rate} "
+            f"< threshold {fail_under}\n"
+        )
+        return EXIT_RUNTIME
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``upgradelens`` script."""
     parser = build_parser()
@@ -1784,6 +2191,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         _mcp_server.run(transport=args.transport)
         return EXIT_OK
+
+    if args.command == _CAPABILITY_LIST_COMMAND:
+        return _cmd_capability_list(args)
+
+    if args.command == _CAPABILITY_RUN_COMMAND:
+        return _cmd_capability_run(args)
+
+    if args.command == _RUN_COMMAND:
+        return _cmd_run(args)
+
+    if args.command == _EVAL_CAPABILITY_COMMAND:
+        return _cmd_eval_capability(args)
+
+    if args.command == _EVAL_ISSUE_REPAIR_COMMAND:
+        return _cmd_eval_issue_repair(args)
 
     if args.command == _EVAL_COMMAND:
         return _eval_command(args)

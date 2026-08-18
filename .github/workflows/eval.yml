@@ -3,6 +3,8 @@ name: S8 Eval Gate
 # Dedicated workflow for the S8 architecture-comparison gate.
 # Runs the CI gate tests (no-hallucination assertions) and the full
 # offline comparison + ablation to surface metric regressions explicitly.
+# The A5 capability-eval job runs the per-capability gold set and enforces
+# the no-hallucination / pass-rate thresholds as a CI gate.
 
 on:
   push:
@@ -11,6 +13,7 @@ on:
     paths:
       - "src/upgradelens/eval/**"
       - "src/upgradelens/agent/**"
+      - "src/upgradelens/capabilities/**"
       - "src/upgradelens/verify/**"
       - "tests/fixtures/eval/**"
       - "tests/unit/test_s8_*.py"
@@ -47,3 +50,43 @@ jobs:
 
       - name: CLI smoke test (eval-ablate)
         run: uv run upgradelens eval-ablate --cases tests/fixtures/eval --json /tmp/s8_ablate.json
+
+  capability-eval:
+    name: A5 Capability Eval Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (locked)
+        run: uv sync --all-groups --locked
+
+      - name: Per-capability gold set (pass-rate + no-hallucination gate)
+        run: |
+          uv run upgradelens eval-capability \
+            --fail-under 1.0 \
+            --json /tmp/capability_eval.json \
+            --md /tmp/capability_scoreboard.md
+
+      - name: Issue-repair gold set (B2 root-cause gate)
+        run: |
+          uv run upgradelens eval-issue-repair \
+            --fail-under 1.0 \
+            --json /tmp/issue_repair_eval.json \
+            --md /tmp/issue_repair_scoreboard.md
+
+      - name: Upload scoreboard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capability-eval-scoreboard
+          path: |
+            /tmp/capability_eval.json
+            /tmp/capability_scoreboard.md
+            /tmp/issue_repair_eval.json
+            /tmp/issue_repair_scoreboard.md

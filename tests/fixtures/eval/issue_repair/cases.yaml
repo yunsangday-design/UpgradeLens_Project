@@ -1,0 +1,87 @@
+# B2 issue_repair gold set (competitiveness plan).
+# Each case pairs a bug report with the deterministic expectation:
+#   - locatable cases: the keyword root-cause scan must hit file:symbol
+#   - clarification case: no code clue => "No symbol matched" (no fabrication)
+- name: login-none-password
+  category: exception
+  issue_text: |
+    # login crashes when password is None
+    Calling login with a None password raises TypeError instead of returning a failure result.
+  expected_file: auth_service.py
+  expected_symbol: login
+- name: parse-date-invalid-input
+  category: exception
+  issue_text: |
+    # parse_date raises on invalid input
+    parse_date("not-a-date") raises ValueError; it should return None.
+  expected_file: auth_service.py
+  expected_symbol: parse_date
+- name: get-nested-missing-key
+  category: exception
+  issue_text: |
+    # get_nested KeyError on missing key
+    get_nested({"a": {"b": 1}}, ["a", "z"]) raises KeyError instead of returning None.
+  expected_file: auth_service.py
+  expected_symbol: get_nested
+- name: unit-price-zero-quantity
+  category: exception
+  issue_text: |
+    # unit_price divides by zero
+    unit_price(100, 0) raises ZeroDivisionError; expected None instead.
+  expected_file: auth_service.py
+  expected_symbol: unit_price
+- name: cart-total-empty-cart
+  category: boundary
+  issue_text: |
+    # cart_total returns None for empty cart
+    cart_total([]) returns None and breaks downstream sum(); it should return 0.
+  expected_file: cart_service.py
+  expected_symbol: cart_total
+- name: first-item-empty-list
+  category: boundary
+  issue_text: |
+    # first_item IndexError on empty list
+    first_item([]) raises IndexError instead of returning None.
+  expected_file: cart_service.py
+  expected_symbol: first_item
+- name: paginate-page-zero
+  category: boundary
+  issue_text: |
+    # paginate breaks on page 0
+    paginate(items, 0, 3) slices wrong data because of the negative offset.
+  expected_file: cart_service.py
+  expected_symbol: paginate
+- name: apply-discount-negative-quantity
+  category: boundary
+  issue_text: |
+    # apply_discount accepts negative quantity
+    apply_discount(10.0, -2) returns a negative total; expected 0.
+  expected_file: cart_service.py
+  expected_symbol: apply_discount
+- name: get-config-missing-key
+  category: configuration
+  issue_text: |
+    # get_config KeyError on missing key
+    get_config({"host": "x"}, "port") raises KeyError; it should return a default.
+  expected_file: config_loader.py
+  expected_symbol: get_config
+- name: get-port-string-env
+  category: configuration
+  issue_text: |
+    # get_port returns a string
+    get_port reads the env value but never converts it with int(), so the port stays a string.
+  expected_file: config_loader.py
+  expected_symbol: get_port
+- name: load-settings-invalid-json
+  category: configuration
+  issue_text: |
+    # load_settings crashes on invalid JSON
+    load_settings("{not json") raises JSONDecodeError instead of returning {}.
+  expected_file: config_loader.py
+  expected_symbol: load_settings
+- name: vague-report-no-clue
+  category: clarification
+  issue_text: |
+    # everything is broken
+    The app is broken after the update, nothing works, please help.
+  expect_no_match: true

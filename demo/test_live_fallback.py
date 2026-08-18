@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """Live demo: test two-stage online fallback with click (not in RAG corpus)."""
 
+import json as _json
 import sys
 from pathlib import Path
 
@@ -33,8 +34,6 @@ print("-" * 60)
 print("0. Bundle doc evidence (debug)")
 print("-" * 60)
 # Print what doc evidence exists in the run artifacts
-import json as _json
-
 _run_dir = result.run_dir
 if _run_dir and Path(_run_dir).exists():
     _report_path = Path(_run_dir) / "report.json"

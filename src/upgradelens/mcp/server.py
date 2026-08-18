@@ -31,6 +31,7 @@ or point ``assess`` at a recorded ``replay_dir`` with ``mode="replay"``.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -38,10 +39,18 @@ from mcp.server.fastmcp import FastMCP
 from packaging.utils import canonicalize_name
 from sqlalchemy.orm import Session
 
+from upgradelens.agent.engineering_agent import EngineeringAgent
+from upgradelens.agent.supervisor import AgentContext
+from upgradelens.agent.supervisor import run_supervisor as supervisor_run
 from upgradelens.analyzers import scan_code_evidence
 from upgradelens.analyzers import scan_dependency as scan_dependency_fn
 from upgradelens.capabilities import CapabilityRegistry, TransformationPack
+from upgradelens.capabilities.workbench import (
+    list_capabilities as list_unified_capabilities_fn,
+)
+from upgradelens.capabilities.workbench import run_capability as run_capability_fn
 from upgradelens.config import Settings
+from upgradelens.core.task import SoftwareTask, TaskContext, TaskKind
 from upgradelens.db.database import engine_for, init_db, session_for
 from upgradelens.docs import DocSourceManifestError, ingest_corpus, ingest_skill, retrieve
 from upgradelens.domain import DependencyAnalysisRequest
@@ -478,6 +487,222 @@ def run_eval(
         hybrid = next((s for s in result.summaries if s.baseline == "hybrid"), None)
         response["pass_under"] = (hybrid.pass_rate >= fail_under) if hybrid else None
     return response
+
+
+@mcp.tool()
+def list_unified_capabilities() -> dict[str, Any]:
+    """List the five unified capabilities (M4 surface) exposed via MCP, with schemas.
+
+    These are the same capabilities the Workbench runs: dependency_upgrade,
+    pr_review, issue_repair, security_review, breaking_change. This tool tells an
+    MCP client which ``kind`` values :func:`run_capability` accepts.
+    """
+    caps = list_unified_capabilities_fn()
+    return {
+        "capabilities": [
+            c.model_dump(mode="json") if hasattr(c, "model_dump") else c
+            for c in caps
+        ]
+    }
+
+
+@mcp.tool()
+def run_capability(
+    kind: str,
+    repo: str | None = None,
+    dependency: str | None = None,
+    target_version: str | None = None,
+    source_version: str | None = None,
+    unified_diff: str | None = None,
+    issue_text: str | None = None,
+    from_version: str | None = None,
+    to_version: str | None = None,
+    mode: str = "fake",
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    budget_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Run ONE of the five unified capabilities and return its CapabilityRunResult.
+
+    The five capabilities (the M4 "unified capabilities" surface):
+      - dependency_upgrade
+      - pr_review
+      - issue_repair
+      - security_review
+      - breaking_change
+
+    Defaults to ``mode="fake"`` (fully offline, no API key). Pass ``mode="live"``
+    with ``api_key``/``base_url``/``model`` to drive a real LLM for the four
+    model-backed capabilities (pr_review / issue_repair / security_review /
+    breaking_change). ``dependency_upgrade`` reads its gateway from the
+    environment in live mode.
+
+    Args:
+        kind: Which capability to run (see ``list_unified_capabilities``).
+        repo: Repository root (local path or GitHub URL) for review/security/issue.
+        dependency / target_version / source_version: upgrade context.
+        unified_diff: a PR/branch diff for pr_review / security_review.
+        issue_text: a bug report for issue_repair.
+        from_version / to_version: for breaking_change comparison.
+        mode: fake | live | replay.
+        model / api_key / base_url / budget_tokens: live gateway overrides.
+    """
+    try:
+        task_kind = TaskKind(kind)
+    except ValueError:
+        return {
+            "error": f"unknown capability kind: {kind!r}",
+            "known_kinds": [k.value for k in TaskKind if k != TaskKind.UNKNOWN],
+        }
+    if task_kind == TaskKind.UNKNOWN:
+        return {
+            "error": "kind must be one of the five unified capabilities",
+            "known_kinds": [k.value for k in TaskKind if k != TaskKind.UNKNOWN],
+        }
+    ctx = TaskContext(
+        repo=repo or "",
+        dependency=dependency or "",
+        source_version=source_version or "",
+        target_version=target_version or "",
+        unified_diff=unified_diff or "",
+        issue_text=issue_text or "",
+        from_version=from_version or "",
+        to_version=to_version or "",
+    )
+    task = SoftwareTask(
+        task_id=f"mcp-{task_kind.value}-{uuid.uuid4().hex[:8]}",
+        kind=task_kind,
+        goal=f"{task_kind.value} via MCP",
+        context=ctx,
+    )
+    gateway = None
+    if model or api_key or base_url or budget_tokens:
+        gateway = _build_gateway(mode, model, api_key, base_url, budget_tokens, None)
+    result = run_capability_fn(task, gateway=gateway, mode=mode)
+    return result.model_dump(mode="json")
+
+
+@mcp.tool()
+def run_supervisor(
+    text: str,
+    repo: str | None = None,
+    dependency: str | None = None,
+    target_version: str | None = None,
+    source_version: str | None = None,
+    unified_diff: str | None = None,
+    mode: str = "fake",
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    budget_tokens: int | None = None,
+    allowed_capabilities: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run a natural-language request through the controlled Supervisor + Handoff layer.
+
+    A single-capability request short-circuits to the unified dispatcher; a
+    multi-capability request (e.g. "review this PR and run a security scan") fans
+    out to isolated sub-agents and aggregates through the unified verification
+    gate. Defaults to ``mode="fake"`` (offline).
+
+    Args:
+        text: The natural-language task.
+        repo: Repository root (enables pr_review / security_review classification).
+        dependency / target_version / source_version: upgrade context.
+        unified_diff: a diff to attach (review/security).
+        mode: fake | live | replay.
+        model / api_key / base_url / budget_tokens: live gateway overrides.
+        allowed_capabilities: restrict which capabilities the Supervisor may hand off to.
+    """
+    ctx = TaskContext(
+        repo=repo or "",
+        dependency=dependency or "",
+        source_version=source_version or "",
+        target_version=target_version or "",
+        unified_diff=unified_diff or "",
+    )
+    task = SoftwareTask(
+        task_id=f"mcp-sup-{uuid.uuid4().hex[:8]}",
+        kind=TaskKind.UNKNOWN,
+        goal=text,
+        context=ctx,
+    )
+    agent_ctx = AgentContext(
+        mode=mode,
+        budget_tokens=budget_tokens or 200_000,
+        allowed_capabilities=tuple(allowed_capabilities) if allowed_capabilities else None,
+    )
+    sup = supervisor_run(task, agent_ctx, mode=mode)
+    return {
+        "orchestration": sup.orchestration,
+        "capability_kinds": sup.capability_kinds,
+        "result": sup.result.model_dump(mode="json") if sup.result else None,
+        "sub_results": [r.model_dump(mode="json") for r in sup.sub_results],
+        "summary": sup.summary,
+        "verification_passed": sup.verification_passed,
+        "degradations": sup.degradations,
+    }
+
+
+@mcp.tool()
+def run_task(
+    goal: str,
+    repo: str | None = None,
+    dependency: str | None = None,
+    target_version: str | None = None,
+    source_version: str | None = None,
+    unified_diff: str | None = None,
+    issue_text: str | None = None,
+    from_version: str | None = None,
+    to_version: str | None = None,
+    mode: str = "fake",
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    budget_tokens: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """A4 unified entry: run a natural-language goal through EngineeringAgent.
+
+    Routes the goal (plus any explicit overrides) to one -- or, for
+    multi-capability requests, several -- of the five capabilities and returns
+    the normalised ``EngineeringResult``: task, kinds, result (single-capability
+    payload), supervisor (multi-agent aggregate), findings, verification_passed,
+    degradations, error, dry_run. This is the same object the CLI ``run`` command
+    prints, so both surfaces stay byte-for-byte equivalent.
+
+    Args:
+        goal: the user's request in natural language (a github.com URL in the
+            text is validated before any model call).
+        repo: repository root (github URL or local path) for review/security/issue.
+        dependency / target_version / source_version: upgrade context.
+        unified_diff: a PR/branch diff for pr_review / security_review.
+        issue_text: a bug report for issue_repair.
+        from_version / to_version: for breaking_change comparison.
+        mode: fake | live | replay (default fake, fully offline).
+        model / api_key / base_url / budget_tokens: live gateway overrides.
+        dry_run: only route + decompose capabilities, do not execute.
+    """
+    agent = EngineeringAgent(
+        mode=mode,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        budget_tokens=budget_tokens,
+    )
+    result = agent.run(
+        goal,
+        repo=repo,
+        dependency=dependency,
+        target_version=target_version,
+        source_version=source_version,
+        unified_diff=unified_diff,
+        issue_text=issue_text,
+        from_version=from_version,
+        to_version=to_version,
+        dry_run=dry_run,
+    )
+    return result.model_dump(mode="json")
 
 
 def serve() -> None:  # pragma: no cover - process entry point

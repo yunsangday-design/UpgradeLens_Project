@@ -60,7 +60,8 @@ def test_build_args_injects_known_values() -> None:
 
     acc.repo_path = Path("/tmp/x")
     scan = _build_args("scan_code", {}, acc, req)
-    assert scan["repo"] == "/tmp/x" and scan["dependency"] == "pydantic"
+    # Compare as paths: str(Path) is platform-dependent (backslashes on Windows).
+    assert Path(scan["repo"]) == Path("/tmp/x") and scan["dependency"] == "pydantic"
 
     docs = _build_args("retrieve_for_package", {}, acc, req)
     assert docs["db"] == "store.db"

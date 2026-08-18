@@ -63,9 +63,11 @@ def test_plan_is_structurally_stable(tmp_path: object) -> None:
     b = RunStore.create(base, "run-stable")
     a.write_plan(intent=intent, plan=plan)
     b.write_plan(intent=intent, plan=plan)
-    assert (a.run_dir / "plan.json").read_text() == (b.run_dir / "plan.json").read_text()
+    assert (a.run_dir / "plan.json").read_text(encoding="utf-8") == (
+        b.run_dir / "plan.json"
+    ).read_text(encoding="utf-8")
 
-    data = json.loads((a.run_dir / "plan.json").read_text())
+    data = json.loads((a.run_dir / "plan.json").read_text(encoding="utf-8"))
     assert data["mode"] == "fake"
     assert data["kind"] == "upgrade_task"
     assert data["request"]["dependency"] == "pydantic"
@@ -95,7 +97,7 @@ def test_trace_jsonl_is_one_event_per_line_with_required_fields(tmp_path: object
     )
     store.write_trace(trace)
 
-    lines = (store.run_dir / "trace.jsonl").read_text().splitlines()
+    lines = (store.run_dir / "trace.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     for line in lines:
         event = json.loads(line)
@@ -134,22 +136,22 @@ def test_no_secret_reaches_disk(tmp_path: object) -> None:
         "report.md",
         "RUN.md",
     )
-    contents = [(store.run_dir / name).read_text() for name in written]
+    contents = [(store.run_dir / name).read_text(encoding="utf-8") for name in written]
     # Critical: the secret must never reach disk.
     for name, text in zip(written, contents, strict=False):
         assert secret not in text, f"secret leaked into {name}"
     # Redaction actually fired on the files that carried the secret.
-    intent_text = (store.run_dir / "intent.json").read_text()
+    intent_text = (store.run_dir / "intent.json").read_text(encoding="utf-8")
     assert "***" in intent_text
-    assert "***" in (store.run_dir / "trace.jsonl").read_text()
-    assert "***" in (store.run_dir / "report.json").read_text()
+    assert "***" in (store.run_dir / "trace.jsonl").read_text(encoding="utf-8")
+    assert "***" in (store.run_dir / "report.json").read_text(encoding="utf-8")
 
 
 def test_innocent_values_are_not_redacted(tmp_path: object) -> None:
     store = RunStore.create(Path(str(tmp_path)), "run-clean")
     intent = _intent()
     store.write_intent(intent)
-    text = (store.run_dir / "intent.json").read_text()
+    text = (store.run_dir / "intent.json").read_text(encoding="utf-8")
     assert "https://github.com/owner/repo" in text
     assert "pydantic" in text
     assert redact_text("repo url https://github.com/owner/repo is fine") == (

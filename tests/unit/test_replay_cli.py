@@ -73,7 +73,7 @@ def test_replay_closed_loop_produces_verified_report(tmp_path: Path, capsys: obj
     # (The verifier re-checks citations against the live bundle, so a risk that
     # cited the demo's synthetic doc chunk is downgraded to PARTIAL rather than
     # VERIFIED -- that is the anti-hallucination gate working as designed.)
-    recorded = json.loads((replay_dir / "impact_analyzer.json").read_text())
+    recorded = json.loads((replay_dir / "impact_analyzer.json").read_text(encoding="utf-8"))
     recorded_ids = {r["risk_id"] for r in recorded["output"]["risks"]}
     assert recorded_ids
     replayed_ids = {r["risk_id"] for r in report["verified_risks"] + report["degraded_risks"]}

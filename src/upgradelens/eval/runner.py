@@ -105,6 +105,7 @@ class EvaluationResult:
 def _run_case(case: EvalCase, baselines: list[str], db_dir: Path) -> list[CaseScore]:
     """Evaluate one case across the requested baselines."""
     session = None
+    engine = None
     if case.with_docs:
         engine = engine_for(db_dir / f"{case.case_id}.db")
         init_db(engine)
@@ -118,6 +119,10 @@ def _run_case(case: EvalCase, baselines: list[str], db_dir: Path) -> list[CaseSc
     finally:
         if session is not None:
             session.close()
+        # Windows keeps the db file locked while the pooled connections live;
+        # dispose so the TemporaryDirectory cleanup can unlink the file.
+        if engine is not None:
+            engine.dispose()
 
 
 def run_evaluation(
@@ -133,7 +138,9 @@ def run_evaluation(
 
     cases = load_cases(Path(cases_dir))
     scores: list[CaseScore] = []
-    with tempfile.TemporaryDirectory(prefix="upgradelens-eval-") as tmp:
+    # ignore_cleanup_errors: on Windows a stray pooled connection can hold a db
+    # file open; the scores are already computed, cleanup must not fail the run.
+    with tempfile.TemporaryDirectory(prefix="upgradelens-eval-", ignore_cleanup_errors=True) as tmp:
         db_dir = Path(tmp)
         for case in cases:
             scores.extend(_run_case(case, selected, db_dir))

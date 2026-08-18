@@ -52,7 +52,7 @@ def _index_repo(
     for path in root.rglob("*.py"):
         if any(part in skip for part in path.parts):
             continue
-        rel = str(path.relative_to(root))
+        rel = path.relative_to(root).as_posix()
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:

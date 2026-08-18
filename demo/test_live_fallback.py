@@ -18,7 +18,7 @@ print("UpgradeLens — Live Demo (two-stage online fallback)")
 print("=" * 60)
 print(f"  goal: {GOAL.format(repo=str(REPO))}")
 print(f"  repo: {REPO}")
-print(f"  mode: live (real LLM + real network)")
+print("  mode: live (real LLM + real network)")
 print()
 
 agent = DependencyUpgradeAgent(mode="live")
@@ -32,8 +32,6 @@ result = agent.run(
 print("-" * 60)
 print("0. Bundle doc evidence (debug)")
 print("-" * 60)
-from upgradelens.verify.models import Conclusion  # noqa: E402
-
 # Print what doc evidence exists in the run artifacts
 import json as _json
 

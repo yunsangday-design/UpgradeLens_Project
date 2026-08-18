@@ -22,7 +22,16 @@ MIN_CORE_CASES = 8
 
 @pytest.fixture(scope="module")
 def result():
-    return run_evaluation(CASES_DIR)
+    # Windows file-lock retries: pytest-xdist and the module-scoped tmp_path
+    # occasionally race on the same SQLite db the first time the fixture runs.
+    # One or two retries are enough; on Linux/macOS the first attempt succeeds.
+    last: Exception | None = None
+    for _ in range(3):
+        try:
+            return run_evaluation(CASES_DIR)
+        except PermissionError as exc:  # pragma: no cover - platform only
+            last = exc
+    raise last  # type: ignore[misc]
 
 
 def _summary(result, baseline: str):

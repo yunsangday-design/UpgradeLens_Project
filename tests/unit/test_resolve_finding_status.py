@@ -12,16 +12,11 @@ from upgradelens.core.finding import (
 
 def test_verified_without_evidence_degrades_to_candidate() -> None:
     assert resolve_finding_status(FindingStatus.VERIFIED, []) is FindingStatus.CANDIDATE
-    assert (
-        resolve_finding_status(FindingStatus.VERIFIED, ()) is FindingStatus.CANDIDATE
-    )
+    assert resolve_finding_status(FindingStatus.VERIFIED, ()) is FindingStatus.CANDIDATE
 
 
 def test_verified_with_evidence_stays_verified() -> None:
-    assert (
-        resolve_finding_status(FindingStatus.VERIFIED, ["code:a.py"])
-        is FindingStatus.VERIFIED
-    )
+    assert resolve_finding_status(FindingStatus.VERIFIED, ["code:a.py"]) is FindingStatus.VERIFIED
 
 
 def test_non_verified_statuses_pass_through() -> None:

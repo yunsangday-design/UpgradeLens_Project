@@ -48,6 +48,12 @@ _CAPABILITY_FAILURE_MARKERS: tuple[str, ...] = (
 #: more would multiply latency on an endpoint that is already slow.
 _JSON_REPAIR_ATTEMPTS = 1
 
+#: Live models occasionally answer in plain text instead of calling the tool
+#: (observed with qwen-max: "model returned no structured output").  One
+#: re-send of the identical request recovers the transient case; a second
+#: consecutive no-op falls through to json_mode.
+_FUNCTION_CALLING_RESENDS = 1
+
 
 def is_capability_failure(error: str) -> bool:
     """Whether ``error`` means the strategy itself is unsupported by the endpoint."""
@@ -447,6 +453,7 @@ class ModelGateway:
         """Run one strategy, repairing schema violations; ``None`` means give up."""
         text = prompt if method == "function_calling" else json_mode_prompt(prompt, schema)
 
+        resends_left = _FUNCTION_CALLING_RESENDS if method == "function_calling" else 0
         for attempt in range(_JSON_REPAIR_ATTEMPTS + 1):
             try:
                 payload = runnable.invoke(text)
@@ -464,9 +471,14 @@ class ModelGateway:
 
             reason = str(payload.get("parsing_error") or "model returned no structured output")
             failures.append(f"{method} attempt {attempt + 1}: {reason}")
-            # Only json_mode can be repaired by re-prompting; a tool call that
-            # produced nothing will not improve from restating the schema.
-            if method != "json_mode":
+            if method == "function_calling":
+                # Transient no-op (plain-text answer instead of a tool call):
+                # re-send the identical request once before giving up on the
+                # method.  Restating the schema would not help here, unlike the
+                # json_mode repair path below.
+                if resends_left > 0:
+                    resends_left -= 1
+                    continue
                 return None
             text = repair_prompt(json_mode_prompt(prompt, schema), reason)
         return None

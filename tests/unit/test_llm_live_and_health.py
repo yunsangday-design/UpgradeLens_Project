@@ -39,6 +39,13 @@ class _Runnable:
 
     def invoke(self, prompt: str) -> dict[str, Any]:
         self._owner.prompts.append((self._method, prompt))
+        if self._method in self._owner.flaky_once and self._method not in self._owner._flaked:
+            self._owner._flaked.add(self._method)
+            return {
+                "parsed": None,
+                "raw": _Message(),
+                "parsing_error": "model returned no structured output",
+            }
         if self._method in self._owner.unparsable:
             return {"parsed": None, "raw": _Message(), "parsing_error": "not json"}
         return {
@@ -51,10 +58,17 @@ class _Runnable:
 class _FakeChatModel:
     """Stand-in for ``ChatOpenAI`` covering endpoint capability differences."""
 
-    def __init__(self, unsupported: tuple[str, ...] = (), unparsable: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        unsupported: tuple[str, ...] = (),
+        unparsable: tuple[str, ...] = (),
+        flaky_once: tuple[str, ...] = (),
+    ) -> None:
         self.unsupported = unsupported
         self.unparsable = unparsable
+        self.flaky_once = flaky_once
         self.prompts: list[tuple[str, str]] = []
+        self._flaked: set[str] = set()
 
     def with_structured_output(
         self, schema: type, *, method: str = "function_calling", include_raw: bool = False
@@ -113,6 +127,28 @@ def test_live_call_raises_when_every_strategy_fails() -> None:
 
     message = str(excinfo.value)
     assert "function_calling" in message and "json_mode" in message
+
+
+def test_function_calling_resend_recovers_transient_noop() -> None:
+    """A one-off plain-text answer (no tool call) is recovered by one re-send."""
+    llm = _FakeChatModel(flaky_once=("function_calling",))
+    answer, usage = _gateway()._invoke_structured(llm, "probe", ProbeAnswer)
+
+    assert answer.message == "pong"
+    assert usage == (11, 7)
+    # The identical function_calling request was sent twice; json_mode untouched.
+    assert [method for method, _ in llm.prompts] == ["function_calling", "function_calling"]
+    assert llm.prompts[0][1] == llm.prompts[1][1]
+
+
+def test_function_calling_falls_back_after_failed_resend() -> None:
+    """A persistent no-op re-sends once, then falls through to json_mode."""
+    llm = _FakeChatModel(unparsable=("function_calling",))
+    answer, _ = _gateway()._invoke_structured(llm, "probe", ProbeAnswer)
+
+    assert answer.message == "pong"
+    methods = [method for method, _ in llm.prompts]
+    assert methods == ["function_calling", "function_calling", "json_mode"]
 
 
 def test_disable_thinking_passes_extra_body_to_client(monkeypatch: pytest.MonkeyPatch) -> None:

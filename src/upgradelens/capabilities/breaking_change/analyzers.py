@@ -15,7 +15,7 @@ from pathlib import Path
 from upgradelens.change.diff import parse_unified_diff
 from upgradelens.change.models import ChangeLabel, ChangeSet
 from upgradelens.change.symbols import extract_symbols
-from upgradelens.core.finding import Finding
+from upgradelens.core.finding import Finding, resolve_finding_status
 from upgradelens.core.verification import VerificationResult
 from upgradelens.llm.gateway import CompletionRecord, ModelGateway
 from upgradelens.repository.models import CodeSymbol
@@ -152,7 +152,7 @@ def report_to_findings(report: BreakingChangeReport) -> list[Finding]:
                 confidence=change.confidence,
                 summary=change.summary,
                 detail=change.detail,
-                status=change.status,
+                status=resolve_finding_status(change.status, change.evidence_refs),
                 evidence_ids=list(change.evidence_refs),
             )
         )

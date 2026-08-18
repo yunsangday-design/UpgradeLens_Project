@@ -27,7 +27,12 @@ from packaging.utils import canonicalize_name
 from upgradelens.change.diff import parse_unified_diff
 from upgradelens.change.models import ChangeSet
 from upgradelens.core.action import TestProposal
-from upgradelens.core.finding import Finding, FindingStatus, Severity
+from upgradelens.core.finding import (
+    Finding,
+    FindingStatus,
+    Severity,
+    resolve_finding_status,
+)
 from upgradelens.core.security import (
     CWE,
     SecurityCategory,
@@ -166,7 +171,11 @@ def report_to_findings(report: SecurityReviewReport, change_set: ChangeSet) -> l
                 summary=sf.title,
                 detail=sf.description,
                 evidence_ids=list(sf.evidence_refs),
-                status=FindingStatus.REJECTED if sf.false_positive else sf.status,
+                status=(
+                    FindingStatus.REJECTED
+                    if sf.false_positive
+                    else resolve_finding_status(sf.status, sf.evidence_refs)
+                ),
                 requires_approval=(
                     sf.severity in (Severity.CRITICAL, Severity.HIGH) and not sf.false_positive
                 ),

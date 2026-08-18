@@ -15,7 +15,7 @@ from pathlib import Path
 
 from upgradelens.change.symbols import extract_symbols
 from upgradelens.core.action import PatchProposal, TestProposal
-from upgradelens.core.finding import Finding, FindingStatus, Severity
+from upgradelens.core.finding import Finding, Severity, resolve_finding_status
 from upgradelens.core.verification import VerificationResult
 from upgradelens.llm.gateway import CompletionRecord, ModelGateway
 from upgradelens.testing import generate_repro_test
@@ -71,10 +71,8 @@ def report_to_findings(report: IssueRepairReport) -> list[Finding]:
         evidence = [f"code:{match.group(2)}"]
     # Defensive: live models may claim VERIFIED while the root cause names no
     # .py file; degrade to CANDIDATE so the Finding validator does not reject
-    # the whole report (mirrors pr_review.report_to_findings).
-    status = report.status
-    if status is FindingStatus.VERIFIED and not evidence:
-        status = FindingStatus.CANDIDATE
+    # the whole report (shared helper, see core.finding.resolve_finding_status).
+    status = resolve_finding_status(report.status, evidence)
     return [
         Finding(
             finding_id=f"root:{report.issue_id}",

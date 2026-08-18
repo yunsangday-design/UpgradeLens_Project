@@ -13,7 +13,13 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-__all__ = ["FindingStatus", "Severity", "EvidenceLink", "Finding"]
+__all__ = [
+    "FindingStatus",
+    "Severity",
+    "EvidenceLink",
+    "Finding",
+    "resolve_finding_status",
+]
 
 
 class FindingStatus(StrEnum):
@@ -86,3 +92,19 @@ class Finding(BaseModel):
         if self.status is FindingStatus.VERIFIED and not self.evidence_ids:
             raise ValueError("a VERIFIED finding must reference at least one evidence id")
         return self
+
+
+def resolve_finding_status(
+    status: FindingStatus, evidence_ids: list[str] | tuple[str, ...]
+) -> FindingStatus:
+    """Degrade ``VERIFIED`` to ``CANDIDATE`` when no evidence is referenced.
+
+    Live models occasionally claim VERIFIED without citing any evidence; the
+    :class:`Finding` validator would then reject the whole capability report.
+    Every capability's ``report_to_findings`` routes its model-provided status
+    through this helper so the contract ("VERIFIED implies evidence") holds
+    without crashing the run.
+    """
+    if status is FindingStatus.VERIFIED and not evidence_ids:
+        return FindingStatus.CANDIDATE
+    return status

@@ -17,7 +17,7 @@ from upgradelens.change.impact import ChangeImpact, analyze_impact
 from upgradelens.change.models import ChangeSet
 from upgradelens.change.symbols import extract_symbols
 from upgradelens.core.action import ActionKind, TestProposal
-from upgradelens.core.finding import Finding, FindingStatus
+from upgradelens.core.finding import Finding, resolve_finding_status
 from upgradelens.core.verification import VerificationResult
 from upgradelens.llm.gateway import CompletionRecord, ModelGateway
 from upgradelens.repository.models import CodeSymbol, RepositoryProfile
@@ -107,12 +107,6 @@ def report_to_findings(report: PRReviewReport) -> list[Finding]:
     """Convert review comments into citable :class:`Finding` objects."""
     findings: list[Finding] = []
     for comment in report.comments:
-        # Defensive: LLM may return VERIFIED without evidence_refs.  Degrade to
-        # CANDIDATE so the pydantic validator (Finding._check) does not reject the
-        # whole report.
-        st = comment.status
-        if st is FindingStatus.VERIFIED and not comment.evidence_refs:
-            st = FindingStatus.CANDIDATE
         findings.append(
             Finding(
                 finding_id=comment.comment_id,
@@ -121,7 +115,7 @@ def report_to_findings(report: PRReviewReport) -> list[Finding]:
                 confidence=comment.confidence,
                 summary=comment.summary,
                 detail=comment.detail,
-                status=st,
+                status=resolve_finding_status(comment.status, comment.evidence_refs),
                 evidence_ids=list(comment.evidence_refs),
             )
         )

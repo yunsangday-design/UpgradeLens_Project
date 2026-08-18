@@ -174,6 +174,32 @@ def _agent_result_from_capability(
     )
 
 
+def _resolve_skill_digest(kind: AgentKind, locale: str) -> dict[str, Any] | None:
+    """Resolve the AgentSkill for ``kind``/``locale`` into a compact digest (SK-1-3).
+
+    Progressive disclosure level 1: the agent receives the behaviour spec
+    (steps / constraints / completion criteria), never the full markdown body.
+    The digest is echoed into the result notes so the UI can attribute the run
+    to the behaviour spec that governed it.
+    """
+    try:
+        from upgradelens.agent_skills.resolver import resolve_agent_skill
+    except Exception:  # pragma: no cover - registry failure must not kill the run
+        return None
+    skill = resolve_agent_skill(kind.value, locale=locale or "en")
+    if skill is None:
+        return None
+    return {
+        "skill_id": skill.skill_id,
+        "version": skill.version,
+        "language": skill.language,
+        "steps": list(skill.steps),
+        "constraints": list(skill.constraints),
+        "completion_criteria": list(skill.completion_criteria),
+        "instructions": skill.to_instructions(),
+    }
+
+
 def make_capability_agent(kind: AgentKind, *, version: str = "1.0.0") -> AgentSpec:
     """Wrap an existing single-capability runner as an :class:`AgentSpec`."""
 
@@ -184,7 +210,13 @@ def make_capability_agent(kind: AgentKind, *, version: str = "1.0.0") -> AgentSp
         tc = TaskContext(**task.to_task_context())
         st = SoftwareTask(task_id=ctx.run_id, kind=TaskKind(kind.value), context=tc)
         cap = run_capability(st, gateway=ctx.gateway, mode=ctx.mode)
-        return _agent_result_from_capability(cap, ctx)
+        result = _agent_result_from_capability(cap, ctx)
+        skill_digest = _resolve_skill_digest(kind, task.locale)
+        if skill_digest is not None:
+            result.notes["agent_skill"] = {
+                k: v for k, v in skill_digest.items() if k != "instructions"
+            }
+        return result
 
     return AgentSpec(
         agent_id=kind.value,

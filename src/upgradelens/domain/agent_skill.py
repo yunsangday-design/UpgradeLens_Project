@@ -45,5 +45,26 @@ class AgentSkill(BaseModel):
     def matches_kind(self, kind: str) -> bool:
         return kind in self.applies_to
 
+    def to_instructions(self) -> str:
+        """A compact instruction block for prompt injection (progressive disclosure).
+
+        Level-1 disclosure: identity + method steps + hard constraints + completion
+        criteria -- enough for an agent to *behave* correctly without shipping the
+        full ``body``. The full markdown stays on disk and is loaded only when a
+        human (or the UI) asks for it.
+        """
+        lines: list[str] = [f"# Skill: {self.name or self.skill_id} (v{self.version})"]
+        if self.when_to_use:
+            lines.append("When to use: " + "; ".join(self.when_to_use))
+        if self.steps:
+            lines.append("Steps:")
+            lines.extend(f"{i}. {s}" for i, s in enumerate(self.steps, 1))
+        if self.constraints:
+            lines.append("Hard constraints:")
+            lines.extend(f"- {c}" for c in self.constraints)
+        if self.completion_criteria:
+            lines.append("Complete when: " + "; ".join(self.completion_criteria))
+        return "\n".join(lines)
+
 
 __all__ = ["AgentSkill"]

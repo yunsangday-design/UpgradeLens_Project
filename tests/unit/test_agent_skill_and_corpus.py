@@ -53,6 +53,45 @@ def test_agent_skill_has_behaviour_not_facts() -> None:
     assert "rag corpus" in (s.body + s.description).lower()
 
 
+def test_agent_skill_to_instructions_is_compact_disclosure() -> None:
+    s = resolve_agent_skill("dependency_upgrade")
+    assert s is not None
+    block = s.to_instructions()
+    assert block.startswith("# Skill:")
+    assert "Steps:" in block and "Hard constraints:" in block
+    # level-1 disclosure never ships the full markdown body
+    assert len(block) < len(s.body) or not s.body
+
+
+def test_capability_agent_carries_skill_digest_in_notes() -> None:
+    """SK-1-3: the runner path resolves the AgentSkill and echoes it into notes."""
+    from upgradelens.agent.runtime import (
+        AgentIdentity,
+        AgentKind,
+        AgentRunContext,
+        TaskEnvelope,
+        new_run_id,
+    )
+    from upgradelens.agent.spec import default_registry
+
+    ctx = AgentRunContext(
+        run_id=new_run_id(),
+        agent=AgentIdentity.create(AgentKind.DEPENDENCY_UPGRADE),
+        mode="fake",
+        locale="zh-CN",
+    )
+    task = TaskEnvelope(kind="dependency_upgrade", goal="demo goal")
+    spec = default_registry().resolve(AgentKind.DEPENDENCY_UPGRADE)
+    assert spec.run is not None
+    result = spec.run(ctx, task)
+    digest = result.notes.get("agent_skill")
+    assert digest is not None
+    assert digest["skill_id"] == "safe-dependency-migration"
+    assert digest["steps"] and digest["constraints"]
+    # progressive disclosure: the full instruction block is NOT dumped into notes
+    assert "instructions" not in digest
+
+
 def test_corpus_carries_legacy_skill_facts() -> None:
     specs = load_builtin_corpus()
     packages = {sp.canonical_package for sp in specs}

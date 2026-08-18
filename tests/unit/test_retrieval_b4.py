@@ -7,11 +7,18 @@ from sqlalchemy import select
 
 from upgradelens.db import models
 from upgradelens.db.database import engine_for, init_db, session_for
-from upgradelens.db.vector import SqliteVecIndex
+from upgradelens.db.vector import SqliteVecIndex, sqlite_vec_available
 from upgradelens.docs import ingest
 from upgradelens.docs.retrieval import _fuse_source, retrieve_for_package
 from upgradelens.domain.doc_evidence import RetrievalRun
 from upgradelens.skills import builtin_registry
+
+# sqlite-vec needs a sqlite3 build with extension loading; some CI-provisioned
+# Pythons (GitHub Actions) omit ``enable_load_extension``.
+requires_sqlite_vec = pytest.mark.skipif(
+    not sqlite_vec_available(),
+    reason="sqlite3 build lacks extension loading (e.g. GitHub-Actions Python)",
+)
 
 
 class _TestStubEmbedding:
@@ -85,6 +92,7 @@ def test_fts5_only_finds_validator_without_embedding(session) -> None:
     assert any("validator" in b for b in _flatten_blobs(runs))
 
 
+@requires_sqlite_vec
 def test_hybrid_retrieval_runs_and_finds_validator(session) -> None:
     stub = _TestStubEmbedding()
     SqliteVecIndex(session, stub.dimension).rebuild(session, stub)
@@ -101,6 +109,7 @@ def test_vector_unavailable_falls_back_to_fts5(session, monkeypatch) -> None:
     assert any("validator" in b for b in _flatten_blobs(runs))
 
 
+@requires_sqlite_vec
 def test_fuse_source_adds_vector_only_hits(session) -> None:
     # Two chunks in one source: FTS5 found the first, the vector index found the
     # second. RRF fusion must surface both.

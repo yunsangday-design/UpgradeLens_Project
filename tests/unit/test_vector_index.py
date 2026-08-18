@@ -12,6 +12,14 @@ from upgradelens.db.vector import (
     sqlite_vec_available,
 )
 
+# sqlite-vec needs a sqlite3 build with extension loading; some CI-provisioned
+# Pythons (GitHub Actions) omit ``enable_load_extension`` and the index falls
+# back to unavailable there.
+requires_sqlite_vec = pytest.mark.skipif(
+    not sqlite_vec_available(),
+    reason="sqlite3 build lacks extension loading (e.g. GitHub-Actions Python)",
+)
+
 
 def _session(tmp_path: Path):
     engine = engine_for(tmp_path / "docs.db")
@@ -21,6 +29,7 @@ def _session(tmp_path: Path):
     session.close()
 
 
+@requires_sqlite_vec
 def test_sqlite_vec_is_available_on_this_platform() -> None:
     assert sqlite_vec_available() is True
 
@@ -56,6 +65,7 @@ class _StubEmbedding:
         ]
 
 
+@requires_sqlite_vec
 def test_upsert_search_and_delete(tmp_path: Path) -> None:
     session = next(_session(tmp_path))
     index = SqliteVecIndex(session, 4)
@@ -71,6 +81,7 @@ def test_upsert_search_and_delete(tmp_path: Path) -> None:
     assert [h.chunk_id for h in hits] == [2]
 
 
+@requires_sqlite_vec
 def test_rebuild_from_chunks(tmp_path: Path) -> None:
     session = next(_session(tmp_path))
     source = models.DocSourceRow(
@@ -98,6 +109,7 @@ def test_rebuild_from_chunks(tmp_path: Path) -> None:
     assert hits[0].chunk_id == chunk.id
 
 
+@requires_sqlite_vec
 def test_rebuild_records_meta(tmp_path: Path) -> None:
     session = next(_session(tmp_path))
     index = SqliteVecIndex(session, 4)

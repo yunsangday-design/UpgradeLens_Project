@@ -40,6 +40,11 @@ def sqlite_vec_available() -> bool:
         import sqlite_vec  # noqa: F401
     except Exception:  # pragma: no cover - platform dependent
         return False
+    # Some Python builds (notably the ones provisioned by GitHub Actions)
+    # ship a sqlite3 without extension loading; sqlite-vec cannot work there
+    # and the retrieval layer must fall back to FTS5-only.
+    if not hasattr(sqlite3.Connection, "enable_load_extension"):  # pragma: no cover
+        return False
     return True
 
 
